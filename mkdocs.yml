@@ -81,7 +81,9 @@ nav:
       - 04-projeto-conceitual/README.md
       - 4.1 Estruturas: 04-projeto-conceitual/estruturas.md
       - 4.2 Energia: 04-projeto-conceitual/energia.md
-      - 4.3 Hardware: 04-projeto-conceitual/hardware.md
+      - 4.3 Hardware:
+          - 04-projeto-conceitual/hardware.md
+          - 4.3.1 Diagramas de hardware: 04-projeto-conceitual/hardware-diagramas.md
       - 4.4 Software: 04-projeto-conceitual/software.md
   - 5. Cronograma: 05-cronograma.md
   - 6. Orçamento: 06-orcamento.md
