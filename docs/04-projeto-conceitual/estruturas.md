@@ -17,7 +17,7 @@ Peças acessórias em PLA para suporte dos sensores e suporte do pacote de bater
 ### 3.3 Elementos de Fixação e União 
 Parafusos métricos M2 e M2.5 de aço inox para fixação da placa principal (MCU ESP32-C3) e do suporte do LiDAR. A equipe conta com a capacidade de criar apoios já impressos na estrutura para facilitar o encaixe e possíveis manutenções. 
 
-## 4. Partes fundamentais (chassi, suporte, carenagem, atuadores, transmissão, rodas/hélices etc.)
+## 4. Partes fundamentais 
 O intuito dessa seção é mapeiar e definir os subconjuntos mecânicos e estruturais que compõem o sistema.
 
 ### 4.1 Chassi 
