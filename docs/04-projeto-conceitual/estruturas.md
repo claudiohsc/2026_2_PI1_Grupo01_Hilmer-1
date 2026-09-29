@@ -69,12 +69,10 @@ Razões pelas quais o tipo de transmissão, atuadores e estrutura escolhidos ate
 
 #### Arquivos CAD para download
 
-<a href="CADs/BaseSuperior.stp" download>Base Superior</a><br>
-<a href="CADs/CarrinhoPrototipo.stp" download>Protótipo do carrinho</a><br>
-<a href="CADs/Motor.stp" download>Motor</a><br>
-<a href="CADs/base.stp" download>Base</a><br>
-<a href="CADs/baterias.stp" download>Baterias</a><br>
-<a href="CADs/colunas.stp" download>Colunas</a><br>
-<a href="CADs/rodas.stp" download>Rodas</a>
-
-
+<a href="/docs/04-projeto-conceitual/CADs/BaseSuperior.stp" download>Base Superior</a><br>
+<a href="/docs/04-projeto-conceitual/CADs/CarrinhoPrototipo.stp" download>Protótipo do carrinho</a><br>
+<a href="/docs/04-projeto-conceitual/CADs/Motor.stp" download>Motor</a><br>
+<a href="/docs/04-projeto-conceitual/CADs/base.stp" download>Base</a><br>
+<a href="/docs/04-projeto-conceitual/CADs/baterias.stp" download>Baterias</a><br>
+<a href="/docs/04-projeto-conceitual/CADs/colunas.stp" download>Colunas</a><br>
+<a href="/docs/04-projeto-conceitual/CADs/rodas.stp" download>Rodas</a>
