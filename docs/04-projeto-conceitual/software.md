@@ -721,3 +721,155 @@ erDiagram
 >   - Pré-condições do sistema para o teste ser realizado, quando se aplicar;
 >   - Descrição dos procedimentos a serem executados para o teste;
 >   - Resultado esperado para o teste ser aprovado (pós-condição após realizado o teste);
+
+
+---
+
+## Roteiro de Testes Funcionais
+
+### Introdução e Contexto
+
+Este documento estabelece o planejamento dos **Testes de Software**, definindo uma abordagem prática e automatizável para garantir que as Histórias de Usuário (US), Requisitos Funcionais (RF) e Requisitos Não-Funcionais (RNF) definidos no projeto sejam devidamente validados ao longo das Sprints.
+
+---
+
+### 1. Estratégia de Testes e Pirâmide de Testes
+
+A estratégia de testes adota o modelo da **Pirâmide de Testes de Martin Fowler**, alinhada às orientações do **Doc 7.4 (Testes de Software)**. O foco está em manter uma base sólida de testes unitários rápidos, combinada com testes de integração e cenários essenciais de aceitação/E2E.
+
+```text
+               / \
+              /   \
+             / E2E \            <- Testes de Aceitação / Fluxos Principais do Usuário
+            /-------\
+           /         \
+          / Integração\         <- Testes de Rotas/Endpoints da API e Banco de Dados
+         /-------------\
+        /               \
+       /     Unidade     \      <- Testes de Regras de Negócio, Validações e Funções
+      /-------------------\
+```
+
+#### 1.1 Nivelação e Escopo dos Testes
+
+1. **Testes de Unidade (Base da Pirâmide):**
+   * **Foco:** Validação de funções utilitárias, validações de DTOs/modelos, regras de negócio isoladas e serviços.
+   * **Isolamento:** Uso de mocks e stubs para isolar chamadas de banco e serviços externos.
+   * **Métrica:** Meta de cobertura de **70% a 80%** no código das camadas de domínio/serviços.
+   * **Execução:** Executados automaticamente a cada *push* ou *Pull Request* no GitHub Actions (CI/CD).
+
+2. **Testes de Integração (Camada Intermediária):**
+   * **Foco:** Validação das rotas de API (Controllers/Routers), integração com o banco de dados e middlewares de autenticação.
+   * **Métrica:** Validação das respostas HTTP e integridade dos dados trafegados.
+
+3. **Testes End-to-End e Aceitação (Topo da Pirâmide):**
+   * **Foco:** Simulação dos fluxos críticos de uso da aplicação a partir da interface do usuário ou chamadas de API ponta a ponta.
+   * **Métrica:** Validação dos Critérios de Aceitação das Histórias de Usuário (US).
+
+---
+
+### 2. Especificação dos Casos de Teste (CT)
+
+Os Casos de Teste a seguir foram elaborados a partir dos Requisitos Funcionais (RF) e Histórias de Usuário (US) mapeados no **Doc 2 (Requisitos)**.
+
+#### 2.1 Módulo de Autenticação e Gestão de Acesso
+
+| ID | US / Requisito | Cenário / Objetivo | Nível | Entrada (Input) | Resultado Esperado |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **CT-01** | US-01 / RF-01 | Cadastrar usuário com dados válidos | Integração / E2E | Nome, e-mail válido, senha | Conta criada com sucesso e retorno HTTP 201. |
+| **CT-02** | US-01 / RF-01 | Tentar cadastrar e-mail já existente | Unidade / INT | E-mail já presente no banco | Rejeição do cadastro com retorno HTTP 400 ou 409. |
+| **CT-03** | US-01 / RF-01 | Validar formato e força da senha | Unidade | Senha menor que 8 caracteres | Falha na validação de campos e mensagem de erro. |
+| **CT-04** | US-02 / RF-02 | Autenticação (Login) bem-sucedida | Integração | E-mail e senha corretos | Retorno HTTP 200 e token de autenticação (JWT). |
+| **CT-05** | US-02 / RF-02 | Login com credenciais inválidas | Integração | E-mail correto e senha incorreta | Retorno HTTP 401 (Não autorizado). |
+| **CT-06** | US-02 / RNF-02 | Acesso a rota protegida sem autenticação | Integração | Requisição sem token JWT | Acesso negado com HTTP 401/403. |
+
+#### 2.2 Módulo Principal e Gestão de Dados
+
+| ID | US / Requisito | Cenário / Objetivo | Nível | Entrada (Input) | Resultado Esperado |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **CT-07** | US-03 / RF-03 | Criar novo registro com dados obrigatórios | Integração / E2E | Payload JSON completo e válido | Registro salvo no banco e retorno HTTP 201. |
+| **CT-08** | US-03 / RF-03 | Criar registro com campos obrigatórios ausentes | Unidade / INT | Payload JSON incompleto | Validação falha e retorno HTTP 400 (Bad Request). |
+| **CT-09** | US-04 / RF-04 | Consultar/Listar registros cadastrados | Integração | Requisição GET na rota de listagem | Retorno HTTP 200 com a lista de itens. |
+| **CT-10** | US-05 / RF-05 | Atualizar registro existente | Integração | ID do registro e dados atualizados | Dados alterados no banco e retorno HTTP 200. |
+| **CT-11** | US-05 / RF-05 | Tentar alterar registro de outro usuário | Integração | Token de Usuário A no recurso de Usuário B | Operação bloqueada e retorno HTTP 403 (Forbidden). |
+| **CT-12** | US-06 / RF-06 | Excluir registro existente | Integração | ID válido e token autorizador | Registro removido/desativado e retorno HTTP 200/204. |
+
+---
+
+### 3. Cenários de Aceitação em BDD (Behavior-Driven Development)
+
+Para facilidade de entendimento e automação dos testes de aceitação, utiliza-se a linguagem **Gherkin** nos cenários chave.
+
+#### Cenário 1: Cadastro de Usuário
+```gherkin
+Funcionalidade: Cadastro de Usuário
+  Como um novo usuário do sistema
+  Quero me cadastrar utilizando e-mail e senha
+  Para acessar os recursos da plataforma
+
+  Cenário: Cadastro realizado com sucesso
+    Dado que o usuário está na página de cadastro
+    Quando preencher o nome "Usuário Teste", e-mail "teste@unb.br" e senha "Senha@123"
+    E clicar no botão "Cadastrar"
+    Então o sistema deve criar a conta com sucesso
+    E redirecionar para a tela de login
+```
+
+#### Cenário 2: Proteção de Dados e Autorização
+```gherkin
+Funcionalidade: Controle de Acesso
+  Como um usuário do sistema
+  Quero garantir que apenas o proprietário altere seus dados
+  Para manter a segurança das informações
+
+  Cenário: Tentativa de alteração não autorizada
+    Dado que o usuário está autenticado como "Usuario_A"
+    Quando tentar editar as informações do registro de "Usuario_B"
+    Então o sistema deve recusar a alteração
+    E retornar a mensagem de permissão negada (HTTP 403)
+```
+
+---
+
+### 4. Testes Não-Funcionais Básicos
+
+Alinhado aos Requisitos Não-Funcionais do **Doc 2**:
+
+1. **Segurança:**
+   * Armazenamento seguro de senhas utilizando algoritmos de hash (ex: `bcrypt`).
+   * Validação e sanitização de dados de entrada na API para prevenção de vulnerabilidades comuns (SQLi/XSS).
+   * Uso de tokens de acesso expiráveis (JWT) para rotas autenticadas.
+
+2. **Usabilidade e Responsividade:**
+   * Garantia de funcionamento da interface em dispositivos móveis e desktops.
+   * Feedback claro ao usuário em caso de erros de validação ou falhas no sistema.
+
+---
+
+### 5. Matriz de Rastreabilidade (Requisitos x Testes)
+
+Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no projeto aos seus respectivos Casos de Teste.
+
+| Requisito / Artefato | Descrição Funcional | Casos de Teste Associados | Nível de Teste |
+| :--- | :--- | :--- | :--- |
+| **RF-01 / US-01** | Cadastro de Usuários | CT-01, CT-02, CT-03 | Unidade, Integração, E2E |
+| **RF-02 / US-02** | Autenticação / Login | CT-04, CT-05, CT-06 | Unidade, Integração |
+| **RF-03 / US-03** | Criação de Registros | CT-07, CT-08 | Unidade, Integração |
+| **RF-04 / US-04** | Consulta e Listagem | CT-09 | Integração |
+| **RF-05 / US-05** | Edição de Dados | CT-10, CT-11 | Integração, E2E |
+| **RF-06 / US-06** | Exclusão de Registros | CT-12 | Integração |
+| **RNF-01** | Segurança e Proteção | CT-03, CT-05, CT-06, CT-11 | Unidade, Integração |
+
+---
+
+### 6. Ferramental e Critérios de Conclusão (Definition of Done)
+
+#### 6.1 Ferramentas Sugeridas
+* **Testes de Unidade e Integração:** PyTest (Python) / Jest (JavaScript/TypeScript) / JUnit (Java).
+* **Testes de API / Aceitação:** Supertest / Postman / Cypress / Playwright.
+* **Automação:** Execução automática via GitHub Actions a cada Pull Request.
+
+#### 6.2 Critérios para Conclusão de Código (DoD - Definition of Done)
+1. **Passagem nos Testes:** Todos os testes unitários e de integração existentes devem rodar sem falhas.
+2. **Cobertura Mínima:** Atingir pelo menos **70% de cobertura** no código de regras de negócio.
+3. **Revisão:** Aprovação do Pull Request por pelo menos um colega do grupo antes do merge na branch principal.
