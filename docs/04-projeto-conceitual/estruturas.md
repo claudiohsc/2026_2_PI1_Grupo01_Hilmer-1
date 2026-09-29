@@ -60,15 +60,21 @@ Motivação para o dimensionamento adotado (espaço físico disponível, ergonom
 Razões pelas quais o tipo de transmissão, atuadores e estrutura escolhidos atendem melhor aos requisitos funcionais em detrimento de alternativas descartadas.
 
 ### 7. CAD
-Esta seção apresenta o CAD do projeto.
-![Base Superior](BaseSuperior.stp).
-![Prototipo do carrinho](CarrinhoPrototipo.stp).
-![Motor](Motor.stp).
-![Base](base.CATPPart).
-![Base ](base.stp).
-![Baterias](baterias.stp).
-![Colunas](colunas.stp).
-![Rodas](rodas.stp).
 
+![Prototipo do carrinho](../figs/micromouse.jpg)
+**Figura 1 – Micromouse**
+
+![Base micromouse](../figs/base_micromouse.jpg)
+**Figura 2 – Base micromouse**
+
+#### Arquivos CAD para download
+
+<a href="./CADs/BaseSuperior.stp" download>Base Superior</a><br>
+<a href="./CADs/CarrinhoPrototipo.stp" download>Protótipo do carrinho</a><br>
+<a href="./CADs/Motor.stp" download>Motor</a><br>
+<a href="./CADs/base.stp" download>Base</a><br>
+<a href="./CADs/baterias.stp" download>Baterias</a><br>
+<a href="./CADs/colunas.stp" download>Colunas</a><br>
+<a href="./CADs/rodas.stp" download>Rodas</a>
 
 
