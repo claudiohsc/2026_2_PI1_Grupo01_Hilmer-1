@@ -61,5 +61,14 @@ Razões pelas quais o tipo de transmissão, atuadores e estrutura escolhidos ate
 
 ### 7. CAD
 Esta seção apresenta o CAD do projeto.
+![Base Superior](BaseSuperior.stp).
+![Prototipo do carrinho](CarrinhoPrototipo.stp).
+![Motor](Motor.stp).
+![Base](base.CATPPart).
+![Base ](base.stp).
+![Baterias](baterias.stp).
+![Colunas](colunas.stp).
+![Rodas](rodas.stp).
+
 
 
