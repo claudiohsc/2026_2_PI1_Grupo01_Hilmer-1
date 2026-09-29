@@ -18,11 +18,80 @@
 >     - **Todas HUs devem conter sua descrição (Eu-Como-Para), critérios de aceitação e protótipos de interface, documentadas no github.**
 >   - Exporte as informações do Backlog do Produto no GitHub Projects [em formato CSV](https://docs.github.com/en/issues/planning-and-tracking-with-projects/managing-your-project/exporting-your-projects-data), e [renderize em Markdown](https://www.google.com/search?q=convert+CSV+file+to+Markdown+table) no formato a seguir:
 
-<a id="backlog-do-produto"></a>
 
-## _Backlog_ do Produto
+### Diagrama de Atividades UML
 
-Os requisitos funcionais levantados em [Requisitos](2%20-%20Requisitos.md) foram detalhados em Histórias de Usuário (HUs) no formato *Eu-Como-Para*. Cada RF possui uma HU correspondente, com a mesma numeração (**HU-01 ↔ RF-01, …, HU-17 ↔ RF-17**), o que garante rastreabilidade direta entre requisito e história. A prioridade segue a classificação MoSCoW (*Must have*, *Should have*, *Could have*) definida para cada RF.
+![Diagrama de Atividades](../figs/diagrama-atividades-software.png)
+
+O diagrama acima descreve o comportamento funcional do software do micromouse, desde o
+início do desafio até o encerramento do registro da corrida. O fluxo está organizado em
+três raias (*swimlanes*), cada uma representando um ator do sistema:
+
+- **Usuário/Operador**: pessoa responsável por posicionar o robô no labirinto e iniciar o desafio.
+- **Micromouse (Firmware)**: sistema embarcado que executa a navegação autônoma, o
+  reconhecimento do ambiente e a coleta de telemetria.
+- **Sistema Web (Backend + Dashboard)**: sistema externo responsável por receber, persistir
+  e exibir os dados de telemetria em tempo real.
+
+#### Fluxo principal
+
+O processo é iniciado pelo **Usuário**, que posiciona o micromouse na célula inicial do
+labirinto e sinaliza o início do desafio (insumo: posicionamento físico do robô).
+
+O **Micromouse** então executa uma rotina de autocalibração dos sensores de distância e do
+sensor inercial (IMU) (RF13, RNF8). Esse é o primeiro ponto de decisão do fluxo: caso a
+calibração falhe, a atividade é repetida até ser bem-sucedida; caso contrário, o sistema
+sinaliza que está pronto para o desafio (RNF9).
+
+A partir daí, o fluxo se bifurca em duas atividades que ocorrem **em paralelo** (barra de
+bifurcação/*fork*), refletindo o fato de que navegação e telemetria são processos
+concorrentes durante toda a corrida:
+
+**1. Navegação pelo labirinto (loop)**
+O micromouse reconhece o ambiente ao seu redor, identificando paredes (RF2), atualiza sua
+localização por odometria e o mapa do labirinto (RF3, RF5). A cada ciclo, dois pontos de
+decisão tratam condições excepcionais: se uma colisão com parede é detectada, o sistema
+trata a colisão e retoma a exploração sem perder o mapeamento já capturado (RF12, RF17); se
+o piso apresenta irregularidades, o sistema executa uma rotina para sobrepujar o obstáculo
+(RF11). Superadas essas condições, o robô calcula e executa o próximo movimento (RF1). Um
+terceiro ponto de decisão verifica se a célula objetivo foi alcançada (RF7): em caso
+negativo, o ciclo se repete; em caso positivo, o mapa final do labirinto percorrido é
+armazenado (RF4), encerrando essa atividade.
+
+**2. Transmissão de telemetria (loop contínuo)**
+Em paralelo à navegação, o micromouse coleta e transmite continuamente dados de telemetria
+(posição, velocidade e nível de bateria, RF8). Esses dados são recebidos pelo **Sistema
+Web**, que primeiro os armazena em um buffer para garantir estabilidade caso haja
+interrupções de conexão (RF16), em seguida os persiste no banco de dados, vinculados a um
+identificador único de corrida (RF9, RF15), e por fim atualiza o dashboard em tempo real
+com o mapa bidimensional, o trajeto percorrido, a velocidade média e o consumo de bateria
+(RF6, RF14). Esse ciclo se repete enquanto a corrida estiver ativa.
+
+Quando a atividade de navegação é concluída (mapa final armazenado), o **Sistema Web** é
+notificado e encerra o registro da corrida (RF15), disponibilizando o labirinto percorrido
+para consulta posterior no histórico (RF10), o que marca o nó final do fluxo.
+
+#### Insumos e resultados
+
+| Insumo | Origem | Resultado | Destino |
+|---|---|---|---|
+| Posicionamento do robô / início do desafio | Usuário | Próxima ação calculada | Micromouse |
+| Leituras do LiDAR e dos *encoders* | Hardware | Mapa do labirinto e localização atualizados | Micromouse |
+| Dados de telemetria (posição, velocidade, bateria) | Micromouse | Registro persistido da corrida | Sistema Web |
+| Dados persistidos da corrida | Sistema Web | Dashboard atualizado e histórico consultável | Usuário |
+
+#### Pontos de decisão, paralelismo e sincronização
+
+- **Decisões**: sucesso da calibração; ocorrência de colisão; irregularidade do piso; e
+  alcance da célula objetivo. Cada uma determina se o fluxo segue adiante ou retorna a uma
+  atividade anterior (repetição).
+- **Paralelismo**: após a sinalização de sistema pronto, a barra de bifurcação inicia duas
+  atividades concorrentes e independentes, navegação e transmissão de telemetria, que são
+  executadas simultaneamente durante toda a corrida.
+- **Sincronização**: a conclusão da navegação (mapa final armazenado) sincroniza com o
+  Sistema Web para o encerramento do registro da corrida, unificando os dois ramos
+  paralelos antes do nó final.
+
 
 ### Requisitos Funcionais
 
@@ -485,15 +554,165 @@ A interface do sistema web foi concebida para atender à supervisão de bancada 
 4. **Auditoria de Histórico:** No cabeçalho global, clique em **`Histórico de Consultas`** para alternar para a visão analítica (`04_History_View`), navegando entre os filtros de labirinto para inspecionar os dados persistidos.
 5. **Filtragem de Dados:** Na tela de histórico, clique nos botões de controle segmentado (`Todos`, `Labirinto 1`, `Labirinto 2`, `Labirinto 3`) para alternar a exibição filtrada dos registros. Para voltar à bancada ao vivo, selecione a aba **`Telemetria ao Vivo`**.
 
-> 
-> - **Descrição da arquitetura da solução de _software_ proposta:**
->   - Esta subseção deve contemplar o documento de arquitetura do sistema e deve ser estruturado segundo as visões (4+1) previstas no processo unificado (UP): lógica, de processos; implementação, implantação e dados (substituirá a visão de casos de uso).
->   - Propósito do *software* (qual o seu papel no sistema);
->   - Padrão adotado: MVC, MVP, Microsserviços, Monolítico, etc (Justificar);
->   - Linguagens de programação: Java, Python, C#, JavaScript, etc.
->   - *Frameworks* e bibliotecas: Spring Boot, .NET Core, React, Angular, Django, etc.
->   - Banco de dados: Relacional (PostgreSQL, MySQL, etc) X NãoSQL (MongoDB, etc).
->   - Persistência de dados: Modelo Entidade-Relacionamento (MER) e seu respectivo Diagrama Entidade-Relacionamento (DER), aplicáveis quando a solução utiliza banco de dados relacional; alternativamente, diagrama de estrutura de documentos, empregado nos casos em que a arquitetura adota banco de dados não relacional.
+### Descrição da Arquitetura da Solução de Software Proposta
+
+**Propósito do software:** dois subsistemas cooperantes. O firmware embarcado no
+micromouse é responsável pela navegação autônoma, e o sistema web é responsável por
+receber, persistir e apresentar a telemetria em tempo real e o histórico de corridas.
+
+**Padrão arquitetural (justificativa):**
+
+- **Firmware:** arquitetura em camadas orientada ao ciclo *sense-think-act* (percepção,
+  decisão e atuação), com duas tarefas concorrentes (navegação e telemetria), conforme o
+  *fork* já representado no [Diagrama de Atividades](#diagrama-de-atividades-uml).
+- **Sistema Web:** arquitetura *Backend as a Service* (BaaS) sobre **Supabase**, em vez
+  de um servidor backend próprio. O Postgres do Supabase expõe automaticamente uma API
+  REST (PostgREST) para a ingestão de telemetria e as consultas do dashboard, e o
+  Supabase Realtime notifica o frontend a cada nova linha inserida. Isso elimina a
+  necessidade de hospedar e manter um servidor Node/Express separado: firmware,
+  frontend e banco falam com o mesmo provedor. Lógica que não cabe em SQL puro (por
+  exemplo, consolidar as métricas finais de uma corrida ao encerrá-la) fica em uma
+  Supabase Edge Function.
+
+**Linguagens de programação:**
+
+- Firmware: **C++** (Arduino Core para ESP32-C3)
+- Lógica de servidor (Edge Functions): **TypeScript** (Deno, runtime das Edge Functions do Supabase)
+- Frontend: **JavaScript/TypeScript**
+
+**Frameworks e bibliotecas:**
+
+- Firmware: `WiFi.h` e `HTTPClient.h` para o envio de telemetria via HTTP, `ArduinoJson`
+  para serialização dos pacotes, leitura dos *encoders* por interrupção de GPIO
+  (quadratura A/B), PWM nativo do ESP32-C3 para o DRV8833 (`GPIO4` a `GPIO7`), e leitura
+  do LiDAR TOF 360° por UART, no *baud rate* informado no manual do módulo comprado.
+- Sistema Web: SDK oficial **`supabase-js`** no frontend, usado tanto para consultas
+  (histórico de corridas) quanto para assinar mudanças em tempo real via Realtime
+  (substitui um servidor Socket.IO próprio); Supabase Edge Functions em TypeScript para
+  a lógica de encerramento de corrida.
+- Frontend: **React** + Vite + **Recharts** (gráficos de telemetria).
+
+O ESP32-C3 envia telemetria por HTTP POST periódico (cerca de 1 s) direto ao endpoint
+REST do Supabase, em vez de manter um cliente WebSocket embarcado: é mais simples de
+implementar em C++ e já atende à latência de 2 s do RNF05. O frontend recebe cada nova
+leitura em tempo real pelo Supabase Realtime. Se uma requisição falhar, o firmware
+guarda o pacote em *buffer* local e reenvia depois (HU-16/RF16); a deduplicação e a
+ordenação por número de sequência ficam a cargo de uma restrição `UNIQUE
+(corrida_id, numero_sequencia)` na própria tabela, com inserção via `upsert` (`ON
+CONFLICT DO NOTHING`), sem precisar de um serviço à parte para isso. O acesso de
+escrita do firmware é restrito por uma política de *Row Level Security* que só permite
+`INSERT` na tabela de telemetria.
+
+**Banco de dados:** **Relacional (PostgreSQL)**, no plano gratuito do **Supabase**. Os
+dados são bem estruturados e relacionais (corrida com N leituras de telemetria e N
+células de mapa), o que favorece um banco relacional sobre um NoSQL.
+
+**Persistência de dados (MER):**
+
+- `labirintos`: id, tipo (`4x4`, `8x4` ou `12x4`), linhas, colunas.
+- `corridas`: id, labirinto_id (FK), numero_tentativa, data_hora_inicio,
+  data_hora_fim, tempo_final, velocidade_media, velocidade_pico, consumo_bateria,
+  status (`em_andamento`, `concluida` ou `nao_concluida`). Relaciona-se 1:N com
+  `telemetria` e com `mapa_celulas`.
+- `telemetria`: id, corrida_id (FK), numero_sequencia, timestamp, posicao_linha,
+  posicao_coluna, orientacao (`N`, `S`, `L` ou `O`, calculada por odometria
+  diferencial a partir dos *encoders*, já que a arquitetura de hardware não inclui
+  IMU), velocidade, tensao_bateria, corrente_bateria, tempo_decorrido,
+  estado_corrida, evento (nulo, `colisao` ou `objetivo_alcancado`). Restrição única
+  em (corrida_id, numero_sequencia).
+- `mapa_celulas`: id, corrida_id (FK), linha, coluna, parede_norte, parede_sul,
+  parede_leste, parede_oeste.
+
+Esse modelo cobre o ciclo completo de dados do sistema web: a ingestão da telemetria
+em tempo real durante a corrida, a reconstrução do mapa e do trajeto no dashboard, e a
+consulta e a filtragem do histórico de todas as corridas já realizadas.
+
+**Diagrama Entidade-Relacionamento (DER):**
+
+```mermaid
+erDiagram
+    LABIRINTOS ||--o{ CORRIDAS : possui
+    CORRIDAS ||--o{ TELEMETRIA : gera
+    CORRIDAS ||--o{ MAPA_CELULAS : mapeia
+
+    LABIRINTOS {
+        int id PK
+        string tipo
+        int linhas
+        int colunas
+    }
+
+    CORRIDAS {
+        int id PK
+        int labirinto_id FK
+        int numero_tentativa
+        datetime data_hora_inicio
+        datetime data_hora_fim
+        float tempo_final
+        float velocidade_media
+        float velocidade_pico
+        float consumo_bateria
+        string status
+    }
+
+    TELEMETRIA {
+        int id PK
+        int corrida_id FK
+        int numero_sequencia
+        datetime timestamp
+        int posicao_linha
+        int posicao_coluna
+        string orientacao
+        float velocidade
+        float tensao_bateria
+        float corrente_bateria
+        float tempo_decorrido
+        string estado_corrida
+        string evento
+    }
+
+    MAPA_CELULAS {
+        int id PK
+        int corrida_id FK
+        int linha
+        int coluna
+        bool parede_norte
+        bool parede_sul
+        bool parede_leste
+        bool parede_oeste
+    }
+```
+
+<figure markdown>
+
+![Diagrama Entidade-Relacionamento do banco de dados do sistema web](../figs/der-software.png){ width="700" }
+
+<figcaption>
+
+**Figura.** DER das tabelas `labirintos`, `corridas`, `telemetria` e `mapa_celulas`, gerado a partir do código DBML acima.
+
+</figcaption>
+
+</figure>
+
+#### Visões 4+1
+
+1. **Lógica:** módulos do firmware (Navegação, Percepção via LiDAR e *encoders*,
+   Comunicação) e do sistema web (Ingestão de Telemetria, Encerramento de Corrida,
+   Dashboard, Histórico).
+2. **Processos:** no ESP32-C3, navegação e envio de telemetria rodam concorrentemente
+   sobre o FreeRTOS do Arduino Core, no mesmo *fork* do diagrama de atividades. No
+   Supabase, o PostgREST atende as requisições REST e o Realtime propaga as mudanças de
+   forma assíncrona, sem um processo de servidor próprio para gerenciar.
+3. **Implementação:** mapeia direto para a estrutura de pastas já existente
+   (`src/firmware` para o firmware, `src/frontend` para o dashboard e o histórico, e as
+   Edge Functions do Supabase em `src/backend`).
+4. **Implantação:** ESP32-C3 embarcado no robô, conectado por WiFi ao projeto Supabase
+   (Postgres, PostgREST, Realtime e Edge Functions, todos no mesmo plano gratuito), com
+   o frontend hospedado como site estático (Vercel ou Netlify) consumindo o Supabase
+   diretamente via `supabase-js`.
+5. **Dados:** modelo relacional descrito no MER e no DER acima.
+
 > - **Roteiro de testes funcionais:**
 >   - Código do caso de teste;
 >   - Nome do caso de teste;
