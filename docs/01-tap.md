@@ -61,26 +61,26 @@ O projeto compreende o desenvolvimento, integração e validação de um sistema
 
 ### 4.1 Membros da Equipe
 
-| Nome | Matrícula | Curso | E-mail | Função Principal |
-| :--- | :--- | :--- | :--- | :--- |
-| **Ágata Dias Vieira** | 241012089 | Eng. Aeroespacial | 241012089@aluno.unb.br | Estrutura |
-| **Aline de Carvalho Rodrigues** | 180096923 | Eng. Eletrônica | 180096923@aluno.unb.br | Gerente de Eletrônica |
-| **Ana Carolina Fialho** | 221031102 | Eng. de Software | 221031102@aluno.unb.br | Gerente de Software |
-| **Ana Carolina Nunes** | 221007770 | Eng. Aeroespacial | 221007770@aluno.unb.br | Gerente de Estrutura |
-| **Bruno Bernardes Duarte** | 242034483 | Eng. de Software | 242034483@aluno.unb.br | Gerente Geral |
-| **Cláudio Henrique** | 221007958 | Eng. de Software | 221007958@aluno.unb.br | Software |
-| **Daniel Rodrigues Nascimento** | 231037665 | Eng. de Software | 231037665@aluno.unb.br | Software |
-| **Eduardo Gaspar** | 251020191 | Eng. de Software | 251020191@aluno.unb.br | Software |
-| **Eduardo Viana Ribeiro da Silva** | 251036440 | Eng. de Software | 251036440@aluno.unb.br | Software |
-| **Eliabe Alves** | 251020208 | Eng. de Software | 251020208@aluno.unb.br | Software |
-| **Elias Faria de Oliveira** | 221007706 | Eng. de Software | 221007706@aluno.unb.br | Software |
-| **Giovanna da Costa** | 251021303 | Eng. de Software | 251021303@aluno.unb.br | Software |
-| **João Artur de Andrades** | 231038690 | Eng. Aeroespacial | 231038690@aluno.unb.br | Estrutura |
-| **José Felipe Duarte Guedes de Oliveira** | 221008211 | Eng. de Software | 221008211@aluno.unb.br | Software |
-| **Letícia Lima dos Santos** | 200022393 | Eng. Aeroespacial | 200022393@aluno.unb.br | Estrutura |
-| **Marllon Fausto Cardoso** | 222025914 | Eng. de Software | 222025914@aluno.unb.br | Software |
-| **Paulo Henrique Melo de Souza** | 221022417 | Eng. de Software | 221022417@aluno.unb.br | Gerente de Energia |
-| **Rafael Lima Sant'Ana** | 251035659 | Eng. de Software | 251035659@aluno.unb.br | Software |
+| Nome | Matrícula | Curso | E-mail | Função |
+|---|---|---|---|---|
+| Ágata Dias Vieira | 241012089 | Engenharia Aeroespacial | 241012089@aluno.unb.br | Estrutura |
+| Aline de Carvalho Rodrigues | 180096923 | Engenharia Eletrônica | 180096923@aluno.unb.br | Gerente de Eletrônica |
+| Ana Carolina Fialho | 221031102 | Engenharia de Software | 221031102@aluno.unb.br | Gerente de Software |
+| Ana Carolina Nunes | 221007770  | Engenharia Aeroespacial | 221007770@aluno.unb.br | Gerente de Estrutura |
+| Bruno Bernardes Duarte | 242034483 | Engenharia de Software | 242034483@aluno.unb.br | Gerente Geral |
+| Cláudio Henrique | 221007958 | Engenharia de Software | 221007958@aluno.unb.br | Software |
+| Daniel Rodrigues Nascimento | 231037665 | Engenharia de Software | 231037665@aluno.unb.br | Energia |
+| Eduardo Gaspar | 251020191 | Engenharia de Software | 251020191@aluno.unb.br | Eletrônica |
+| Eduardo Viana Ribeiro da Silva | 251036440 | Engenharia de Software | 251036440@aluno.unb.br | Software |
+| Eliabe Alves | 251020208 | Engenharia de Software | 251020208@aluno.unb.br | Eletrônica |
+| Elias Faria de Oliveira | 221007706 | Engenharia de Software | 221007706@aluno.unb.br | Energia |
+| Giovanna da Costa | 251021303 | Engenharia de Software | 251021303@aluno.unb.br | Eletrônica |
+| Joao Artur de Andrades | 231038690 | Engenharia Aeroespacial | 231038690@aluno.unb.br | Estrutura |
+| Jose Felipe Duarte Guedes de Oliveira | 221008211 | Engenharia de Software | 221008211@aluno.unb.br | Eletrônica |
+| Letícia Lima Dos Santos | 200022393 | Engenharia Aeroespacial | 200022393@aluno.unb.br | Estrutura |
+| Marllon Fausto Cardoso | 222025914 | Engenharia de Software | 222025914@aluno.unb.br | Energia |
+| Paulo Henrique Melo de Souza | 221022417 | Engenharia de Software | 221022417@aluno.unb.br | Gerente de Energia |
+| Rafael Lima Sant Ana | 251035659 | Engenharia de Software | 251035659@aluno.unb.br | Software |
 
 **Orientador:** Prof. Dr. Hilmer Rodrigues Neri (Turma 05)
 
