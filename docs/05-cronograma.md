@@ -1,10 +1,30 @@
 # Cronograma
 
->Exporte as informações do GitHub Projects [em formato CSV](https://docs.github.com/en/issues/planning-and-tracking-with-projects/managing-your-project/exporting-your-projects-data), e [renderize em Markdown](https://www.google.com/search?q=convert+CSV+file+to+Markdown+table) no formato a seguir:
-
-| **ID** | **Fase** | **Entrega** | **Tarefa** | **Data de Início** | **Data de Fim** | **Responsável** | **Predecessor** | **% de Execução** | **Status** | **_Milestone_** |
-|:------:|:------:|:--------:|------------|-----------------|-----------------|--------------------|-----------------------|:-----------------:|-------------|---------------|
-| 1  |   |   |   |   |   |   |   |   |   |   |
-| 1.1  |   |   |   |   |   |   |   |   |   |   |
-| 2  |   |   |   |   |   |   |   |   |   |   |
-| ...  |   |   |   |   |   |   |   |   |   |   |
+| **ID** | **Fase** |     **Entrega**     | **Tarefa**                      | **Data de Início** | **Data de Fim** | **Responsável**         | **Predecessor** | **% de Execução** | **Status**   | **_Milestone_** |
+| :----: | :------: | :-----------------: | ------------------------------- | ------------------ | --------------- | ----------------------- | --------------- | :---------------: | ------------ | --------------- |
+|   1    |          |  Sistema de Tração  |                                 |                    |                 |                         |                 |                   |              | ED1             |
+|  1.1   |    1     |  Sistema de Tração  | Modelagem (CAD)                 | -                  | 28/09/2026      | Ana Nunes e Ágata       | -               |       100%        | Concluído    | ED1             |
+|  1.2   |    1     |  Sistema de Tração  | Desenho técnico                 | 29/09/2026         | 02/10/2026      | Ágata e Letícia         | 1.1             |        50%        | Em andamento | ED1             |
+|  1.3   |    1     |  Sistema de Tração  | Dimensionamento mecânico        | 03/10/2026         | 06/10/2026      | Letícia e João Arthur   | 1.2             |        50%        | Em andamento | ED1             |
+|  1.4   |    1     |  Sistema de Tração  | Seleção de materiais            | 07/10/2026         | 09/10/2026      | João Arthur e Ágata     | 1.3             |       100%        | Concluído    | ED1             |
+|  1.5   |    1     |  Sistema de Tração  | Fabricação                      | 14/10/2026         | 20/10/2026      | Letícia e Ana Nunes     | 1.4             |        0%         | A fazer      | ED1             |
+|  1.6   |    1     |  Sistema de Tração  | Testes de tração/motores        | 21/10/2026         | 23/10/2026      | João Arthur e Ana Nunes | 1.5             |        0%         | A fazer      | ED1             |
+|   2    |          | Estrutura Mecânica  |                                 |                    |                 |                         |                 |                   |              | ED1             |
+|  2.1   |    1     | Estrutura Mecânica  | Modelagem (CAD)                 | 21/09/2026         | 28/09/2026      | Ana Nunes e Ágata       | -               |       100%        | Concluído    | ED1             |
+|  2.2   |    1     | Estrutura Mecânica  | Desenho técnico                 | 29/09/2026         | 02/10/2026      | Ágata e Letícia         | 2.1             |        50%        | Em andamento | ED1             |
+|  2.3   |    1     | Estrutura Mecânica  | Análise e refinamento           | 03/10/2026         | 06/10/2026      | Letícia e João Arthur   | 2.2             |        50%        | Em andamento | ED1             |
+|  2.4   |    1     | Estrutura Mecânica  | Seleção de materiais            | 07/10/2026         | 09/10/2026      | João Arthur e Ágata     | 2.3             |        50%        | Em andamento | ED1             |
+|  2.5   |    1     | Estrutura Mecânica  | Prototipagem                    | 10/10/2026         | 13/10/2026      | Letícia e Ana Nunes     | 2.4             |        0%         | A fazer      | ED1             |
+|  2.6   |    1     | Estrutura Mecânica  | Fabricação                      | 14/10/2026         | 20/10/2026      | João Arthur e Ana Nunes | 2.5             |        0%         | A fazer      | ED1             |
+|   3    |          | Labirinto de Testes |                                 |                    |                 |                         |                 |                   |              | ED1             |
+|  3.1   |    1     |     Lab. testes     | Construção do mapa do labirinto | 10/10/2026         | 14/10/2026      | Ana Nunes e Ágata       | -               |        0%         | A fazer      | ED1             |
+|  3.2   |    1     |     Lab. testes     | Construção física               | 21/10/2026         | 23/10/2026      | Ágata e Letícia         | 2.6             |        0%         | A fazer      | ED1             |
+|   4    |          |     Integração      |                                 |                    |                 |                         |                 |                   |              | ED2             |
+|  4.1   |    2     |     Integração      | Projeto de Suportes             | 10/09/2026         | 15/09/2026      | Letícia e João Arthur   | 2.1             |       100%        | Concluído    | ED2             |
+|  4.2   |    2     |     Integração      | Modelagem (CAD)                 | 21/09/2026         | 28/09/2026      | João Arthur e Ágata     | 4.1             |       100%        | Concluído    | ED2             |
+|  4.3   |    2     |     Integração      | Análise e refinamento           | 29/09/2026         | 02/10/2026      | Letícia e Ana Nunes     | 4.2             |        50%        | Em andamento | ED2             |
+|  4.4   |    2     |     Integração      | Desenho técnico                 | 29/09/2026         | 02/10/2026      | João Arthur e Ana Nunes | 4.3             |        50%        | Em andamento | ED2             |
+|  4.5   |    2     |     Integração      | Fabricação                      | 14/10/2026         | 20/10/2026      | Ana Nunes e Ágata       | 4.4             |        0%         | A fazer      | ED2             |
+|  4.6   |    2     |     Integração      | Montagem                        | 13/11/2026         | 15/11/2026      | Ágata e Letícia         | 4.5             |        0%         | A fazer      | ED2             |
+|  4.7   |    2     |     Integração      | Validação estrutural            | 16/11/2026         | 18/11/2026      | Letícia e João Arthur   | 4.6             |        0%         | A fazer      | ED2             |
+|  4.8   |    2     |     Integração      | Testes                          | 19/11/2026         | 21/11/2026      | João Arthur e Ágata     | 4.7, 3.3        |        0%         | A fazer      | ED2             |
