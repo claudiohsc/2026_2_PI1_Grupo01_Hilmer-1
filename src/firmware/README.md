@@ -21,13 +21,14 @@ src/firmware/
 | `navegacao` | Navegação | Localização, decisão de movimento e detecção do objetivo |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
 | `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
+| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, sem hardware |
 | `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (LiDAR por UART, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
 
-- As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
+- As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
 - O acesso ao hardware passa pelas interfaces de `hal`. Os drivers reais ficam em `drivers_esp32`, e `src/main.cpp` liga cada driver à sua interface.
-- Para testar a lógica sem sensor, crie uma implementação falsa da interface (por exemplo, um `ILidar` que devolve distâncias fixas).
+- Para testar a lógica sem sensor, use o `LidarSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência e `simularFalha(true)` faz o sensor parar de responder.
 - Evite alocação dinâmica na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo (`MAX_LINHAS_LABIRINTO` × `MAX_COLUNAS_LABIRINTO`) bastam.
 
 ## Instalação
@@ -54,7 +55,7 @@ Execute os comandos dentro de `src/firmware`:
 | Nível | Onde roda | Ferramenta | Quando usar |
 |---|---|---|---|
 | Unitário | Computador (`native`) | Unity | Lógica pura: tipos, classificação, mapa, serialização |
-| Integração | Computador (`native`) | Unity, com implementações falsas das interfaces de `hal` | Percepção → mapa em labirinto simulado |
+| Integração | Computador (`native`) | Unity, com falsos de `simulacao` no lugar do hardware | Percepção → mapa em labirinto simulado |
 | Bancada | Placa com o hardware real | Monitor serial e checklist do teste | LiDAR real, encoders, motores |
 
 Para criar um teste:
