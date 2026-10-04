@@ -1,3 +1,8 @@
+/// @file test_lidar_simulado.cpp
+/// @brief Testes unitários do `LidarSimulado`: leitura fixa, fila em ordem, falha simulada,
+/// fila cheia e uso pela interface `ILidar`. Roda no computador:
+/// `pio test -e native -f test_simulacao`.
+
 #include <unity.h>
 
 #include "LidarSimulado.h"
@@ -7,6 +12,7 @@ using namespace micromouse;
 void setUp() {}
 void tearDown() {}
 
+/// Monta uma leitura com as distâncias, em mm, à frente, à esquerda e à direita.
 static DistanciasLaterais leitura(uint16_t frente, uint16_t esquerda, uint16_t direita) {
   return DistanciasLaterais{frente, esquerda, direita};
 }

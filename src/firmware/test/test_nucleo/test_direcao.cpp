@@ -1,9 +1,16 @@
+/// @file test_direcao.cpp
+/// @brief Testes unitários de `Direcao.h`: giros de 90° e 180° e conversão de lado relativo
+/// em direção absoluta. Roda no computador: `pio test -e native -f test_nucleo`.
+///
+/// Também serve de modelo para novos testes (veja "Padrão de testes" no README).
+
 #include <unity.h>
 
 #include "Direcao.h"
 
 using namespace micromouse;
 
+/// Compara duas direções pelo valor numérico, já que o Unity não conhece o enum `Direcao`.
 #define ASSERT_DIRECAO(esperada, obtida) \
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(esperada), static_cast<uint8_t>(obtida))
 
