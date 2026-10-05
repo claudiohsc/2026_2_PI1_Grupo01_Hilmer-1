@@ -1,9 +1,11 @@
 name: Deploy docs
 
+# Toda a documentação é integrada na branch `documentacao`, que publica o site.
+# A `main` recebe a documentação nos marcos de entrega (merge de documentacao → main).
 on:
   push:
     branches:
-      - main
+      - documentacao
     paths:
       - "docs/**"
       - "mkdocs.yml"
