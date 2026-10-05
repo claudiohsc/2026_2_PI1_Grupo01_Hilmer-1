@@ -1,0 +1,38 @@
+name: CI Firmware
+
+# Sem filtro de caminhos: o check precisa reportar em todo PR para a main, senão a proteção de branch trava PRs que não mexem no firmware.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: src/firmware
+
+jobs:
+  testes:
+    name: Testes nativos
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-nativo-${{ runner.os }}-${{ hashFiles('src/firmware/platformio.ini') }}
+          restore-keys: pio-nativo-${{ runner.os }}-
+      - run: pip install platformio==6.2.0
+      - run: pio test -e native
