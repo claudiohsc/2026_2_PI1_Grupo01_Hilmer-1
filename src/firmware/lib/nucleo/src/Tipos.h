@@ -27,6 +27,9 @@ enum class Lado : uint8_t { Frente, Esquerda, Direita };
 /// `Desconhecido` indica uma parede que o robô ainda não observou (HU-02, HU-03).
 enum class EstadoParede : uint8_t { Desconhecido, Livre, Parede };
 
+// Dimensão do Labirinto
+enum class DimensaoMapa : uint8_t { Labirinto4x4, Labirinto8x4, Labirinto12x4 };
+
 /// Posição discreta de uma célula do labirinto.
 ///
 /// Os limites são dados por `MAX_LINHAS_LABIRINTO` e `MAX_COLUNAS_LABIRINTO`
