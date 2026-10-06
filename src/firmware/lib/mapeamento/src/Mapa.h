@@ -75,6 +75,10 @@ class Mapa {
   /// @return O que aconteceu com o registro.
   ResultadoRegistro registrarParede(PosicaoCelula posicao, Direcao direcao, EstadoParede estado);
 
+  /// Dois mapas são iguais quando têm o mesmo tamanho e o mesmo estado em todas as paredes.
+  bool operator==(const Mapa& outro) const;
+  bool operator!=(const Mapa& outro) const;
+
  private:
   DimensaoMapa dimensao;
   uint8_t linhas;

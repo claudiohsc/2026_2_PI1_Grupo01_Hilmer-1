@@ -89,4 +89,30 @@ ResultadoRegistro Mapa::registrarParede(PosicaoCelula posicao, Direcao direcao, 
   return ResultadoRegistro::Registrada;
 }
 
+namespace {
+
+bool celulasIguais(const Mapa::Celula& a, const Mapa::Celula& b) {
+  return a.norte == b.norte && a.sul == b.sul && a.leste == b.leste && a.oeste == b.oeste;
+}
+
+}  // namespace
+
+bool Mapa::operator==(const Mapa& outro) const {
+  if (dimensao != outro.dimensao) {
+    return false;
+  }
+  for (uint8_t linha = 0; linha < linhas; linha++) {
+    for (uint8_t coluna = 0; coluna < colunas; coluna++) {
+      if (!celulasIguais(celulas[linha][coluna], outro.celulas[linha][coluna])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool Mapa::operator!=(const Mapa& outro) const {
+  return !(*this == outro);
+}
+
 }  // namespace micromouse

@@ -214,6 +214,63 @@ void test_perimetro_recusa_livre_e_aceita_parede_repetida() {
   ASSERT_RESULTADO(ResultadoRegistro::JaConhecida, mapa.registrarParede(pos(1, 3), Direcao::Leste, EstadoParede::Parede));
 }
 
+void test_mapas_com_as_mesmas_paredes_sao_iguais() {
+  Mapa a(DimensaoMapa::Labirinto4x4);
+  Mapa b(DimensaoMapa::Labirinto4x4);
+  TEST_ASSERT_TRUE(a == b);
+  TEST_ASSERT_FALSE(a != b);
+
+  a.registrarParede({1, 1}, Direcao::Norte, EstadoParede::Parede);
+  TEST_ASSERT_TRUE(a != b);
+
+  b.registrarParede({1, 1}, Direcao::Norte, EstadoParede::Parede);
+  TEST_ASSERT_TRUE(a == b);
+}
+
+void test_registrar_pelo_lado_da_vizinha_gera_o_mesmo_mapa() {
+  Mapa a(DimensaoMapa::Labirinto4x4);
+  Mapa b(DimensaoMapa::Labirinto4x4);
+  a.registrarParede({1, 1}, Direcao::Norte, EstadoParede::Parede);
+  b.registrarParede({2, 1}, Direcao::Sul, EstadoParede::Parede);
+  TEST_ASSERT_TRUE(a == b);
+}
+
+void test_mapas_de_tamanhos_diferentes_sao_diferentes() {
+  TEST_ASSERT_TRUE(Mapa(DimensaoMapa::Labirinto4x4) != Mapa(DimensaoMapa::Labirinto8x4));
+}
+
+static uint32_t proximoAleatorio(uint32_t& estado) {
+  estado = estado * 1664525u + 1013904223u;
+  return estado >> 16;
+}
+
+// Registros pseudoaleatórios com semente fixa: o teste é reproduzível.
+static void registrarAleatoriamente(Mapa& mapa, uint32_t semente, int quantidade) {
+  uint32_t estado = semente;
+  for (int i = 0; i < quantidade; i++) {
+    const int linha = proximoAleatorio(estado) % mapa.obterLinhas();
+    const int coluna = proximoAleatorio(estado) % mapa.obterColunas();
+    const Direcao direcao = static_cast<Direcao>(proximoAleatorio(estado) % 4);
+    const EstadoParede estadoParede =
+        (proximoAleatorio(estado) % 2 == 0) ? EstadoParede::Parede : EstadoParede::Livre;
+    mapa.registrarParede(pos(linha, coluna), direcao, estadoParede);
+  }
+}
+
+void test_consistencia_se_mantem_apos_registros_pseudoaleatorios() {
+  Mapa mapas[] = {Mapa(DimensaoMapa::Labirinto4x4), Mapa(DimensaoMapa::Labirinto8x4),
+                  Mapa(DimensaoMapa::Labirinto12x4)};
+  for (Mapa& mapa : mapas) {
+    registrarAleatoriamente(mapa, 12345u, 500);
+    verificarConsistencia(mapa);
+  }
+}
+
+void test_mapa_ocupa_pouca_memoria() {
+  // 12 colunas x 4 linhas de 4 bytes, mais o cabeçalho: bem abaixo dos 320 KB de RAM do ESP32-C3.
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(256, sizeof(Mapa));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_constroi_labirinto_4x4);
@@ -230,5 +287,10 @@ int main(int, char**) {
   RUN_TEST(test_registrar_espelha_na_celula_vizinha_nas_quatro_direcoes);
   RUN_TEST(test_espelhamento_em_todas_as_arestas_internas_dos_tres_tamanhos);
   RUN_TEST(test_perimetro_recusa_livre_e_aceita_parede_repetida);
+  RUN_TEST(test_mapas_com_as_mesmas_paredes_sao_iguais);
+  RUN_TEST(test_registrar_pelo_lado_da_vizinha_gera_o_mesmo_mapa);
+  RUN_TEST(test_mapas_de_tamanhos_diferentes_sao_diferentes);
+  RUN_TEST(test_consistencia_se_mantem_apos_registros_pseudoaleatorios);
+  RUN_TEST(test_mapa_ocupa_pouca_memoria);
   return UNITY_END();
 }
