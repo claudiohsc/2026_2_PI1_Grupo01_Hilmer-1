@@ -16,10 +16,21 @@
 
 namespace micromouse {
 
+/// Resultado de `Mapa::registrarParede`.
+enum class ResultadoRegistro : uint8_t {
+  Registrada,   ///< A parede era desconhecida e foi gravada.
+  JaConhecida,  ///< A parede já tinha exatamente esse estado; nada mudou.
+  Conflito,     ///< A parede já tem outro estado conhecido; nada foi alterado.
+  Invalida      ///< Célula fora do mapa ou estado `Desconhecido`.
+};
+
 /// Mapa de um labirinto de até `MAX_LINHAS_LABIRINTO` × `MAX_COLUNAS_LABIRINTO` células.
 ///
 /// Cada célula guarda o estado (`EstadoParede`) das suas quatro paredes. Paredes ainda não
 /// observadas ficam `Desconhecido`.
+/// O perímetro já é conhecido na criação: toda parede externa começa como `Parede`.
+/// Uma parede entre duas células é a mesma vista dos dois lados: registrar o lado leste de
+/// uma célula grava também o lado oeste da vizinha (e o mesmo para norte e sul).
 class Mapa {
  public:
   /// Estado das quatro paredes de uma célula.
@@ -53,16 +64,24 @@ class Mapa {
   EstadoParede obterParede(PosicaoCelula posicao, Direcao direcao) const;
 
   /// Registra o estado de uma parede observada.
+  ///
+  /// A parede também é gravada na célula vizinha (lado oposto), quando ela existe.
+  ///
+  /// Não sobrescreve um estado já conhecido: se a parede já tem outro estado, o mapa não muda e
+  /// o retorno é `Conflito`. A política para esse caso fica com quem chama.
   /// @param posicao Célula da parede.
   /// @param direcao Lado da célula (norte, leste, sul ou oeste).
-  /// @param estado Estado observado da parede.
-  void registrarParede(PosicaoCelula posicao, Direcao direcao, EstadoParede estado);
+  /// @param estado `Parede` ou `Livre`; `Desconhecido` não pode ser registrado.
+  /// @return O que aconteceu com o registro.
+  ResultadoRegistro registrarParede(PosicaoCelula posicao, Direcao direcao, EstadoParede estado);
 
  private:
   DimensaoMapa dimensao;
   uint8_t linhas;
   uint8_t colunas;
   Celula celulas[MAX_LINHAS_LABIRINTO][MAX_COLUNAS_LABIRINTO];
+
+  void preencherPerimetro();
 };
 
 }  // namespace micromouse
