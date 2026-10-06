@@ -6,21 +6,19 @@
 #include "Tipos.h"
 
 namespace micromouse {
-
-/// @brief Estrutura que armazena a classificação das 3 paredes ao redor do robô.
-
-/// @brief Classe responsável por classificar distâncias de sensores em estados de parede.
-class ClassificadorParede {
-  public:
+  /// @brief Classe responsável por classificar distâncias de sensores em estados de parede.
+  class ClassificadorParede {
+    private:
+    uint16_t limiarDistanciaMm;
+    
+    
+    public:
+    /// @brief Estrutura que armazena a classificação das 3 paredes ao redor do robô.
   struct ResultadoClassificacao {
     EstadoParede frente   = EstadoParede::Desconhecido;
     EstadoParede esquerda = EstadoParede::Desconhecido;
     EstadoParede direita  = EstadoParede::Desconhecido;
   };
-  private:
-  uint16_t limiarDistanciaMm;
-
- public:
   /// @brief Construtor do classificador de paredes.
   /// @param limiarMm Limiar de distância em milímetros (padrão: TAMANHO_CELULA_MM).
   explicit ClassificadorParede(uint16_t limiarMm = TAMANHO_CELULA_MM);

@@ -8,7 +8,7 @@ void tearDown(void) {}
  /// @brief Cenário 1: Obstáculo próximo (todas as médias abaixo do limiar de 180mm).
  /// 
  /// Verifica se leituras curtas são classificadas como 'Parede' para todas as direções.
- /// - Médias calculadas: Frente = 101.6mm | Esquerda = 89mm | Direita = 83.3mm
+ /// - Médias calculadas: Frente = 90mm | Esquerda = 92.3mm | Direita = 75mm
 void test_classificador_parede_proxima(void) {
     micromouse::ClassificadorParede classificador(180);
 
@@ -33,9 +33,9 @@ void test_classificador_passagem_livre(void) {
     micromouse::ClassificadorParede classificador(180);
 
     micromouse::DistanciasLaterais amostra[3] = {
-        { 300, 310 , 290},
-        { 250, 260, 245},
-        { 400, 410, 390}
+        { 300, 250 , 400 },
+        { 310, 260, 410 },
+        { 290, 245, 390 }
     };
 
     auto resultado = classificador.classificar(amostra, 3);
@@ -117,7 +117,7 @@ void test_classificador_leituras_com_ruido(void) {
  /// @brief Cenário 6: Tratamento de caso de borda para vetor de amostra vazio.
  /// 
  /// Atua como proteção defensiva (fail-safe): sem dados dos sensores, assume
- /// 'Parede' para evitar colisões na navegação do robô.
+ /// 'Desconhecido' para evitar colisões na navegação do robô.
 void test_classificador_vetor_vazio(void) {
     micromouse::ClassificadorParede classificador(180);
 
