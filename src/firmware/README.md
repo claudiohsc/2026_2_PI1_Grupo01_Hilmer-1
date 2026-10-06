@@ -33,6 +33,27 @@ src/firmware/
 - Para testar a lógica sem sensor, use o `LidarSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência e `simularFalha(true)` faz o sensor parar de responder.
 - Evite alocação dinâmica na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo (`MAX_LINHAS_LABIRINTO` × `MAX_COLUNAS_LABIRINTO`) bastam.
 
+## Mapa do labirinto
+
+O `Mapa` (`lib/mapeamento`) guarda o estado das quatro paredes de cada célula. O tamanho vem do enum `DimensaoMapa` (`Labirinto4x4`, `Labirinto8x4` e `Labirinto12x4`), escrito como colunas × linhas: `Labirinto12x4` tem 12 colunas e 4 linhas. A matriz tem capacidade fixa para o maior labirinto, sem alocação dinâmica, e o objeto ocupa 195 bytes.
+
+**Eixos:** a partida é a célula (0, 0), no canto inferior esquerdo; Norte aumenta a linha e Leste aumenta a coluna. `vizinha()` (`nucleo/Direcao.h`) calcula a célula ao lado de uma posição.
+
+```cpp
+Mapa mapa(DimensaoMapa::Labirinto12x4);
+mapa.registrarParede({0, 0}, Direcao::Norte, EstadoParede::Parede);
+mapa.obterParede({1, 0}, Direcao::Sul);  // Parede: a célula vizinha foi atualizada junto
+```
+
+| Regra | Comportamento |
+|---|---|
+| Paredes ainda não observadas | `Desconhecido` |
+| Perímetro | Já nasce como `Parede` |
+| Registro | Grava também o lado oposto da célula vizinha |
+| Estado já conhecido | `registrarParede` não sobrescreve: retorna `JaConhecida` (mesmo valor) ou `Conflito` (valor diferente); a política para o conflito fica com quem chama |
+| Entrada inválida | `Invalida`: célula fora do mapa ou estado `Desconhecido` |
+| Comparação | `==` compara o tamanho e todas as paredes |
+
 ## Instalação
 
 Instale o PlatformIO por uma das opções:
