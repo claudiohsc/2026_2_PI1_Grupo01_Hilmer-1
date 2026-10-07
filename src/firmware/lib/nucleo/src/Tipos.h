@@ -15,6 +15,9 @@ namespace micromouse {
 /// A ordem dos valores segue o sentido horário (Norte → Leste → Sul → Oeste).
 /// As funções de `Direcao.h` dependem dessa ordem para girar o robô com
 /// aritmética módulo 4; não reordene os valores.
+///
+/// Convenção de eixos: Norte aumenta a `linha` e Leste aumenta a `coluna` de `PosicaoCelula`,
+/// com a partida (0, 0) no canto inferior esquerdo (veja `vizinha()` em `Direcao.h`).
 enum class Direcao : uint8_t { Norte, Leste, Sul, Oeste };
 
 /// Lado relativo ao robô, usado nas leituras do LiDAR.
@@ -27,7 +30,10 @@ enum class Lado : uint8_t { Frente, Esquerda, Direita };
 /// `Desconhecido` indica uma parede que o robô ainda não observou (HU-02, HU-03).
 enum class EstadoParede : uint8_t { Desconhecido, Livre, Parede };
 
-// Dimensão do Labirinto
+/// Tamanho do labirinto, entre os três da competição.
+///
+/// Os nomes seguem a notação "colunas × linhas": `Labirinto12x4` tem 12 colunas e 4 linhas
+/// (216 × 72 cm). `Labirinto4x4` mede 72 × 72 cm e `Labirinto8x4`, 144 × 72 cm.
 enum class DimensaoMapa : uint8_t { Labirinto4x4, Labirinto8x4, Labirinto12x4 };
 
 /// Posição discreta de uma célula do labirinto.
