@@ -1,3 +1,7 @@
+# Orçamento
+
+Este artefato apresenta um plano de custos do projeto micromouse da disciplina de PI1. O plano de custos mostra uma estimativa dos custos com os materiais, componentes, ferramentas e horas de desenvolvimento(Investimento da universidade por período para a formação dos estudantes, com base nas horas gastas de estudo, desenvolvimento, montagem e experimentação no projeto).
+
 # Lista de Compras — Micromouse PI1
 
 ## Lista de componentes
@@ -57,3 +61,26 @@
 | Itens para comprar/fabricar | 1 |
 | Itens para fazer depois | 2 |
 | Custo estimado dos itens com preço informado | **R$ 1.184,56** |
+
+## Custos de Atividades
+
+Abaixo temos a estimativa de gastos com mão de obra, com base nas horas que os estudantes gastam no projeto e na disciplina em geral, levando em consideração o quanto a universidade desembolsa para a formação dos estudantes.
+
+## Estimativa de custos
+
+|Estimativa| Descrição | Valor
+|--|--|--|
+|Perído do projeto| 16 semanas| 
+
+## Referências Bibliográficas
+
+> [1] Plano de gerenciamento de custos: como os CFOs devem atuar?. Disponível em: https://www.concur.com.br/blog/article/plano-de-gerenciamento-de-custos. Acesso em: 18/04/2026
+
+>
+
+
+## Histórico de versão
+
+| Versão | Data | Descrição | Autor(es) | Revisor(es) |
+|:-:|:-:|---|---|---|
+| 0.1 | 10/10/2026 | Ajuste de documentação do orçamento e do artefato| [Elias Oliveira](https://github.com/EliasOliver21) | — |
