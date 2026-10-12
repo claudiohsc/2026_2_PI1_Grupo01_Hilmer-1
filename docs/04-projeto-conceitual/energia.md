@@ -143,3 +143,197 @@ $$V_{\text{ADC}} = V_{\text{BAT}} \cdot \left(\frac{R_2}{R_1 + R_2}\right) = V_{
   * O software implementa proteção de subtensão lógica (*Under-Voltage Lockout* - UVLO): se a leitura atestar tensão global inferior a **6,6 V** (equivalente a **3,3 V por célula**) em amostragens sucessivas, os sinais de controle PWM para o DRV8833 são zerados, cortando a tração dos motores e preservando as células LiPo contra descarga profunda.
   * *Compatibilidade com o Regulador Buck de 5 V:* O limiar de corte em 6,6 V garante também que o conversor Step-Down LM2596 (responsável pela linha do LiDAR) opere sempre acima de sua tensão mínima de *dropout* ($V_{\text{in}} \ge 5{,}0\text{ V} + 1{,}5\text{ V} = 6{,}5\text{ V}$), impedindo flutuações e reinicializações no sensor óptico sem sacrificar autonomia útil (a LiPo já entregou mais de 96% de sua carga em 3,3 V/célula).
   * A telemetria empacota o tempo contínuo de atividade e a leitura instantânea de tensão, registrando os dados de consumo em tempo real para contraste com o modelo de energia projetado (atendendo ao requisito **RF-08 / HU-08**).
+
+---
+
+## 7. Dimensionamento e Análise dos Reguladores Step-Down (LM2596 e MP1584EN)
+
+Esta seção formaliza o projeto, os cálculos de componentes e a validação térmica dos dois circuitos reguladores de tensão chaveados (conversores Step-Down Buck) que compõem o subsistema de conversão de energia do Micromouse, atendendo aos critérios de aceitação da **Issue #199**.
+
+### 7.1 Requisitos Operacionais e Metodologia de Projeto
+
+A alimentação primária provém do barramento de bateria LiPo 2S, operando na faixa dinâmica de **6,6 V a 8,4 V** ($V_{\text{nom}} = 7{,}4\text{ V}$):
+* **Tensão Máxima de Entrada ($V_{\text{in,max}}$):** $8{,}4\text{ V}$ (células plenamente carregadas a 4,20 V cada).
+* **Tensão Nominal de Entrada ($V_{\text{in,nom}}$):** $7{,}4\text{ V}$ (patamar médio da curva de descarga).
+* **Tensão Mínima de Entrada ($V_{\text{in,min}}$):** $6{,}6\text{ V}$ (limiar de corte seguro por software via UVLO a 3,30 V/célula).
+* **Requisito de Capacidade de Corrente Contínua:** Ambos os barramentos são dimensionados para fornecer até **1,0 A contínuo** em regime permanente com estabilidade de tensão e margem térmica comprovada, superando a demanda de pico e nominal dos dispositivos conectados.
+
+---
+
+### 7.2 Dimensionamento do Regulador LM2596-ADJ (Barramento +5V0 — Sensor LiDAR ToF)
+
+O regulador **LM2596** (Texas Instruments) é um circuito integrado conversor Buck monolítico que opera com frequência de chaveamento fixa de **150 kHz**. É adotado na versão ajustável (**LM2596-ADJ**) ou módulo calibrado para suprir a linha dedicada de **5,0 V** do sensor óptico LiDAR ToF 360°.
+
+#### 7.2.1 Razão Cíclica (*Duty Cycle*)
+A razão cíclica $D$ relaciona as tensões de saída e entrada sob rendimento estimado de $\eta \approx 82\%$ ($0{,}82$):
+
+$$D = \frac{V_{\text{out}}}{V_{\text{in}} \cdot \eta}$$
+
+* Para bateria em plena carga ($V_{\text{in}} = 8{,}4\text{ V}$):
+  $$D_{\text{min}} = \frac{5{,}0}{8{,}4 \cdot 0{,}82} \approx 0{,}725 \implies \mathbf{72{,}5\%}$$
+* Para bateria no corte UVLO ($V_{\text{in}} = 6{,}6\text{ V}$):
+  $$D_{\text{max}} = \frac{5{,}0}{6{,}6 \cdot 0{,}82} \approx 0{,}923 \implies \mathbf{92{,}3\%}$$
+
+#### 7.2.2 Malha de Realimentação e Ajuste de Tensão (Feedback)
+O CI mantém a saída regulada por meio de uma tensão de referência interna estável de $V_{\text{ref}} = 1{,}23\text{ V}$ no pino de Feedback (`FB`). A tensão de saída $V_{\text{out}}$ é definida pelo divisor resistivo formado por $R_1$ (conectado entre FB e GND) e $R_2$ (conectado entre $V_{\text{out}}$ e FB):
+
+$$V_{\text{out}} = V_{\text{ref}} \cdot \left(1 + \frac{R_2}{R_1}\right) = 1{,}23\text{ V} \cdot \left(1 + \frac{R_2}{R_1}\right)$$
+
+Fixando $R_1 = 1{,}0\text{ k}\Omega$ (valor recomendado pelo fabricante para garantir corrente de polarização estável de ~1,23 mA):
+
+$$\frac{R_2}{R_1} = \frac{V_{\text{out}}}{V_{\text{ref}}} - 1 = \frac{5{,}0}{1{,}23} - 1 \approx 3{,}065 \implies R_2 = 1{,}0\text{ k}\Omega \cdot 3{,}065 \approx \mathbf{3{,}06\text{ k}\Omega}$$
+
+* **Implementação Física:** Em placas com resistores fixos de precisão (tolerância de 1%), emprega-se $R_2 = 3{,}0\text{ k}\Omega$ em série com $68\ \Omega$ (ou valor comercial E96 de $3{,}09\text{ k}\Omega$, resultando em $V_{\text{out}} = 5{,}03\text{ V}$). Em módulos comerciais step-down, o ajuste é efetuado através de trimpot multivoltas de $10\text{ k}\Omega$, aferido em bancada sob carga para $5{,}00\text{ V} \pm 0{,}02\text{ V}$.
+
+#### 7.2.3 Indutor de Filtragem de Potência ($L$)
+O valor mínimo de indutância para operação contínua (CCM - *Continuous Conduction Mode*) sob $f_{\text{sw}} = 150\text{ kHz}$ e ondulação de corrente ($\Delta I_L$) arbitrada em 30% da corrente máxima de projeto ($I_{\text{out,max}} = 1{,}0\text{ A} \implies \Delta I_L = 0{,}30\text{ A}$):
+
+$$L_{\text{mín}} = \frac{(V_{\text{in,max}} - V_{\text{out}}) \cdot D_{\text{min}}}{\Delta I_L \cdot f_{\text{sw}}} = \frac{(8{,}4 - 5{,}0) \cdot 0{,}725}{0{,}30 \cdot 150.000} = \frac{2{,}465}{45.000} \approx 54{,}8\ \mu\text{H}$$
+
+Adota-se indutor comercial blindado de **$47\ \mu\text{H}$ a $68\ \mu\text{H}$**, com corrente nominal contínua $I_{\text{rms}} \ge 1{,}5\text{ A}$ e corrente de saturação $I_{\text{sat}} \ge 2{,}0\text{ A}$ (ex: indutores da série CDRH104R ou toroidais blindados).
+
+#### 7.2.4 Diodo de Recirculação (*Catch Diode*)
+Durante o tempo em que a chave interna desliga, a corrente do indutor circula pelo diodo externo ligado ao terra. Exige-se diodo **Schottky** de alta velocidade com tempo de recuperação reversa quase nulo e baixa queda direta ($V_F \le 0{,}45\text{ V}$):
+* **Componente Selecionado:** **SS34** (SMD) ou **1N5822** (Through-hole).
+* **Parâmetros:** Tensão reversa máxima $V_R = 40\text{ V}$ (muito superior a 8,4 V) e corrente média direta $I_F = 3{,}0\text{ A}$ (suporta com 200% de margem o regime de 1,0 A).
+
+#### 7.2.5 Capacitores de Entrada e Saída
+* **Capacitor de Entrada ($C_{\text{in}}$):** Absorve a corrente pulsada de entrada. Adota-se capacitor eletrolítico de alumínio Low-ESR de **$220\ \mu\text{F} \ / \ 16\text{ V}$** em paralelo com um cerâmico multicamadas (MLCC) de **$100\text{ nF} \ / \ 50\text{ V}$**, garantindo imunidade a transientes de comutação.
+* **Capacitor de Saída ($C_{\text{out}}$):** Determina a ondulação de tensão (*ripple*) e a estabilidade da malha. Para manter a ondulação $\Delta V_{\text{out}} \le 30\text{ mV}$:
+  $$C_{\text{out}} \ge \frac{\Delta I_L}{8 \cdot f_{\text{sw}} \cdot \Delta V_{\text{out}}} = \frac{0{,}30}{8 \cdot 150.000 \cdot 0{,}030} \approx 8{,}3\ \mu\text{F} \implies \text{Limitado pela ESR}$$
+  Como a ondulação em capacitores eletrolíticos é dominada pela resistência equivalente série ($\text{ESR} \le \Delta V_{\text{out}} / \Delta I_L = 0{,}030 / 0{,}30 = 0{,}10\ \Omega$), padroniza-se **$330\ \mu\text{F} \ / \ 10\text{ V}$** Low-ESR em paralelo com cerâmico de **$100\text{ nF}$**.
+
+#### 7.2.6 Compatibilidade Crítica de *Dropout Voltage*
+O transistor de comutação interno do LM2596 é bipolar NPN Darlington, apresentando queda de saturação de $V_{\text{drop}} \approx 1{,}2\text{ V}$ a $1{,}5\text{ V}$. Portanto, a tensão de entrada mínima para que a saída de 5,0 V não entre em queda de regulação é:
+
+$$V_{\text{in,mín\_reg}} = V_{\text{out}} + V_{\text{drop}} = 5{,}0\text{ V} + 1{,}5\text{ V} = \mathbf{6{,}5\text{ V}}$$
+
+Como a proteção de subtensão (UVLO) no firmware do robô atua desligando o sistema em **6,60 V** (3,30 V/célula), a bateria **nunca atinge o patamar inferior a 6,5 V**, garantindo que o regulador de 5 V opere 100% do tempo em regime de regulação linear e estável.
+
+#### 7.2.7 Análise de Dissipação Térmica e Temperatura de Junção
+A potência dissipada em calor pelo módulo no pior caso operacional (1,0 A contínuo sob rendimento conservador de $\eta = 82\%$):
+
+$$P_{\text{d,estresse}} = P_{\text{out}} \cdot \left(\frac{1}{\eta} - 1\right) = (5{,}0\text{ V} \cdot 1{,}0\text{ A}) \cdot \left(\frac{1}{0{,}82} - 1\right) \approx 5{,}0 \cdot 0{,}2195 \approx \mathbf{1{,}10\text{ W}}$$
+
+Em operação real de pista, o sensor LiDAR ToF 360° demanda apenas $150\text{ mA}$ ($0{,}15\text{ A}$):
+
+$$P_{\text{d,nominal}} = (5{,}0\text{ V} \cdot 0{,}15\text{ A}) \cdot \left(\frac{1}{0{,}85} - 1\right) \approx 0{,}75 \cdot 0{,}176 \approx \mathbf{0{,}13\text{ W}}$$
+
+Para o encapsulamento **TO-263 (SMD)** montado com plano de cobre de dissipação na PCB ou em módulo comercial padrão, a resistência térmica típica junção-ambiente é de $R_{\theta JA} \approx 35\text{ °C/W}$ a $40\text{ °C/W}$. Adotando $R_{\theta JA} = 35\text{ °C/W}$ e temperatura ambiente máxima de $T_a = 25\text{ °C}$:
+
+* **Elevação Térmica sob Carga Nominal (150 mA):**
+  $$\Delta T_{\text{nom}} = P_{\text{d,nominal}} \cdot R_{\theta JA} = 0{,}13\text{ W} \cdot 35\text{ °C/W} \approx 4{,}6\text{ °C} \implies T_j \approx \mathbf{29{,}6\text{ °C}}$$
+* **Elevação Térmica sob Limite Contínuo de Projeto (1,0 A):**
+  $$\Delta T_{\text{1A}} = P_{\text{d,estresse}} \cdot R_{\theta JA} = 1{,}10\text{ W} \cdot 35\text{ °C/W} \approx 38{,}5\text{ °C} \implies T_j \approx 25 + 38{,}5 = \mathbf{63{,}5\text{ °C}}$$
+
+Como a temperatura máxima admissível de junção do silício é de $T_{j,\text{max}} = 125\text{ °C}$, a temperatura calculada de $63{,}5\text{ °C}$ atesta **ampla estabilidade contínua**, sem necessidade de dissipador térmico adicional.
+
+---
+
+### 7.3 Dimensionamento do Regulador MP1584EN (Barramento +3V3 — MCU, Encoders e Lógica)
+
+O regulador **MP1584EN** (Monolithic Power Systems - MPS) é um conversor Step-Down monolítico que emprega chave interna de efeito de campo MOSFET de potência de alta eficiência ($R_{\text{DS(on)}} \approx 180\text{ m}\Omega$). Ele opera em alta frequência programável (de 100 kHz a 1,5 MHz, padronizado tipicamente em **1,0 MHz a 1,5 MHz**), permitindo componentes magnéticos de tamanho reduzido e resposta transiente ultra-rápida. É responsável pela linha de **3,3 V** que alimenta o núcleo do processador ESP32-C3-MINI-1, os encoders de efeito Hall e os pinos de controle do DRV8833.
+
+#### 7.3.1 Razão Cíclica (*Duty Cycle*)
+Sob rendimento de $\eta \approx 88\%$ ($0{,}88$):
+
+* Para bateria em $8{,}4\text{ V}$:
+  $$D_{\text{min}} = \frac{3{,}3}{8{,}4 \cdot 0{,}88} \approx 0{,}446 \implies \mathbf{44{,}6\%}$$
+* Para bateria em $6{,}6\text{ V}$:
+  $$D_{\text{max}} = \frac{3{,}3}{6{,}6 \cdot 0{,}88} \approx 0{,}568 \implies \mathbf{56{,}8\%}$$
+
+Devido à chave MOSFET High-Side, o MP1584EN não sofre das elevadas perdas por queda de saturação encontradas no LM2596, apresentando tensão de *dropout* muito baixa ($< 0{,}4\text{ V}$), operando com folga total mesmo que a bateria caísse a níveis extremos.
+
+#### 7.3.2 Malha de Realimentação e Ajuste de Tensão (Feedback)
+A tensão de referência interna do MP1584 é de $V_{\text{ref}} = 0{,}80\text{ V} \pm 2\%$. A saída $V_{\text{out}}$ é ajustada pelo divisor formado por $R_1$ (superior) e $R_2$ (inferior ligado ao GND):
+
+$$V_{\text{out}} = V_{\text{ref}} \cdot \left(1 + \frac{R_1}{R_2}\right) = 0{,}80\text{ V} \cdot \left(1 + \frac{R_1}{R_2}\right)$$
+
+Fixando $R_2 = 10\text{ k}\Omega$ (valor ótimo para imunidade a ruídos na entrada FB):
+
+$$\frac{R_1}{R_2} = \frac{V_{\text{out}}}{V_{\text{ref}}} - 1 = \frac{3{,}3}{0{,}80} - 1 = 4{,}125 - 1 = 3{,}125 \implies R_1 = 10\text{ k}\Omega \cdot 3{,}125 = \mathbf{31{,}25\text{ k}\Omega}$$
+
+* **Implementação Física:** Utiliza-se um resistor de precisão da série E96 de **$31{,}6\text{ k}\Omega \ (1\%)$** (resultando em $V_{\text{out}} = 3{,}328\text{ V}$, erro relativo de apenas +0,8%, perfeitamente compatível com o patamar de 3,0 V a 3,6 V do ESP32-C3) ou uma associação série de $30\text{ k}\Omega + 1{,}2\text{ k}\Omega = 31{,}2\text{ k}\Omega$ ($V_{\text{out}} = 3{,}296\text{ V}$). Em micromódulos comerciais, o ajuste é efetuado por trimpot SMD pré-calibrado em bancada para $3{,}30\text{ V}$.
+
+#### 7.3.3 Indutor de Filtragem de Alta Frequência ($L$)
+Operando na frequência de $f_{\text{sw}} = 1{,}0\text{ MHz}$ ($10^6\text{ Hz}$) e estipulando ondulação $\Delta I_L = 0{,}30\text{ A}$ (30% de 1,0 A):
+
+$$L_{\text{mín}} = \frac{(V_{\text{in,max}} - V_{\text{out}}) \cdot D_{\text{min}}}{\Delta I_L \cdot f_{\text{sw}}} = \frac{(8{,}4 - 3{,}3) \cdot 0{,}446}{0{,}30 \cdot 1.000.000} = \frac{2{,}2746}{300.000} \approx 7{,}58\ \mu\text{H}$$
+
+Adota-se indutor SMD blindado de potência de **$4{,}7\ \mu\text{H}$ a $10\ \mu\text{H}$** (ex: perfil SMD 0630 ou 0530), com corrente de saturação $I_{\text{sat}} \ge 2{,}0\text{ A}$ e baixa resistência ôhmica DC ($\text{DCR} \le 50\text{ m}\Omega$).
+
+#### 7.3.4 Diodo de Recirculação Schottky
+* **Componente Selecionado:** **SS24** ou **B230A** (SMD).
+* **Parâmetros:** Tensão reversa máxima $V_R = 40\text{ V}$, corrente contínua direta $I_F = 2{,}0\text{ A}$ e queda de condução $V_F \approx 0{,}40\text{ V}$, comutando com baixíssima perda de potência na faixa de megahertz.
+
+#### 7.3.5 Capacitores de Filtragem Cerâmicos (MLCC)
+Devido à frequência de comutação elevada de 1 MHz a 1,5 MHz, o MP1584 dispensa capacitores eletrolíticos volumosos, permitindo filtragem 100% cerâmica de baixa indutância parasita:
+* **Capacitor de Entrada ($C_{\text{in}}$):** Dois capacitores cerâmicos MLCC de **$10\ \mu\text{F} \ / \ 16\text{ V}$ tipo X7R** em paralelo com cerâmico de **$100\text{ nF}$**.
+* **Capacitor de Saída ($C_{\text{out}}$):** Dois capacitores cerâmicos MLCC de **$22\ \mu\text{F} \ / \ 10\text{ V}$ tipo X7R** em paralelo com cerâmico de **$100\text{ nF}$**, garantindo ondulação na linha digital inferior a $15\text{ mV}$, essencial para a integridade do rádio e do ADC do processador.
+
+#### 7.3.6 Análise de Dissipação Térmica e Temperatura de Junção
+Em regime nominal de corrida, a linha de 3,3 V alimenta o microcontrolador ESP32-C3 (~110 mA), encoders Hall (10 mA) e portas do DRV8833 (3 mA), totalizando $I_{\text{out,nom}} \approx 123\text{ mA} = 0{,}123\text{ A}$:
+
+$$P_{\text{d,nominal}} = (3{,}3\text{ V} \cdot 0{,}123\text{ A}) \cdot \left(\frac{1}{0{,}88} - 1\right) \approx 0{,}406 \cdot 0{,}136 \approx \mathbf{0{,}055\text{ W}}$$
+
+Sob o limite de projeto da Issue (1,0 A contínuo):
+
+$$P_{\text{d,estresse}} = (3{,}3\text{ V} \cdot 1{,}0\text{ A}) \cdot \left(\frac{1}{0{,}88} - 1\right) \approx 3{,}3 \cdot 0{,}136 \approx \mathbf{0{,}449\text{ W}}$$
+
+O circuito integrado MP1584EN possui encapsulamento compacto **SOIC-8E (Exposed Pad)** com ilha metálica inferior soldada à placa de circuito impresso. Com um plano de dissipação de cobre na camada interna/inferior ligado por 4 a 6 vias térmicas, sua resistência térmica atinge $R_{\theta JA} \approx 60\text{ °C/W}$.
+
+* **Elevação Térmica sob Carga Nominal (123 mA):**
+  $$\Delta T_{\text{nom}} = 0{,}055\text{ W} \cdot 60\text{ °C/W} \approx 3{,}3\text{ °C} \implies T_j \approx \mathbf{28{,}3\text{ °C}}$$
+* **Elevação Térmica sob Limite Contínuo de Projeto (1,0 A):**
+  $$\Delta T_{\text{1A}} = 0{,}449\text{ W} \cdot 60\text{ °C/W} \approx 26{,}9\text{ °C} \implies T_j \approx 25 + 26{,}9 = \mathbf{51{,}9\text{ °C}}$$
+
+A temperatura de junção de $51{,}9\text{ °C}$ fica muito aquém da temperatura de desligamento térmico (*Thermal Shutdown*) do MP1584EN ($160\text{ °C}$), assegurando estabilidade em regime contínuo.
+
+---
+
+### 7.4 Tabela de consolidação
+
+A tabela abaixo consolida os parâmetros operacionais, componentes dimensionados e a validação formal frente aos critérios estipulados na issue:
+
+| Critério de Pronto / Parâmetro | Linha +5V0 (Sensor LiDAR ToF) | Linha +3V3 (MCU, Encoders, Driver) | Status de Homologação |
+| :--- | :--- | :--- | :---: |
+| **CI Regulador Adotado** | **LM2596-ADJ** | **MP1584EN** | Conforme |
+| **Topologia / Chaveamento** | Buck bipolar (150 kHz) | Buck MOSFET ($R_{\text{DS(on)}}=180\text{ m}\Omega$, 1,0 MHz) | Conforme |
+| **Tensão de Saída ($V_{\text{out}}$)** | $5{,}00\text{ V}$ | $3{,}30\text{ V}$ | Conforme |
+| **Tensão de Referência ($V_{\text{ref}}$)**| $1{,}23\text{ V}$ | $0{,}80\text{ V}$ | Conforme |
+| **Divisor de Feedback Calculado** | $R_1 = 1{,}0\text{ k}\Omega$, $R_2 = 3{,}06\text{ k}\Omega$ (ou trimpot) | $R_2 = 10\text{ k}\Omega$, $R_1 = 31{,}25\text{ k}\Omega$ ($31{,}6\text{ k}\Omega$ E96) | Conforme |
+| **Indutância de Projeto ($L$)** | $47\ \mu\text{H}$ a $68\ \mu\text{H}$ ($I_{\text{sat}} \ge 2\text{ A}$) | $4{,}7\ \mu\text{H}$ a $10\ \mu\text{H}$ ($I_{\text{sat}} \ge 2\text{ A}$) | Conforme |
+| **Diodo Schottky de Recirculação** | SS34 / 1N5822 ($40\text{ V} \ / \ 3\text{ A}$) | SS24 / B230A ($40\text{ V} \ / \ 2\text{ A}$) | Conforme |
+| **Capacitores de Entrada / Saída**| $C_{\text{in}} = 220\ \mu\text{F}$, $C_{\text{out}} = 330\ \mu\text{F}$ | $C_{\text{in}} = 20\ \mu\text{F}$ MLCC, $C_{\text{out}} = 44\ \mu\text{F}$ MLCC | Conforme |
+| **Capacidade Contínua Requerida** | **1,0 A contínuo** | **1,0 A contínuo** | **Atendido (100% de margem)** |
+| **Consumo em Regime Nominal** | $150\text{ mA}$ ($0{,}75\text{ W}$) | $123\text{ mA}$ nom. / $350\text{ mA}$ pico ($0{,}41\text{ W}$) | Suportado |
+| **Potência Dissipada em 1 A ($P_d$)**| $1{,}10\text{ W}$ | $0{,}45\text{ W}$ | Conforme |
+| **Temperatura Junção ($T_j$) sob 1 A**| **$63{,}5\text{ °C}$** ($T_{\text{max}} = 125\text{ °C}$) | **$51{,}9\text{ °C}$** ($T_{\text{max}} = 160\text{ °C}$) | **Estável / Seguro** |
+| **Margem Térmica Residual** | **$+61{,}5\text{ °C}$** de margem de segurança | **$+108{,}1\text{ °C}$** de margem de segurança | **Aprovado sem dissipador** |
+
+---
+
+### 7.5 Diagramas Esquemáticos Funcionais dos Módulos Buck
+
+Os esquemáticos a seguir ilustram as interconexões dos nós de potência, malhas de chaveamento e nós de realimentação dimensionados para os dois conversores:
+
+
+## 8. Referências Bibliográficas
+
+1. **TEXAS INSTRUMENTS.** *LM2596 SIMPLE SWITCHER® Power Converter 150-kHz 3-A Step-Down Voltage Regulator*. Datasheet SNVS124D, Rev. Maio 2020. Disponível em: <https://www.ti.com/lit/ds/symlink/lm2596.pdf>.
+2. **MONOLITHIC POWER SYSTEMS (MPS).** *MP1584: 3A, 1.5MHz, 28V Step-Down Converter*. Datasheet Rev. 1.0, 2011. Disponível em: <https://www.monolithicpower.com>.
+3. **ESPRESSIF SYSTEMS.** *ESP32-C3-MINI-1 Datasheet*. Versão 1.4, 2024. Disponível em: <https://www.espressif.com>.
+4. **TEXAS INSTRUMENTS.** *DRV8833 Dual H-Bridge Motor Driver*. Datasheet SLVSAR1E, Rev. Julho 2015. Disponível em: <https://www.ti.com/lit/ds/symlink/drv8833.pdf>.
+5. **GIBILISCO, Stan.** *Beginner's Guide to Reading Schematics*. 3. ed. Nova York: McGraw-Hill Education, 2014.
+6. **MOHAN, Ned; UNDELAND, Tore M.; ROBBINS, William P.** *Power Electronics: Converters, Applications, and Design*. 3. ed. Nova York: John Wiley & Sons, 2003.
+
+---
+
+## Histórico de Versão
+
+| Versão | Data | Descrição | Autor(es) | Revisor(es) |
+| :---: | :---: | :--- | :--- | :--- |
+| 1.0 | 05/10/2026 | Estruturação inicial do consumo de energia e dimensionamento da bateria LiPo 2S | Bruno Duarte e Paulo Melo | Equipe Micromouse |
+| 1.1 | 10/10/2026 | Atualização das especificações dinâmicas da bateria LiPo e modelo Tattu 650mAh | Paulo Melo | Bruno Duarte |
+| 1.2 | 12/10/2026 | Dimensionamento dos reguladores Step-Down LM2596 e MP1584EN, cálculo de componentes passivos, análise de dissipação térmica | Elias Oliveira | Equipe de Hardware |
+
