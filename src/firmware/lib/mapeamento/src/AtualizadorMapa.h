@@ -22,9 +22,7 @@ public:
   /// @param pose Pose atual do robô.
   /// @param classificacao Resultado da classificação das paredes.
   /// @return Resultado da atualização.
-  static ResultadoAtualizacao
-  atualizar(Mapa &mapa, const Pose &pose,
-            const ClassificadorParede::ResultadoClassificacao &classificacao);
+  static ResultadoAtualizacao atualizar(Mapa &mapa, const Pose &pose, const ClassificadorParede::ResultadoClassificacao &classificacao);
 
   /// Sobrecarga de conveniência: recebe leituras do LiDAR, classifica com o
   /// classificador e atualiza o mapa.
@@ -34,10 +32,7 @@ public:
   /// @param amostras Leituras do LiDAR.
   /// @param quantidadeAmostras Quantidade de amostras.
   /// @return Resultado da atualização.
-  static ResultadoAtualizacao
-  atualizar(Mapa &mapa, const Pose &pose,
-            const ClassificadorParede &classificador,
-            const DistanciasLaterais *amostras, size_t quantidadeAmostras);
+  static ResultadoAtualizacao atualizar(Mapa &mapa, const Pose &pose, const ClassificadorParede &classificador, const DistanciasLaterais *amostras, size_t quantidadeAmostras);
 };
 
 } // namespace micromouse

@@ -2,10 +2,7 @@
 
 namespace micromouse {
 
-ResultadoAtualizacao AtualizadorMapa::atualizar(
-  Mapa &mapa,
-  const Pose &pose,
-  const ClassificadorParede::ResultadoClassificacao &classificacao) {
+ResultadoAtualizacao AtualizadorMapa::atualizar(Mapa &mapa, const Pose &pose, const ClassificadorParede::ResultadoClassificacao &classificacao) {
   ResultadoAtualizacao res;
 
   Direcao direcaoAtual = pose.direcao;
@@ -37,11 +34,8 @@ ResultadoAtualizacao AtualizadorMapa::atualizar(
   return res;
 }
 
-ResultadoAtualizacao AtualizadorMapa::atualizar(
-  Mapa &mapa, const Pose &pose,
-  const ClassificadorParede &classificador,
-  const DistanciasLaterais *amostras, size_t quantidadeAmostras) {
-    return atualizar(mapa, pose, classificador.classificar(amostras, quantidadeAmostras));
+ResultadoAtualizacao AtualizadorMapa::atualizar(Mapa &mapa, const Pose &pose, const ClassificadorParede &classificador, const DistanciasLaterais *amostras, size_t quantidadeAmostras) {
+  return atualizar(mapa, pose, classificador.classificar(amostras, quantidadeAmostras));
 }
 
 } // namespace micromouse
