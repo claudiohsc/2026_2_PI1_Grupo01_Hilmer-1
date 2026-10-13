@@ -78,7 +78,7 @@ O projeto compreende o desenvolvimento, integração e validação de um sistema
 | Joao Artur de Andrades | 231038690 | Engenharia Aeroespacial | 231038690@aluno.unb.br | Estrutura |
 | Jose Felipe Duarte Guedes de Oliveira | 221008211 | Engenharia de Software | 221008211@aluno.unb.br | Eletrônica |
 | Letícia Lima Dos Santos | 200022393 | Engenharia Aeroespacial | 200022393@aluno.unb.br | Estrutura |
-| Marllon Fausto Cardoso | 222025914 | Engenharia de Software | 222025914@aluno.unb.br | Energia |
+| Marllon Fausto Cardoso | 222025914 | Engenharia de Software | 222025914@aluno.unb.br | Software |
 | Paulo Henrique Melo de Souza | 221022417 | Engenharia de Software | 221022417@aluno.unb.br | Gerente de Energia |
 | Rafael Lima Sant Ana | 251035659 | Engenharia de Software | 251035659@aluno.unb.br | Software |
 
