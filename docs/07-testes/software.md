@@ -169,8 +169,8 @@ Program received signal SIGHUP (Hangup: 1)
 
 | Item | Valor |
 | ------ | ------ |
-| Tarefa | [#174 Classificação parede/livre](https://github.com/fcte-pi1/2026\_2\_PI1\_Grupo01\_Hilmer/issues/174) |
-| História de usuário | HU-02 · Reconhecimento de ambiente ([#36](https://github.com/fcte-pi1/2026\_2\_PI1\_Grupo01\_Hilmer/issues/36)), RF02 |
+| Tarefa | [#174 Classificação parede/livre](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174) |
+| História de usuário | HU-02 · Reconhecimento de ambiente ([#36](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36)), RF02 |
 | Código testado | `src/firmware` (branch `feat/174-classificador-parede-livre`) |
 | Data da execução | 05/10/2026 |
 | Executado por | Rafael Lima |
