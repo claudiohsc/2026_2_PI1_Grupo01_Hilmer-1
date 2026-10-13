@@ -73,7 +73,7 @@ A lógica do robô (direções, mapa, classificação de paredes) não usa nada 
 | `lib/nucleo` | Tipos compartilhados, constantes do desafio e pinagem |
 | `lib/hal` | Interfaces de hardware (`ILidar`; encoders e motores nos próximos épicos) |
 | `lib/percepcao` | Classificação `parede`/`livre` (tarefa [#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174)) |
-| `lib/mapeamento` | Mapa do labirinto e armazenamento em memória ([#176](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/176), [#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179)) |
+| `lib/mapeamento` | Mapa do labirinto, atualização e armazenamento em memória ([#176](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/176), [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177), [#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179)) |
 | `lib/navegacao` | Localização, decisão de movimento e detecção do objetivo (Épico 02) |
 | `lib/atuacao` | Controle dos motores e correção de trajetória (Épico 02) |
 | `lib/comunicacao` | Telemetria, serialização JSON e *buffer* de reenvio (Épico 03) |
@@ -201,6 +201,27 @@ O módulo de percepção (`lib/percepcao`) implementa a classe `ClassificadorPar
 * **Entrada:** `std::vector<DistanciasLaterais>`
 * **Saída:** `micromouse::ResultadoClassificacao` (`frente`, `esquerda` e `direita`)
 
+## Mapeamento: atualização do mapa
+
+O módulo de mapeamento (`lib/mapeamento`) implementa a classe `AtualizadorMapa`, responsável por integrar a percepção à representação espacial: converte as observações relativas do LiDAR (frente, esquerda e direita) na pose atual do robô em direções cardeais absolutas (Norte, Leste, Sul e Oeste) e registra as paredes no `Mapa` ([#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)).
+
+### Regras de Negócio e Algoritmo
+
+* **Conversão de Eixos:** A partir de `pose.direcao`, calcula a direção absoluta para cada lado via `direcaoAbsoluta`:
+  * Robô ao Norte: Frente $\rightarrow$ Norte, Esquerda $\rightarrow$ Oeste, Direita $\rightarrow$ Leste.
+  * Robô a Leste: Frente $\rightarrow$ Leste, Esquerda $\rightarrow$ Norte, Direita $\rightarrow$ Sul.
+  * Robô ao Sul: Frente $\rightarrow$ Sul, Esquerda $\rightarrow$ Leste, Direita $\rightarrow$ Oeste.
+  * Robô a Oeste: Frente $\rightarrow$ Oeste, Esquerda $\rightarrow$ Sul, Direita $\rightarrow$ Norte.
+* **Espelhamento Automático:** Cada parede registrada na célula atual atualiza automaticamente a aresta correspondente na célula vizinha via `Mapa::registrarParede`.
+* **Tratamento de Conflito:** Se a leitura contradiz o mapa (ex.: sensor detecta livre onde já havia parede), o mapa **preserva o valor antigo** e o atualizador sinaliza `temConflito = true` em `ResultadoAtualizacao`. A política de decisão fica a cargo do algoritmo de navegação (#188).
+* **Fail-Safe / Desconhecido:** Classificações com valor `Desconhecido` ou poses fora das dimensões válidas do mapa retornam `Invalida` e não alteram o mapa.
+
+### Interface da Classe
+
+* **Entrada principal:** `Mapa &mapa`, `const Pose &pose`, `const ClassificadorParede::ResultadoClassificacao &classificacao`
+* **Sobrecarga de conveniência:** `Mapa &mapa`, `const Pose &pose`, `const ClassificadorParede &classificador`, `const DistanciasLaterais *amostras`, `size_t quantidadeAmostras`, realizando a classificação internamente antes do registro.
+* **Saída:** `ResultadoAtualizacao` (`frente`, `esquerda`, `direita` e a flag `temConflito`).
+
 ## Tarefas do FreeRTOS
 
 Criadas em `src/main.cpp`. Navegação e telemetria rodam de forma concorrente, como no diagrama de atividades: o ESP32-C3 tem um único núcleo, e o FreeRTOS alterna entre as tarefas conforme a prioridade de cada uma.
@@ -233,6 +254,21 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | | `test_classificador_valor_no_limiar` | Limite exato de 180 mm |
 | | `test_classificador_leituras_com_ruido` | Atenuação de ruído via média |
 | | `test_classificador_vetor_vazio` | Vetor vazio assume Parede por segurança |
+| `test_atualizador_mapa/test_atualizador_mapa.cpp` | `test_registro_nova_parede` | Registra parede interior desconhecida como Registrada |
+| | `test_registro_parede_ja_conhecida` | Mesma leitura repetida retorna JaConhecida |
+| | `test_sem_conflito_ao_percorrer_labirinto` | Percorre células mantendo temConflito falso |
+| | `test_parede_desconhecida_nao_registrada` | Desconhecido não altera mapa e retorna Invalida |
+| | `test_parede_compartilhada_sem_conflito` | Paredes compartilhadas entre vizinhas coincidem |
+| | `test_mapa_final_identico_ao_labirinto_4x4` | Exploração completa gera mapa idêntico ao labirinto |
+| | `test_conflito_preserva_mapa_e_sinaliza_tem_conflito` | Conflito marca temConflito e preserva valor antigo |
+| | `test_conversao_direcoes_nas_quatro_orientacoes` | Conversão correta nas 4 orientações cardeais |
+| | `test_pose_fora_do_mapa_retorna_invalida` | Pose fora dos limites retorna Invalida |
+| | `test_sobrecarga_multiplas_amostras_com_classificador` | Sobrecarga com múltiplas amostras filtra ruído |
+| `test_integracao_mapa/test_integracao_mapa.cpp` | `test_mapa_final_identico_ao_labirinto_4x4` | Robô simulado explora labirinto 4×4 e mapa fica idêntico |
+| | `test_mapa_final_identico_ao_labirinto_8x4` | Robô simulado explora labirinto 8×4 e mapa fica idêntico |
+| | `test_mapa_final_identico_ao_labirinto_12x4` | Robô simulado explora labirinto 12×4 e mapa fica idêntico |
+| | `test_mapa_nao_e_identico_antes_de_explorar` | Mapa inicial difere do labirinto antes da exploração |
+| | `test_uma_celula_registra_so_as_tres_paredes_que_o_sensor_ve` | Registra apenas as paredes observadas na célula atual |
 
 Para rodar, dentro de `src/firmware`:
 
