@@ -114,7 +114,7 @@ void test_parede_desconhecida_nao_registrada() {
   // Deixa tudo como Desconhecido (padrão da struct)
 
   Pose pose = {{0, 0}, Direcao::Norte};
-  ResultadoAtualizacao res = AtualizadorMapa::atualizar(mapa, pose, classif);
+    ResultadoAtualizacao res = AtualizadorMapa::atualizar(mapa, pose, classif);
 
   TEST_ASSERT_EQUAL(ResultadoRegistro::Invalida, res.frente);
   TEST_ASSERT_EQUAL(ResultadoRegistro::Invalida, res.esquerda);
@@ -194,6 +194,152 @@ void test_mapa_final_identico_ao_labirinto_4x4() {
   }
 }
 
+/// @brief Cenário 7: Registrar uma parede conflitante deve retornar Conflito,
+/// marcar temConflito como verdadeiro e preservar o valor anterior do mapa.
+///
+/// Como funciona:
+/// 1. Posiciona o robô na célula interior (1,1) virado para o Norte.
+/// 2. Executa a primeira atualização gravando a parede Norte como 'Parede'.
+/// 3. Prepara uma segunda classificação contraditória indicando que a frente agora está 'Livre'.
+/// 4. Executa a atualização e verifica se o retorno da frente devolve 'Conflito'.
+/// 5. Garante que 'temConflito' é verdadeiro e que o mapa não foi sobrescrito (continua 'Parede').
+void test_conflito_preserva_mapa_e_sinaliza_tem_conflito() {
+  Mapa mapa;
+  Pose pose = {{1, 1}, Direcao::Norte};
+
+  // 1ª vez: registra a parede Norte como Parede
+  ClassificadorParede::ResultadoClassificacao classif1;
+  classif1.frente = EstadoParede::Parede;
+  ResultadoAtualizacao res1 = AtualizadorMapa::atualizar(mapa, pose, classif1);
+  TEST_ASSERT_EQUAL(ResultadoRegistro::Registrada, res1.frente);
+  TEST_ASSERT_FALSE(res1.temConflito);
+  TEST_ASSERT_EQUAL(EstadoParede::Parede, mapa.obterParede({1, 1}, Direcao::Norte));
+
+  // 2ª vez: leitura contraditória indica que a mesma parede é Livre
+  ClassificadorParede::ResultadoClassificacao classif2;
+  classif2.frente = EstadoParede::Livre;
+  ResultadoAtualizacao res2 = AtualizadorMapa::atualizar(mapa, pose, classif2);
+
+  TEST_ASSERT_EQUAL(ResultadoRegistro::Conflito, res2.frente);
+  TEST_ASSERT_TRUE(res2.temConflito);
+  // O mapa deve preservar a informação anterior
+  TEST_ASSERT_EQUAL(EstadoParede::Parede, mapa.obterParede({1, 1}, Direcao::Norte));
+}
+
+/// @brief Cenário 8: Validar que as direções relativas (frente, esquerda, direita)
+/// são convertidas corretamente para direções cardeais absolutas (N, L, S, O)
+/// nas 4 orientações do robô.
+///
+/// Como funciona:
+/// 1. Itera pelas 4 orientações possíveis (Norte, Leste, Sul, Oeste) em uma célula interior (1,1).
+/// 2. Em cada orientação, injeta uma classificação onde apenas a Frente é 'Parede' e as laterais são 'Livre'.
+/// 3. Atualiza um mapa isolado para cada orientação.
+/// 4. Valida se a 'Parede' e as passagens 'Livre' foram registradas nas direções absolutas esperadas:
+///    - Robô virado para Norte: Frente=Norte, Esquerda=Oeste, Direita=Leste.
+///    - Robô virado para Leste: Frente=Leste, Esquerda=Norte, Direita=Sul.
+///    - Robô virado para Sul:   Frente=Sul,   Esquerda=Leste, Direita=Oeste.
+///    - Robô virado para Oeste: Frente=Oeste, Esquerda=Sul,   Direita=Norte.
+void test_conversao_direcoes_nas_quatro_orientacoes() {
+  ClassificadorParede::ResultadoClassificacao classif;
+  classif.frente = EstadoParede::Parede;
+  classif.esquerda = EstadoParede::Livre;
+  classif.direita = EstadoParede::Livre;
+
+  // Robô virado para o Norte
+  {
+    Mapa mapa;
+    AtualizadorMapa::atualizar(mapa, {{1, 1}, Direcao::Norte}, classif);
+    TEST_ASSERT_EQUAL(EstadoParede::Parede, mapa.obterParede({1, 1}, Direcao::Norte));
+    TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Oeste));
+    TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Leste));
+  }
+
+  // Robô virado para o Leste
+  {
+    Mapa mapa;
+    AtualizadorMapa::atualizar(mapa, {{1, 1}, Direcao::Leste}, classif);
+    TEST_ASSERT_EQUAL(EstadoParede::Parede, mapa.obterParede({1, 1}, Direcao::Leste));
+    TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Norte));
+    TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Sul));
+  }
+
+  // Robô virado para o Sul
+  {
+    Mapa mapa;
+    AtualizadorMapa::atualizar(mapa, {{1, 1}, Direcao::Sul}, classif);
+    TEST_ASSERT_EQUAL(EstadoParede::Parede, mapa.obterParede({1, 1}, Direcao::Sul));
+    TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Leste));
+    TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Oeste));
+  }
+
+  // Robô virado para o Oeste
+  {
+    Mapa mapa;
+    AtualizadorMapa::atualizar(mapa, {{1, 1}, Direcao::Oeste}, classif);
+    TEST_ASSERT_EQUAL(EstadoParede::Parede, mapa.obterParede({1, 1}, Direcao::Oeste));
+    TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Sul));
+    TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Norte));
+  }
+}
+
+/// @brief Cenário 9: Atualizar o mapa com pose fora das dimensões deve retornar
+/// ResultadoRegistro::Invalida sem gerar exceções ou corromper a memória.
+///
+/// Como funciona:
+/// 1. Cria um mapa com dimensões 4x4.
+/// 2. Define uma pose com célula inválida fora do mapa (ex: linha 10, coluna 10).
+/// 3. Tenta realizar a atualização com classificações válidas de parede.
+/// 4. Assegura que todas as direções retornam 'Invalida' e 'temConflito' permanece falso.
+void test_pose_fora_do_mapa_retorna_invalida() {
+  Mapa mapa(DimensaoMapa::Labirinto4x4);
+  Pose poseInvalida = {{10, 10}, Direcao::Norte};
+
+  ClassificadorParede::ResultadoClassificacao classif;
+  classif.frente = EstadoParede::Parede;
+  classif.esquerda = EstadoParede::Parede;
+  classif.direita = EstadoParede::Parede;
+
+  ResultadoAtualizacao res = AtualizadorMapa::atualizar(mapa, poseInvalida, classif);
+
+  TEST_ASSERT_EQUAL(ResultadoRegistro::Invalida, res.frente);
+  TEST_ASSERT_EQUAL(ResultadoRegistro::Invalida, res.esquerda);
+  TEST_ASSERT_EQUAL(ResultadoRegistro::Invalida, res.direita);
+  TEST_ASSERT_FALSE(res.temConflito);
+}
+
+/// @brief Cenário 10: Verificar a sobrecarga que recebe múltiplas amostras de distâncias
+/// e utiliza o ClassificadorParede para inferir o estado antes de atualizar.
+///
+/// Como funciona:
+/// 1. Prepara um array com 3 amostras contendo ruído artificial de medição.
+///    A distância frontal indica parede próxima (~85 mm) e as laterais indicam caminho livre (~400 mm).
+/// 2. Executa a sobrecarga de 'AtualizadorMapa::atualizar' passando as 3 amostras e o classificador.
+/// 3. Confirma que os registros foram efetuados com sucesso ('Registrada').
+/// 4. Valida se o mapa armazenou 'Parede' ao Norte e 'Livre' ao Oeste e Leste da célula (1,1).
+void test_sobrecarga_multiplas_amostras_com_classificador() {
+  Mapa mapa;
+  ClassificadorParede classificador;
+  Pose pose = {{1, 1}, Direcao::Norte};
+
+  // 3 amostras com pequenas variações de leitura (frente próxima, laterais livres)
+  DistanciasLaterais amostras[3] = {
+      {80, 400, 420},
+      {85, 390, 410},
+      {90, 410, 400}
+  };
+
+  ResultadoAtualizacao res = AtualizadorMapa::atualizar(mapa, pose, classificador, amostras, 3);
+
+  TEST_ASSERT_EQUAL(ResultadoRegistro::Registrada, res.frente);
+  TEST_ASSERT_EQUAL(ResultadoRegistro::Registrada, res.esquerda);
+  TEST_ASSERT_EQUAL(ResultadoRegistro::Registrada, res.direita);
+  TEST_ASSERT_FALSE(res.temConflito);
+
+  TEST_ASSERT_EQUAL(EstadoParede::Parede, mapa.obterParede({1, 1}, Direcao::Norte));
+  TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Leste));
+  TEST_ASSERT_EQUAL(EstadoParede::Livre, mapa.obterParede({1, 1}, Direcao::Oeste));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_registro_nova_parede);
@@ -202,5 +348,9 @@ int main() {
   RUN_TEST(test_parede_desconhecida_nao_registrada);
   RUN_TEST(test_parede_compartilhada_sem_conflito);
   RUN_TEST(test_mapa_final_identico_ao_labirinto_4x4);
+  RUN_TEST(test_conflito_preserva_mapa_e_sinaliza_tem_conflito);
+  RUN_TEST(test_conversao_direcoes_nas_quatro_orientacoes);
+  RUN_TEST(test_pose_fora_do_mapa_retorna_invalida);
+  RUN_TEST(test_sobrecarga_multiplas_amostras_com_classificador);
   return UNITY_END();
 }
