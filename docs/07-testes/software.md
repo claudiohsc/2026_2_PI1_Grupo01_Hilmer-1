@@ -228,6 +228,53 @@ native:test_percepcao [PASSED] Took 0.80 seconds
 =================================== 6 test cases: 6 succeeded in 00:00:00.800 ===================================
 ```
 
+```
+
+#### Suíte completa com cobertura (o mesmo comando do CI)
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Testes existentes (núcleo, simulação, percepção, mapa e LiDAR) | **72 aprovados, 0 falhas** |
+| Testes novos do simulador | **19 aprovados, 0 falhas** |
+| Cobertura das linhas de `lib/` | **98%** (556 de 562), acima da meta de 80% |
+| Cobertura de `LabirintoSimulado.cpp` | 99% (115 de 116); a linha fora é o `return` depois do `switch` de `temParede`, que nunca é alcançado e existe para o compilador |
+
+```text
+=========== 91 test cases: 91 succeeded in 00:00:04.161 ===========
+TOTAL                                        562      556    98%
+```
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Compilação | **Sucesso** |
+| Uso de RAM | 4,2% (13 748 de 327 680 bytes) |
+| Uso de Flash | 18,9% (247 640 de 1 310 720 bytes) |
+
+O uso de memória não mudou, porque o simulador só é usado nos testes do computador e não entra no firmware da placa.
+
+#### Validação dos labirintos de exemplo
+
+Os três labirintos de `test/test_labirinto_simulado/LabirintosExemplo.h` têm o perímetro fechado e todas as células alcançáveis a partir de (0, 0). Essas duas propriedades são conferidas pelos testes a cada execução (`test_recusa_perimetro_aberto` e `test_todas_as_celulas_dos_exemplos_sao_alcancaveis_da_partida`):
+
+| Labirinto | Formato | Perímetro | Células alcançáveis a partir de (0, 0) |
+|---|:-:|:-:|:-:|
+| 4×4 | Válido | Fechado | 16 de 16 |
+| 8×4 | Válido | Fechado | 32 de 32 (a primeira versão tinha 16 de 32 e foi redesenhada) |
+| 12×4 | Válido | Fechado | 48 de 48 |
+
+A tabela de leituras esperadas do 4×4, escrita à mão antes da implementação, bateu com o que o `LabirintoSimulado` calcula nas cinco poses.
+=======
 ---
 
 ### Sprint 2 · Armazenamento do mapa em memória
@@ -319,3 +366,36 @@ test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:239: test_armazenamento
 RAM:   [          ]   4.3% (used 13940 bytes from 327680 bytes)
 Flash: [==        ]  18.9% (used 247788 bytes from 1310720 bytes)
 ```
+
+---
+
+### Sprint 2 · Simulador de labirinto
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#224 Simulador de labirinto (LabirintoSimulado)](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224) |
+| História de usuário | HU-02 · Reconhecimento de ambiente ([#36](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36)), RF02 |
+| Código testado | `src/firmware` (branch `feat/labirinto-simulado`) |
+| Data da execução | 08/10/2026 |
+| Executado por | Cláudio Henrique |
+| Documentação do código | [Labirinto simulado](../04-projeto-conceitual/firmware.md#labirinto-simulado-labirintosimulado) |
+
+Esta etapa implementou o `LabirintoSimulado` (carga do texto, validação, consulta de paredes e distâncias) e o modo labirinto do `LidarSimulado`. Os 15 testes ignorados da etapa anterior foram implementados e outros quatro foram acrescentados.
+
+**Ambiente de execução:** o mesmo da Sprint 2 (macOS, PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1, Espressif 32 7.1.3), com `gcovr` 8.6 para a cobertura.
+
+#### Testes do simulador (`test_labirinto_simulado`)
+
+```bash
+pio test -e native -f test_labirinto_simulado
+```
+
+| Grupo | Testes | O que verificam |
+|---|:-:|---|
+| Carga e validação | 7 | Os exemplos 4×4, 8×4 e 12×4 carregam com as dimensões certas, com ou sem `\n` final; tamanho, caractere, parede incompleta e perímetro aberto são recusados com o motivo certo; texto inválido mantém o labirinto anterior |
+| Consulta de paredes | 4 | Células vizinhas concordam nos três exemplos; todas as células são alcançáveis a partir de (0, 0); os quatro lados de uma célula; fora do labirinto conta como parede |
+| Distâncias | 6 | Corredor, curva, beco sem saída, a tabela de cinco leituras do 4×4, corredores longos do 8×4 e do 12×4 e falha sem carga ou fora do labirinto |
+| `LidarSimulado` no modo labirinto | 2 | A leitura acompanha a pose; falha, fila e leitura fixa mantêm a ordem de prioridade |
+
+```text
+=================== 19 test cases: 19 succeeded in 00:00:00.694 ============
