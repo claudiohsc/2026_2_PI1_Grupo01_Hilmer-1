@@ -244,11 +244,11 @@ O módulo de percepção (`lib/percepcao`) implementa a classe `ClassificadorPar
 * **Limiar Configurável:** O limiar é definido no construtor (valor padrão: **180 mm**).
   * Média $\le$ 180 mm $\rightarrow$ `EstadoParede::Parede` (obstáculo na célula atual).
   * Média $>$ 180 mm $\rightarrow$ `EstadoParede::Livre` (passagem aberta para a próxima célula).
-* **Comportamento Fail-Safe:** Se o vetor de amostras recebido estiver vazio, o classificador retorna `EstadoParede::Parede` em todas as direções para evitar colisões.
+* **Comportamento Fail-Safe:** Se o vetor de amostras recebido estiver vazio, o classificador retorna `EstadoParede::Desconhecido` em todas as direções para evitar colisões.
 
 ### Interface da Classe
 
-* **Entrada:** `std::vector<DistanciasLaterais>`
+* **Entrada:** `const DistanciasLaterais *amostras, size_t quantidade`
 * **Saída:** `micromouse::ResultadoClassificacao` (`frente`, `esquerda` e `direita`)
 
 ## Tarefas do FreeRTOS
@@ -281,8 +281,9 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | `test_percepcao/test_classificador.cpp` | `test_classificador_parede_proxima` | Média <= 180 mm classificada como Parede |
 | | `test_classificador_passagem_livre` | Média > 180 mm classificada como Livre |
 | | `test_classificador_valor_no_limiar` | Limite exato de 180 mm |
+| | `test_classificador_limiar_configuravel` | Alteração e consulta do limiar dinâmico em tempo de execução |
 | | `test_classificador_leituras_com_ruido` | Atenuação de ruído via média |
-| | `test_classificador_vetor_vazio` | Vetor vazio assume Parede por segurança |
+| | `test_classificador_vetor_vazio` | Vetor de amostras vazio assume Desconhecido por segurança (*fail-safe*) |
 
 Para rodar, dentro de `src/firmware`:
 
