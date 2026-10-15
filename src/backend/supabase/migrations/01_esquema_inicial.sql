@@ -1,16 +1,5 @@
--- ==============================================================================
--- PROJETO: Micromouse - PI1 (2026/2 - FCTE/UnB - Grupo 01 Hilmer)
--- ARQUIVO: 01_esquema_inicial.sql
--- DESCRIÇÃO: Criação das tabelas centrais do sistema, chaves, restrições e seeds.
--- RASTREABILIDADE:
---   - Issue: #228 (Configurar o Supabase e criar o esquema do banco - DER)
---   - História de Usuário: HU-09 (Persistência de Dados e Corridas)
---   - Requisitos Funcionais: RF9 (Armazenamento em banco de dados),
---                            RF14 (Dashboard de Telemetria),
---                            RF15 (Gestão de Corridas)
---   - Requisito Não Funcional: RNF5 (Latência de telemetria)
--- AUTORES: Rafael Lima e Eduardo Viana
--- ==============================================================================
+-- Migração Inicial: Criação das tabelas centrais e seed de labirintos (Issue #228 / HU-09)
+-- Tabelas: labirintos, corridas, telemetria, mapa_celulas
 
 -- ------------------------------------------------------------------------------
 -- 1. TABELA: labirintos
