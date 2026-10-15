@@ -23,7 +23,7 @@ src/firmware/
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula) e armazenamento em memória |
 | `navegacao` | Navegação | Localização, decisão de movimento e detecção do objetivo |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
-| `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
+| `comunicacao` | Comunicação | Pacotes de telemetria, serialização do mapa em JSON e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, sem hardware |
 | `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (LiDAR por UART, encoders, DRV8833, WiFi) |
 
@@ -66,6 +66,33 @@ const Mapa& paraTelemetria = armazenamentoMapa.mapa();           // só lê (pel
 ```
 
 O armazenamento não pode ser copiado, e o acesso `const` impede que a telemetria altere o mapa; as duas regras são conferidas em tempo de compilação. Medido no ESP32-C3, o objeto ocupa **196 bytes** de RAM estática (`.bss`): 195 do mapa e 1 do indicador de corrida.
+
+## Serialização do mapa em JSON
+
+O `MapaJson` (`lib/comunicacao`) converte o `Mapa` em JSON (ArduinoJson) para o envio na telemetria. Não depende do Arduino, então é testado no ambiente `native`.
+
+```cpp
+char buffer[TAMANHO_MAX_JSON_MAPA + 1];
+size_t tamanho = MapaJson::serializar(mapa, buffer, sizeof(buffer));
+// {"dimensao":"4x4","linhas":4,"colunas":4,"celulas":[{"linha":0,"coluna":0,
+//  "parede_norte":null,"parede_sul":true,"parede_leste":null,"parede_oeste":true}, ...]}
+```
+
+| Campo | Valor |
+|---|---|
+| `dimensao` | `"4x4"`, `"8x4"` ou `"12x4"` (colunas × linhas, como `labirintos.tipo`) |
+| `linhas`, `colunas` | Tamanho do labirinto |
+| `linha`, `coluna` | Posição da célula; a partida é (0, 0) |
+| `parede_norte`, `parede_sul`, `parede_leste`, `parede_oeste` | `true` se há parede, `false` se está livre e `null` se ainda é desconhecida |
+
+Os nomes dos campos das células são os das colunas da tabela `mapa_celulas` do banco, então a lista pode ser inserida nela, acrescentando só o `corrida_id`.
+
+| Regra | Comportamento |
+|---|---|
+| Saída | Compacta, sem espaços nem quebras de linha, terminada em `\0` |
+| Buffer | Do chamador, de tamanho fixo; a ArduinoJson só usa memória dinâmica durante a conversão, liberada ao final |
+| `TAMANHO_MAX_JSON_MAPA` (5.100 bytes) | Pior caso: um 12×4 com as 48 células conhecidas, todas `Livre` (`false` ocupa mais caracteres que `true` ou `null`). Maior que a pilha das tarefas (4.096 bytes), por isso precisa ser `static` ou global |
+| Capacidade insuficiente, ou `saida` nulo/capacidade zero | Devolve `0` e deixa `saida` com string vazia, sem escrever além da capacidade informada |
 
 ## Instalação
 
