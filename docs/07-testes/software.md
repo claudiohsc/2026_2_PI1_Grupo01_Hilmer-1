@@ -169,8 +169,8 @@ Program received signal SIGHUP (Hangup: 1)
 
 | Item | Valor |
 | ------ | ------ |
-| Tarefa | [#174 Classificação parede/livre](https://github.com/fcte-pi1/2026\_2\_PI1\_Grupo01\_Hilmer/issues/174) |
-| História de usuário | HU-02 · Reconhecimento de ambiente ([#36](https://github.com/fcte-pi1/2026\_2\_PI1\_Grupo01\_Hilmer/issues/36)), RF02 |
+| Tarefa | [#174 Classificação parede/livre](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174) |
+| História de usuário | HU-02 · Reconhecimento de ambiente ([#36](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36)), RF02 |
 | Código testado | `src/firmware` (branch `feat/174-classificador-parede-livre`) |
 | Data da execução | 05/10/2026 |
 | Executado por | Rafael Lima |
@@ -227,6 +227,179 @@ native:test_percepcao [PASSED] Took 0.80 seconds
 ----------------------------------
 =================================== 6 test cases: 6 succeeded in 00:00:00.800 ===================================
 ```
+
+#### Suíte completa com cobertura (o mesmo comando do CI)
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Testes existentes (núcleo, simulação, percepção, mapa e LiDAR) | **72 aprovados, 0 falhas** |
+| Testes novos do simulador | **19 aprovados, 0 falhas** |
+| Cobertura das linhas de `lib/` | **98%** (556 de 562), acima da meta de 80% |
+| Cobertura de `LabirintoSimulado.cpp` | 99% (115 de 116); a linha fora é o `return` depois do `switch` de `temParede`, que nunca é alcançado e existe para o compilador |
+
+```text
+=========== 91 test cases: 91 succeeded in 00:00:04.161 ===========
+TOTAL                                        562      556    98%
+```
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Compilação | **Sucesso** |
+| Uso de RAM | 4,2% (13 748 de 327 680 bytes) |
+| Uso de Flash | 18,9% (247 640 de 1 310 720 bytes) |
+
+O uso de memória não mudou, porque o simulador só é usado nos testes do computador e não entra no firmware da placa.
+
+#### Validação dos labirintos de exemplo
+
+Os três labirintos de `test/test_labirinto_simulado/LabirintosExemplo.h` têm o perímetro fechado e todas as células alcançáveis a partir de (0, 0). Essas duas propriedades são conferidas pelos testes a cada execução (`test_recusa_perimetro_aberto` e `test_todas_as_celulas_dos_exemplos_sao_alcancaveis_da_partida`):
+
+| Labirinto | Formato | Perímetro | Células alcançáveis a partir de (0, 0) |
+|---|:-:|:-:|:-:|
+| 4×4 | Válido | Fechado | 16 de 16 |
+| 8×4 | Válido | Fechado | 32 de 32 (a primeira versão tinha 16 de 32 e foi redesenhada) |
+| 12×4 | Válido | Fechado | 48 de 48 |
+
+A tabela de leituras esperadas do 4×4, escrita à mão antes da implementação, bateu com o que o `LabirintoSimulado` calcula nas cinco poses.
+
+---
+
+### Sprint 2 · Armazenamento do mapa em memória
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#179 Armazenamento do mapa em memória](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179) |
+| História de usuário | HU-04 · Armazenamento local ([#38](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/38)), RF04 |
+| Código testado | `src/firmware` (branch `feat/179-armazenamento-mapa-memoria`) |
+| Data da execução | 06/10/2026 |
+| Executado por | Marllon Fausto |
+| Documentação do código | [README do firmware](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/main/src/firmware/README.md#armazenamento-do-mapa) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Sistema operacional | Linux 7.0 |
+| PlatformIO Core | 6.2.0 |
+| Plataforma de testes no computador | native 1.2.1 |
+| Framework de testes | Unity 2.6.1 |
+| Plataforma da placa | espressif32 7.1.3 (ESP32-C3, toolchain riscv32-esp 8.4.0) |
+
+#### Testes unitários (ambiente native)
+
+Comando executado em `src/firmware`:
+
+```bash
+pio test -e native -f test_armazenamento_mapa
+```
+
+| Suíte | Casos | Resultado | Duração |
+| :--- | :--- | :--- | :--- |
+| `test_armazenamento_mapa` | 9 | **9 aprovados** | 0,24 s |
+
+A suíte completa (`pio test -e native`) também foi executada: 81 casos, 81 aprovados.
+
+O reinício do estado de navegação é simulado por uma `NavegacaoFalsa`, que recebe o mapa emprestado e guarda a própria posição; destruir e recriar esse objeto equivale a reiniciar a navegação. Além dos casos abaixo, o arquivo de teste confere em tempo de compilação (`static_assert`) que o `ArmazenamentoMapa` não pode ser copiado nem atribuído e que o acesso `const` ao mapa é somente leitura.
+
+#### Casos de teste
+
+| Caso de teste | O que verifica | Critério da #179 | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_comeca_sem_corrida_iniciada` | Antes de `iniciarCorrida()` não há corrida e o mapa é 4×4 vazio; depois, a corrida está iniciada | — | Aprovado |
+| `test_corrida_12x4_comporta_todas_as_paredes` | Pelo armazenamento, o labirinto 12×4 aceita todas as paredes internas e as devolve pelos dois lados | 1 | Aprovado |
+| `test_mapa_preservado_apos_reiniciar_navegacao` | Após destruir e recriar a navegação, o mapa é idêntico (`==`) à cópia feita antes do reinício | 2 | Aprovado |
+| `test_mapa_preservado_apos_varios_reinicios` | Em 10 ciclos de registrar e reiniciar, nenhuma parede de ciclos anteriores se perde | 2 | Aprovado |
+| `test_navegacao_recriada_enxerga_paredes_anteriores` | A navegação nova encontra as paredes registradas pela anterior | 2 | Aprovado |
+| `test_mapa_e_sempre_o_mesmo_objeto` | `mapa()` devolve sempre o mesmo objeto, inclusive após uma nova corrida, então uma referência guardada nunca fica inválida | 2 | Aprovado |
+| `test_nova_corrida_zera_o_mapa` | Uma nova corrida volta o mapa ao estado inicial (perímetro `Parede`, interior `Desconhecido`) | 2 | Aprovado |
+| `test_nova_corrida_pode_trocar_o_tamanho` | Uma nova corrida pode trocar o labirinto de 4×4 para 12×4 | 1 | Aprovado |
+| `test_armazenamento_ocupa_pouca_memoria` | `sizeof(ArmazenamentoMapa)` é de no máximo 256 bytes | 3 | Aprovado |
+
+Para confirmar que os testes detectam falhas, a classe foi alterada de propósito e restaurada em seguida: com `iniciarCorrida()` sem zerar o mapa, 5 casos falharam; permitindo a cópia do armazenamento, o arquivo de teste deixou de compilar com a mensagem do `static_assert`.
+
+#### Uso de memória (critério 3)
+
+Medido compilando o firmware para a placa (`pio run -e esp32c3`), sem e com o `ArmazenamentoMapa` em `src/main.cpp`:
+
+| Medida | Sem o mapa | Com o mapa | Diferença |
+| :--- | ---: | ---: | ---: |
+| RAM estática (`.data` + `.bss`) | 13.748 bytes | 13.940 bytes | +192 bytes |
+| Flash | 247.562 bytes | 247.788 bytes | +226 bytes |
+
+- O objeto `armazenamentoMapa` ocupa **196 bytes** na seção `.bss` (`riscv32-esp-elf-nm -S`: `000000c4 b armazenamentoMapa`): 195 bytes do `Mapa` (48 células × 4 paredes × 1 byte, mais dimensão, linhas e colunas) e 1 byte do indicador de corrida. O valor coincide com o `sizeof` no computador.
+- A RAM estática cresce 4 bytes menos que o tamanho do objeto porque parte dele ocupou o enchimento de alinhamento que já existia na `.bss`.
+- O mapa usa cerca de 0,06% dos 320 KB de RAM do ESP32-C3; o firmware inteiro usa 4,3%.
+- O aumento de Flash é o código que constrói o mapa na partida (preenchimento do perímetro).
+- As pilhas das tarefas do FreeRTOS (2 × 4.096 bytes) são reservadas durante a execução e não entram nessa conta. O mapa não fica nelas, e é isso que o preserva quando uma tarefa é reiniciada.
+
+#### Saída do PlatformIO
+
+```text
+Processing test_armazenamento_mapa in native environment
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:231: test_comeca_sem_corrida_iniciada [PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:232: test_corrida_12x4_comporta_todas_as_paredes [PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:233: test_mapa_preservado_apos_reiniciar_navegacao [PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:234: test_mapa_preservado_apos_varios_reinicios [PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:235: test_navegacao_recriada_enxerga_paredes_anteriores [PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:236: test_mapa_e_sempre_o_mesmo_objeto [PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:237: test_nova_corrida_zera_o_mapa [PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:238: test_nova_corrida_pode_trocar_o_tamanho [PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:239: test_armazenamento_ocupa_pouca_memoria [PASSED]
+---------- native:test_armazenamento_mapa [PASSED] Took 0.24 seconds ----------
+================== 9 test cases: 9 succeeded in 00:00:00.244 ==================
+```
+
+```text
+RAM:   [          ]   4.3% (used 13940 bytes from 327680 bytes)
+Flash: [==        ]  18.9% (used 247788 bytes from 1310720 bytes)
+```
+
+---
+
+### Sprint 2 · Simulador de labirinto
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#224 Simulador de labirinto (LabirintoSimulado)](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224) |
+| História de usuário | HU-02 · Reconhecimento de ambiente ([#36](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36)), RF02 |
+| Código testado | `src/firmware` (branch `feat/labirinto-simulado`) |
+| Data da execução | 08/10/2026 |
+| Executado por | Cláudio Henrique |
+| Documentação do código | [Labirinto simulado](../04-projeto-conceitual/firmware.md#labirinto-simulado-labirintosimulado) |
+
+Esta etapa implementou o `LabirintoSimulado` (carga do texto, validação, consulta de paredes e distâncias) e o modo labirinto do `LidarSimulado`. Os 15 testes ignorados da etapa anterior foram implementados e outros quatro foram acrescentados.
+
+**Ambiente de execução:** o mesmo da Sprint 2 (macOS, PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1, Espressif 32 7.1.3), com `gcovr` 8.6 para a cobertura.
+
+#### Testes do simulador (`test_labirinto_simulado`)
+
+```bash
+pio test -e native -f test_labirinto_simulado
+```
+
+| Grupo | Testes | O que verificam |
+|---|:-:|---|
+| Carga e validação | 7 | Os exemplos 4×4, 8×4 e 12×4 carregam com as dimensões certas, com ou sem `\n` final; tamanho, caractere, parede incompleta e perímetro aberto são recusados com o motivo certo; texto inválido mantém o labirinto anterior |
+| Consulta de paredes | 4 | Células vizinhas concordam nos três exemplos; todas as células são alcançáveis a partir de (0, 0); os quatro lados de uma célula; fora do labirinto conta como parede |
+| Distâncias | 6 | Corredor, curva, beco sem saída, a tabela de cinco leituras do 4×4, corredores longos do 8×4 e do 12×4 e falha sem carga ou fora do labirinto |
+| `LidarSimulado` no modo labirinto | 2 | A leitura acompanha a pose; falha, fila e leitura fixa mantêm a ordem de prioridade |
+
+```text
+=================== 19 test cases: 19 succeeded in 00:00:00.694 ============
+```
+
+---
 
 ### Sprint 3 · Atualização do mapa
 
@@ -314,4 +487,3 @@ native:test_integracao_mapa [PASSED] Took 0.44 seconds
 ----------------------------------
 =================================== 15 test cases: 15 succeeded ===================================
 ```
-
