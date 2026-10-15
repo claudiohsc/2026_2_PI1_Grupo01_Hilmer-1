@@ -104,10 +104,10 @@ CREATE TABLE mapa_celulas (
     corrida_id INT NOT NULL REFERENCES corridas(id) ON DELETE CASCADE,
     linha INT NOT NULL,
     coluna INT NOT NULL,
-    parede_norte BOOLEAN NOT NULL DEFAULT FALSE,
-    parede_sul BOOLEAN NOT NULL DEFAULT FALSE,
-    parede_leste BOOLEAN NOT NULL DEFAULT FALSE,
-    parede_oeste BOOLEAN NOT NULL DEFAULT FALSE,
+    parede_norte BOOLEAN,
+    parede_sul BOOLEAN,
+    parede_leste BOOLEAN,
+    parede_oeste BOOLEAN,
 
     -- Cada célula de uma corrida específica só precisa de um registro de paredes
     CONSTRAINT uq_mapa_corrida_posicao UNIQUE (corrida_id, linha, coluna)
@@ -118,10 +118,10 @@ COMMENT ON COLUMN mapa_celulas.id IS 'Identificador único do registro de célul
 COMMENT ON COLUMN mapa_celulas.corrida_id IS 'FK para a corrida correspondente';
 COMMENT ON COLUMN mapa_celulas.linha IS 'Índice da linha da célula mapeada';
 COMMENT ON COLUMN mapa_celulas.coluna IS 'Índice da coluna da célula mapeada';
-COMMENT ON COLUMN mapa_celulas.parede_norte IS 'Indica presença de parede ao Norte da célula';
-COMMENT ON COLUMN mapa_celulas.parede_sul IS 'Indica presença de parede ao Sul da célula';
-COMMENT ON COLUMN mapa_celulas.parede_leste IS 'Indica presença de parede a Leste da célula';
-COMMENT ON COLUMN mapa_celulas.parede_oeste IS 'Indica presença de parede a Oeste da célula';
+COMMENT ON COLUMN mapa_celulas.parede_norte IS 'Presença de parede ao Norte (true = parede, false = livre, null = não explorada)';
+COMMENT ON COLUMN mapa_celulas.parede_sul IS 'Presença de parede ao Sul (true = parede, false = livre, null = não explorada)';
+COMMENT ON COLUMN mapa_celulas.parede_leste IS 'Presença de parede a Leste (true = parede, false = livre, null = não explorada)';
+COMMENT ON COLUMN mapa_celulas.parede_oeste IS 'Presença de parede a Oeste (true = parede, false = livre, null = não explorada)';
 
 -- ------------------------------------------------------------------------------
 -- 5. SEED INICIAL DE LABIRINTOS
