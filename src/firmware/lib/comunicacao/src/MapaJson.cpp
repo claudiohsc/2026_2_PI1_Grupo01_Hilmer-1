@@ -2,6 +2,8 @@
 
 #include <ArduinoJson.h>
 
+#include "ArmazenamentoMapa.h"
+
 namespace micromouse {
 
 namespace {
@@ -57,6 +59,17 @@ size_t MapaJson::serializar(const Mapa& mapa, char* saida, size_t capacidade) {
     return 0;
   }
   return serializeJson(doc, saida, capacidade);
+}
+
+size_t MapaJson::serializarFinal(const ArmazenamentoMapa& armazenamento, char* saida, size_t capacidade) {
+  const Mapa* final = armazenamento.mapaFinal();
+  if (final == nullptr) {
+    if (saida != nullptr && capacidade > 0) {
+      saida[0] = '\0';
+    }
+    return 0;
+  }
+  return serializar(*final, saida, capacidade);
 }
 
 }  // namespace micromouse
