@@ -8,14 +8,14 @@
 -- ------------------------------------------------------------------------------
 CREATE TABLE labirintos (
     id SERIAL PRIMARY KEY,
-    tipo VARCHAR(10) NOT NULL CHECK (tipo IN ('4x4', '8x4', '12x4')),
+    tipo VARCHAR(10) NOT NULL UNIQUE CHECK (tipo IN ('4x4', '8x4', '12x4')),
     linhas INT NOT NULL CHECK (linhas > 0),
     colunas INT NOT NULL CHECK (colunas > 0)
 );
 
 COMMENT ON TABLE labirintos IS 'Dimensões dos labirintos suportados no projeto';
 COMMENT ON COLUMN labirintos.id IS 'Identificador único do labirinto (chave primária)';
-COMMENT ON COLUMN labirintos.tipo IS 'Rótulo do labirinto (4x4, 8x4 ou 12x4)';
+COMMENT ON COLUMN labirintos.tipo IS 'Rótulo do labirinto (4x4, 8x4 ou 12x4; único)';
 COMMENT ON COLUMN labirintos.linhas IS 'Quantidade total de linhas na matriz do labirinto';
 COMMENT ON COLUMN labirintos.colunas IS 'Quantidade total de colunas na matriz do labirinto';
 
@@ -37,7 +37,10 @@ CREATE TABLE corridas (
     velocidade_pico FLOAT,         -- Velocidade máxima atingida em m/s
     consumo_bateria FLOAT,         -- Estimativa de consumo em mAh ou % consumida
     status VARCHAR(20) NOT NULL DEFAULT 'em_andamento' 
-        CHECK (status IN ('em_andamento', 'concluida', 'nao_concluida'))
+        CHECK (status IN ('em_andamento', 'concluida', 'nao_concluida')),
+
+    -- Evita duplicidade de tentativas para uma mesma corrida/labirinto
+    CONSTRAINT uq_corridas_labirinto_tentativa UNIQUE (labirinto_id, numero_tentativa)
 );
 
 COMMENT ON TABLE corridas IS 'Histórico e métricas agregadas de cada tentativa de corrida';
@@ -129,5 +132,6 @@ COMMENT ON COLUMN mapa_celulas.parede_oeste IS 'Presença de parede a Oeste (tru
 -- ------------------------------------------------------------------------------
 INSERT INTO labirintos (tipo, linhas, colunas) VALUES 
     ('4x4', 4, 4),
-    ('8x4', 8, 4),
-    ('12x4', 12, 4);
+    ('8x4', 4, 8),
+    ('12x4', 4, 12)
+ON CONFLICT (tipo) DO NOTHING;
