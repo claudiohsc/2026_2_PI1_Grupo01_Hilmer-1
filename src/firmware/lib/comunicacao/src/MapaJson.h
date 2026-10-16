@@ -47,6 +47,8 @@ constexpr size_t TAMANHO_MAX_JSON_MAPA = 5100;
 /// O texto sai sem espaços nem quebras de linha (o exemplo acima está formatado só para leitura).
 /// A ArduinoJson usa a memória dinâmica durante a conversão e a libera ao final; a saída é escrita
 /// num buffer do chamador, de tamanho fixo.
+class ArmazenamentoMapa;
+
 class MapaJson {
  public:
   /// Escreve o JSON do mapa em `saida`, terminado em `\0`.
@@ -56,6 +58,14 @@ class MapaJson {
   /// @return Número de caracteres escritos, sem o `\0`; `0` se `saida` é nulo ou não comporta o
   ///         JSON inteiro (nesse caso `saida` fica com uma string vazia, quando há espaço).
   static size_t serializar(const Mapa& mapa, char* saida, size_t capacidade);
+
+  /// Escreve o JSON do mapa final em `saida` a partir de um `ArmazenamentoMapa` congelado.
+  /// @param armazenamento Armazenamento cujo mapa final será serializado.
+  /// @param[out] saida Buffer do chamador.
+  /// @param capacidade Tamanho de `saida` em bytes, incluindo o `\0`.
+  /// @return Número de caracteres escritos, sem o `\0`; `0` se o mapa não estiver congelado,
+  ///         `saida` for nulo ou não comportar o JSON inteiro.
+  static size_t serializarFinal(const ArmazenamentoMapa& armazenamento, char* saida, size_t capacidade);
 };
 
 }  // namespace micromouse

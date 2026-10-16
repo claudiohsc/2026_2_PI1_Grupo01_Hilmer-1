@@ -43,17 +43,30 @@ class ArmazenamentoMapa {
   void iniciarCorrida(DimensaoMapa dimensao);
 
   /// `true` depois da primeira chamada de `iniciarCorrida()`.
-  bool corridaIniciada() const { return corridaIniciada_; }
+  bool corridaIniciada() const;
 
   /// Mapa da corrida, para quem lê e registra paredes (navegação).
-  Mapa& mapa() { return mapa_; }
+  Mapa& mapa();
 
   /// Mapa da corrida, só para leitura (telemetria).
-  const Mapa& mapa() const { return mapa_; }
+  const Mapa& mapa() const;
+
+  /// Congela o mapa final ao alcançar o objetivo da corrida.
+  /// @return `true` se o mapa foi congelado com sucesso; `false` se a corrida não foi iniciada
+  ///         ou se o mapa já estava congelado.
+  bool congelarMapa();
+
+  /// `true` se o mapa foi congelado ao fim da corrida.
+  bool mapaCongelado() const;
+
+  /// Mapa final da corrida, somente leitura.
+  /// @return Ponteiro para o mapa final se já estiver congelado; `nullptr` caso contrário.
+  const Mapa* mapaFinal() const;
 
  private:
   Mapa mapa_;
   bool corridaIniciada_ = false;
+  bool mapaCongelado_ = false;
 };
 
 }  // namespace micromouse
