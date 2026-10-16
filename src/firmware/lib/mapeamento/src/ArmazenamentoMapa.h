@@ -43,13 +43,13 @@ class ArmazenamentoMapa {
   void iniciarCorrida(DimensaoMapa dimensao);
 
   /// `true` depois da primeira chamada de `iniciarCorrida()`.
-  bool corridaIniciada() const;
+  bool corridaIniciada() const { return corridaIniciada_; }
 
   /// Mapa da corrida, para quem lê e registra paredes (navegação).
-  Mapa& mapa();
+  Mapa& mapa() { return mapa_; }
 
   /// Mapa da corrida, só para leitura (telemetria).
-  const Mapa& mapa() const;
+  const Mapa& mapa() const { return mapa_; }
 
   /// Congela o mapa final ao alcançar o objetivo da corrida.
   /// @return `true` se o mapa foi congelado com sucesso; `false` se a corrida não foi iniciada
@@ -57,7 +57,7 @@ class ArmazenamentoMapa {
   bool congelarMapa();
 
   /// `true` se o mapa foi congelado ao fim da corrida.
-  bool mapaCongelado() const;
+  bool mapaCongelado() const { return mapaCongelado_; }
 
   /// Mapa final da corrida, somente leitura.
   /// @return Ponteiro para o mapa final se já estiver congelado; `nullptr` caso contrário.
@@ -65,6 +65,7 @@ class ArmazenamentoMapa {
 
  private:
   Mapa mapa_;
+  Mapa mapaFinal_;
   bool corridaIniciada_ = false;
   bool mapaCongelado_ = false;
 };

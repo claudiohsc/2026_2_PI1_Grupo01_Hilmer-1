@@ -18,6 +18,8 @@ namespace micromouse {
 /// buffer é maior que a pilha das tarefas (4096 bytes), então deve ser `static` ou global.
 constexpr size_t TAMANHO_MAX_JSON_MAPA = 5100;
 
+class ArmazenamentoMapa;
+
 /// Converte o `Mapa` no JSON enviado na telemetria.
 ///
 /// **Formato.** Um objeto com as dimensões e uma lista de células, da linha 0 à última e, em cada
@@ -47,8 +49,6 @@ constexpr size_t TAMANHO_MAX_JSON_MAPA = 5100;
 /// O texto sai sem espaços nem quebras de linha (o exemplo acima está formatado só para leitura).
 /// A ArduinoJson usa a memória dinâmica durante a conversão e a libera ao final; a saída é escrita
 /// num buffer do chamador, de tamanho fixo.
-class ArmazenamentoMapa;
-
 class MapaJson {
  public:
   /// Escreve o JSON do mapa em `saida`, terminado em `\0`.

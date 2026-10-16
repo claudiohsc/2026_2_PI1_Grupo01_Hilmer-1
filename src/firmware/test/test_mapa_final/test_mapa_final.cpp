@@ -211,10 +211,59 @@ void test_mapa_final_testado_no_labirinto_simulado() {
   TEST_ASSERT_TRUE(cFinal["parede_leste"].as<bool>());
 }
 
+/// @brief Valida que o mapa final permanece congelado e inalterado mesmo que a navegação
+/// continue escrevendo novas paredes após o congelamento.
+///
+/// Este teste verifica:
+/// - O robô alcança o objetivo e o mapa é congelado;
+/// - O JSON do mapa final é serializado e armazenado;
+/// - Novas paredes são registradas no mapa da navegação (mapa ativo);
+/// - O mapaFinal() e o JSON serializado por serializarFinal() permanecem estritamente idênticos;
+/// - O JSON da telemetria ativa (serializar()) reflete as alterações, confirmando que apenas o
+///   mapa final está isolado/congelado.
+void test_mapa_final_permanece_inalterado_apos_novos_registros() {
+  ArmazenamentoMapa armazenamento;
+  armazenamento.iniciarCorrida(DimensaoMapa::Labirinto4x4);
+
+  // 1. Registra paredes iniciais e congela o mapa
+  armazenamento.mapa().registrarParede(pos(0, 0), Direcao::Norte, EstadoParede::Livre);
+  armazenamento.mapa().registrarParede(pos(0, 0), Direcao::Leste, EstadoParede::Parede);
+  TEST_ASSERT_TRUE(armazenamento.congelarMapa());
+
+  // 2. Serializa o mapa final no momento do congelamento
+  char jsonCongelado[CAPACIDADE_BUFFER];
+  const size_t bytesCongelado = MapaJson::serializarFinal(armazenamento, jsonCongelado, sizeof(jsonCongelado));
+  TEST_ASSERT_GREATER_THAN_UINT32(0, bytesCongelado);
+
+  // 3. Simula navegação continuando a escrever no mapa após o congelamento
+  const ResultadoRegistro res =
+      armazenamento.mapa().registrarParede(pos(1, 1), Direcao::Leste, EstadoParede::Parede);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ResultadoRegistro::Registrada), static_cast<uint8_t>(res));
+
+  // 4. Confere que a escrita afetou o mapa ativo, mas não o mapa final congelado
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EstadoParede::Parede),
+                          static_cast<uint8_t>(armazenamento.mapa().obterParede(pos(1, 1), Direcao::Leste)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EstadoParede::Desconhecido),
+                          static_cast<uint8_t>(armazenamento.mapaFinal()->obterParede(pos(1, 1), Direcao::Leste)));
+
+  // 5. Serializa novamente o mapa final e confere que o JSON gerado é estritamente idêntico
+  char jsonAposEscrita[CAPACIDADE_BUFFER];
+  const size_t bytesApos = MapaJson::serializarFinal(armazenamento, jsonAposEscrita, sizeof(jsonAposEscrita));
+  TEST_ASSERT_EQUAL_UINT32(bytesCongelado, bytesApos);
+  TEST_ASSERT_EQUAL_STRING(jsonCongelado, jsonAposEscrita);
+
+  // 6. Confere que o JSON ativo (serializar()) reflete a nova parede e difere do JSON final congelado
+  char jsonAtivo[CAPACIDADE_BUFFER];
+  const size_t bytesAtivo = MapaJson::serializar(armazenamento.mapa(), jsonAtivo, sizeof(jsonAtivo));
+  TEST_ASSERT_GREATER_THAN_UINT32(0, bytesAtivo);
+  TEST_ASSERT_TRUE(strcmp(jsonCongelado, jsonAtivo) != 0);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_congelamento_ao_sinalizar_objetivo);
   RUN_TEST(test_serializacao_mapa_final_formato_5_3_3);
   RUN_TEST(test_mapa_final_testado_no_labirinto_simulado);
+  RUN_TEST(test_mapa_final_permanece_inalterado_apos_novos_registros);
   return UNITY_END();
 }
