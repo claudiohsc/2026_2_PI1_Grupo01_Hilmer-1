@@ -497,7 +497,15 @@ test/test_json_mapa/test_json_mapa.cpp:444: test_dimensao_fora_do_enum_sai_como_
 =================================== 22 test cases: 22 succeeded in 00:00:03.999 ===================================
 ```
 
+#### Validação do formato com as outras equipes
+
+O formato foi confirmado com a equipe do dashboard e do banco antes da integração (critério 3 da #178):
+
+| Equipe | Resposta | Efeito |
+|---|---|---|
+| Dashboard ([#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239)) | O JSON atende; `null` será tratado como área não explorada | Formato mantido como está |
+| Banco ([#228](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228)) | Não há requisito de `NOT NULL`; a tabela `mapa_celulas` passou a aceitar `null` nas colunas `parede_*` (BOOLEAN) no PR [#328](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/328) | O firmware pode enviar `null` para parede desconhecida |
+
 #### Pendências desta etapa
 
-- **Validação do formato com o dashboard e a ingestão:** o formato está documentado e testado (critérios 1 e 2 da #178), mas falta o alinhamento final com quem fará o dashboard (HU-14, #239) e o registro do aceite na issue.
-- **Inserção em `mapa_celulas`:** as colunas `parede_*` do esquema atual (`feat/228-supabase-esquema-banco`) são `BOOLEAN NOT NULL DEFAULT FALSE`, incompatíveis com o `null` usado para parede desconhecida. Precisa decidir entre tornar as colunas aceitáveis para `null` ou o firmware omitir células desconhecidas, e então testar a inserção de fato via PostgREST.
+- Testar o envio de fato da lista de células à tabela `mapa_celulas` (via PostgREST, com o `corrida_id` acrescentado), que entra com a telemetria (Épico 03).

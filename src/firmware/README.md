@@ -91,7 +91,7 @@ Os nomes dos campos das células são os das colunas da tabela `mapa_celulas` do
 |---|---|
 | Saída | Compacta, sem espaços nem quebras de linha, terminada em `\0` |
 | Buffer | Do chamador, de tamanho fixo; a ArduinoJson só usa memória dinâmica durante a conversão, liberada ao final |
-| `TAMANHO_MAX_JSON_MAPA` (5.100 bytes) | Pior caso: um 12×4 com as 48 células conhecidas, todas `Livre` (`false` ocupa mais caracteres que `true` ou `null`). Maior que a pilha das tarefas (4.096 bytes), por isso precisa ser `static` ou global |
+| `TAMANHO_MAX_JSON_MAPA` (5.100 bytes) | Pior caso: um 12×4 com as 48 células conhecidas e todas as paredes internas `Livre` (`false` ocupa mais caracteres que `true` ou `null`; o perímetro continua `true`). Maior que a pilha das tarefas (4.096 bytes), por isso precisa ser `static` ou global |
 | Capacidade insuficiente, ou `saida` nulo/capacidade zero | Devolve `0` e deixa `saida` com string vazia, sem escrever além da capacidade informada |
 
 ## Instalação
