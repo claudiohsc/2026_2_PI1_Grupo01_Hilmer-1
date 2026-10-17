@@ -109,16 +109,6 @@ A Figura 1 consolida as curvas temporais obtidas nos dois ensaios: à esquerda, 
 
 ---
 
-## 6. Matriz de Verificação dos Critérios de Pronto (Issue #207)
-
-| Critério de Pronto da Issue #207 | Evidência Técnica Registrada | Resultado Obtido | Status |
-| :--- | :--- | :--- | :---: |
-| **Atuação do corte em subtensão comprovada ao atingir $6{,}4\text{ V}$ na fonte ajustável** | Seção 3.2 (Tabela de varredura) e Figura 1 (Painel Esquerdo) | Corte primário UVLO atua em **$6{,}60\text{ V}$** ($V_{\text{ADC}} = 1{,}638\text{ V}$, protegendo o *dropout* do LM2596) e seccionamento físico BMS 2S atua exatamente em **$6{,}40\text{ V}$** ($3{,}20\text{ V/célula}$, $V_{P+} = 0{,}00\text{ V}$ em $98\text{ ms}$) | **Aprovado** |
-| **Desarme do fusível PPTC atestado em simulação de sobrecorrente acima de $3{,}5\text{ A}$** | Seção 4.2 (Casos CT-03 a CT-06) e Figura 1 (Painel Direito) | Desarme comprovado em **$9{,}10\text{ s}$** (@ $3{,}60\text{ A}$), **$8{,}70\text{ s}$** (@ $3{,}70\text{ A}$), **$3{,}10\text{ s}$** (@ $5{,}00\text{ A}$) e **$0{,}60\text{ s}$** (@ $9{,}25\text{ A}$), limitando a corrente residual a **$118\text{ mA}$** | **Aprovado** |
-| **Evidência registrada (relatório de teste com medições elétricas de disparo)** | Este documento (`ensaios-protecoes.md`) e matriz em [7.2 Testes de Energia](../07-testes/energia.md) | Tabelas completas de tensão, corrente, resistência, temperatura e tempo de disparo comitadas no repositório | **Aprovado** |
-
----
-
 ## 7. Referências Bibliográficas
 
 1. **BOURNS INC.** *MF-R Series — Radial Leaded Resettable Polymeric PTC Fuses Datasheet (Time-to-Trip Curves at 23 °C)*. Rev. 08/2023. Disponível em: <https://www.bourns.com/docs/Product-Datasheets/mfr.pdf>.
@@ -131,4 +121,4 @@ A Figura 1 consolida as curvas temporais obtidas nos dois ensaios: à esquerda, 
 
 | Versão | Data | Descrição | Autor(es) | Revisor(es) |
 | :---: | :---: | :--- | :--- | :--- |
-| 1.0 | 17/10/2026 | Elaboração do relatório de ensaio simulado de corte por subtensão (6,6 V / 6,4 V) e desarme do fusível PPTC (> 3,5 A) — Issue #207 | Paulo Melo | Equipe de Energia |
+| 1.0 | 17/10/2026 | Elaboração do relatório de ensaio simulado de corte por subtensão (6,6 V / 6,4 V) e desarme do fusível PPTC (> 3,5 A) | Paulo Melo | Equipe de Energia |
