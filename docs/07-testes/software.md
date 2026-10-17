@@ -718,3 +718,219 @@ native         test_armazenamento_mapa  PASSED    00:00:01.287
 - A navegação (Épico 02) ainda precisa chamar `congelarMapa()` quando detectar a célula objetivo; por enquanto o objetivo é sinalizado pelos próprios testes.
 - O envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), entra com a telemetria (Épico 03).
 - Medir no ESP32-C3 (`pio run -e esp32c3`) a RAM estática do `ArmazenamentoMapa` com o mapa final; no computador, o `sizeof` é de 392 bytes.
+
+---
+
+### Sprint 4 · Edge Function de corridas e RLS do banco
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefas | [#233 Registro e encerramento de corridas no banco](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233) e, nas verificações de RLS, [#228 Configurar o Supabase e criar o esquema do banco](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228) |
+| Histórias de usuário | HU-15 · Gestão de corridas ([#225](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/225)) e HU-09 · Persistência de dados e corridas ([#47](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/47)) |
+| Código testado | `src/backend` (branch `feat/233-edge-function-corridas`, PR [#334](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/334)) |
+| Data da execução | 18/10/2026 |
+| Executado por | Cláudio Henrique (testes automatizados) e Eduardo Viana (publicação e teste ponta a ponta) |
+| Documentação do código | [Software: escrita mediada por Edge Function](../04-projeto-conceitual/software.md#escrita-mediada-por-edge-function-corridas) e [README do backend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/backend) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Testes automatizados | Node 22.18 ou superior (`node --test`) e PGlite 0.5.10 (PostgreSQL em WebAssembly) |
+| Projeto Supabase | `pi1-micromouse`, o projeto da equipe, no plano gratuito |
+| Supabase CLI | 2.121.0 |
+| Cliente HTTP | curl 8.5.0 |
+| Sistema operacional | Linux (Ubuntu 24.04.5 LTS, kernel 7.0) |
+
+#### Testes automatizados (Node, sem Supabase)
+
+Comandos executados em `src/backend`:
+
+```bash
+npm install
+npm test
+```
+
+A suíte tem **42 casos, 42 aprovados**: validação dos corpos, comparação do token, roteamento da função com um banco falso, e as funções SQL e o RLS num PostgreSQL de verdade (PGlite), com os papéis `anon`, `authenticated` e `service_role` imitando os do Supabase. Esses testes não rodam o `index.ts`, que só liga o roteador ao servidor HTTP do Deno; por isso o teste ponta a ponta abaixo é feito no projeto Supabase de teste.
+
+#### Publicação no projeto de teste
+
+Comandos executados em `src/backend`, depois do `supabase login`. O valor do `DEVICE_TOKEN` não aparece aqui: ele foi gerado com `openssl rand -hex 24` e guardado fora do repositório.
+
+```bash
+supabase link --project-ref <ID-DO-PROJETO>
+supabase migration repair --status applied 20261014180000 20261014180500
+supabase db push
+supabase secrets set DEVICE_TOKEN=<valor guardado fora do Git>   # feito pelo painel, por um dono da organização
+supabase functions deploy corridas
+```
+
+- **Migrações:** as tabelas da [#228](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228) tinham sido criadas pelo SQL Editor, então o histórico de migrações do projeto estava vazio. As duas primeiras migrações foram marcadas como aplicadas com `supabase migration repair --status applied 20261014180000 20261014180500`, e o `supabase db push` aplicou só a `20261016120000_funcoes_corridas.sql`.
+- **Segredo:** o `DEVICE_TOKEN` foi cadastrado por um dono da organização no painel (*Edge Functions › Secrets*), porque o papel *Developer* não pode definir segredos.
+- **Publicação:** o `supabase functions deploy corridas` enviou os quatro arquivos da função (`index.ts`, `logica.ts`, `roteador.ts` e `_shared/autenticacao.ts`) sem precisar do Docker. O `index.ts` rodou no Deno do Supabase sem nenhuma correção: a importação do `supabase-js` e o caminho da rota funcionaram como no roteador testado.
+
+#### Teste ponta a ponta (curl)
+
+Cada caso é uma chamada real à função publicada ou à API REST do projeto de teste. Os casos 1 a 10 cobrem criação, encerramento e erros; os casos 11 a 14 cobrem a autenticação em duas camadas (gateway e `x-device-token`); e os casos 15 a 20 conferem, com a chave `anon`, a leitura liberada e a escrita bloqueada pelo RLS (#228).
+
+Executado com o script `teste-e2e-corridas.sh`, que faz cada chamada com `curl` e confere o status HTTP e o corpo da resposta. As chaves são lidas do terminal e não aparecem no relatório.
+
+| # | Caso | Esperado | Obtido | Detalhe | Resultado |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | Criar corrida no labirinto 4x4 | `201` | `201` | id 1, `numero_tentativa` 1, status `em_andamento` | **Aprovado** |
+| 2 | Criar corrida no labirinto 8x4 | `201` | `201` | id 2, `numero_tentativa` 1, status `em_andamento` | **Aprovado** |
+| 3 | Criar corrida no labirinto 12x4 | `201` | `201` | id 3, `numero_tentativa` 1, status `em_andamento` | **Aprovado** |
+| 4 | Segunda corrida no 4x4 recebe a próxima tentativa | `201` | `201` | `numero_tentativa` 2 (a anterior era 1) | **Aprovado** |
+| 5 | Encerrar a corrida 1 como `concluida` | `200` | `200` | status `concluida`, `data_hora_fim` 2026-10-19T01:59:35.001922+00:00, `tempo_final` 61.5 | **Aprovado** |
+| 6 | Encerrar a corrida 2 como `nao_concluida`, sem `tempo_final` | `200` | `200` | status `nao_concluida`, `data_hora_fim` 2026-10-19T01:59:35.558052+00:00, `tempo_final` calculado pelo banco: 2.459853 | **Aprovado** |
+| 7 | Repetir o encerramento da 1 com o mesmo status | `200` | `200` | mesma `data_hora_fim` do primeiro encerramento: sim | **Aprovado** |
+| 8 | Encerrar a 1 de novo com outro status | `409` | `409` | erro `corrida_ja_encerrada` | **Aprovado** |
+| 9 | Encerrar uma corrida que não existe | `404` | `404` | erro `corrida_inexistente` | **Aprovado** |
+| 10 | Criar corrida com labirinto inválido (`5x5`) | `400` | `400` | erro `corpo_invalido` | **Aprovado** |
+| 11 | Chamar sem chave e sem token | `401` | `401` | recusado pelo gateway (verificação de JWT) | **Aprovado** |
+| 12 | Chamar só com a chave anon, sem `x-device-token` | `401` | `401` | erro `nao_autorizado` (recusado pela função) | **Aprovado** |
+| 13 | Chamar com `x-device-token` errado | `401` | `401` | erro `nao_autorizado` | **Aprovado** |
+| 14 | Chamar só com o `x-device-token`, sem JWT | `401` | `401` | recusado pelo gateway: a verificação de JWT continua ativa | **Aprovado** |
+| 15 | Ler a corrida 1 pela API REST com a chave anon | `200` | `200` | status `concluida`, `data_hora_fim` 2026-10-19T01:59:35.001922+00:00 | **Aprovado** |
+| 16 | RLS: ler os labirintos com a chave anon | `200` | `200` | labirintos: 4x4, 8x4, 12x4 | **Aprovado** |
+| 17 | RLS: inserir corrida direto com a chave anon | `401` ou `403` | `401` | bloqueado: new row violates row-level security policy for table "corridas" | **Aprovado** |
+| 18 | RLS: inserir telemetria direto com a chave anon | `401` ou `403` | `401` | bloqueado: new row violates row-level security policy for table "telemetria" | **Aprovado** |
+| 19 | RLS: alterar corrida direto com a chave anon | sem efeito | `204` | status da 1 depois da tentativa: `concluida` (continua `concluida`: sim) | **Aprovado** |
+| 20 | Chamar a função SQL `criar_corrida` direto com a chave anon | `401`, `403` ou `404` | `401` | bloqueado: permission denied for function criar_corrida | **Aprovado** |
+
+**20 de 20 casos aprovados.**
+
+O caso 19 devolve `204` porque o PostgREST aceita o `PATCH`, mas o RLS não deixa nenhuma linha ser alterada; por isso o teste confere o status da corrida depois da tentativa.
+
+O teste criou 4 corridas no banco (ids 1 e 4 no 4×4, 2 no 8×4 e 3 no 12×4). As corridas 3 e 4 foram encerradas como `nao_concluida` no fim do script.
+
+??? note "Respostas completas da função e da API REST"
+
+    **1. Criar corrida no labirinto 4x4** · HTTP 201
+
+    ```json
+    {"id":1,"labirinto_id":1,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:31.291173+00:00","data_hora_fim":null,"tempo_final":null,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"em_andamento"}
+    ```
+
+    **2. Criar corrida no labirinto 8x4** · HTTP 201
+
+    ```json
+    {"id":2,"labirinto_id":2,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:33.098199+00:00","data_hora_fim":null,"tempo_final":null,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"em_andamento"}
+    ```
+
+    **3. Criar corrida no labirinto 12x4** · HTTP 201
+
+    ```json
+    {"id":3,"labirinto_id":3,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:33.933299+00:00","data_hora_fim":null,"tempo_final":null,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"em_andamento"}
+    ```
+
+    **4. Segunda corrida no 4x4 recebe a próxima tentativa** · HTTP 201
+
+    ```json
+    {"id":4,"labirinto_id":1,"numero_tentativa":2,"data_hora_inicio":"2026-10-19T01:59:34.497627+00:00","data_hora_fim":null,"tempo_final":null,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"em_andamento"}
+    ```
+
+    **5. Encerrar a corrida 1 como `concluida`** · HTTP 200
+
+    ```json
+    {"id":1,"labirinto_id":1,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:31.291173+00:00","data_hora_fim":"2026-10-19T01:59:35.001922+00:00","tempo_final":61.5,"velocidade_media":0.32,"velocidade_pico":null,"consumo_bateria":null,"status":"concluida"}
+    ```
+
+    **6. Encerrar a corrida 2 como `nao_concluida`, sem `tempo_final`** · HTTP 200
+
+    ```json
+    {"id":2,"labirinto_id":2,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:33.098199+00:00","data_hora_fim":"2026-10-19T01:59:35.558052+00:00","tempo_final":2.459853,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"nao_concluida"}
+    ```
+
+    **7. Repetir o encerramento da 1 com o mesmo status** · HTTP 200
+
+    ```json
+    {"id":1,"labirinto_id":1,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:31.291173+00:00","data_hora_fim":"2026-10-19T01:59:35.001922+00:00","tempo_final":61.5,"velocidade_media":0.32,"velocidade_pico":null,"consumo_bateria":null,"status":"concluida"}
+    ```
+
+    **8. Encerrar a 1 de novo com outro status** · HTTP 409
+
+    ```json
+    {"erro":"corrida_ja_encerrada","mensagem":"a corrida já foi encerrada com outro status"}
+    ```
+
+    **9. Encerrar uma corrida que não existe** · HTTP 404
+
+    ```json
+    {"erro":"corrida_inexistente","mensagem":"corrida não encontrada"}
+    ```
+
+    **10. Criar corrida com labirinto inválido (`5x5`)** · HTTP 400
+
+    ```json
+    {"erro":"corpo_invalido","mensagem":"labirinto inválido; use um de: 4x4, 8x4, 12x4"}
+    ```
+
+    **11. Chamar sem chave e sem token** · HTTP 401
+
+    ```json
+    {"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"Missing authorization header"}
+    ```
+
+    **12. Chamar só com a chave anon, sem `x-device-token`** · HTTP 401
+
+    ```json
+    {"erro":"nao_autorizado","mensagem":"token de dispositivo ausente ou inválido"}
+    ```
+
+    **13. Chamar com `x-device-token` errado** · HTTP 401
+
+    ```json
+    {"erro":"nao_autorizado","mensagem":"token de dispositivo ausente ou inválido"}
+    ```
+
+    **14. Chamar só com o `x-device-token`, sem JWT** · HTTP 401
+
+    ```json
+    {"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"Missing authorization header"}
+    ```
+
+    **15. Ler a corrida 1 pela API REST com a chave anon** · HTTP 200
+
+    ```json
+    [{"id":1,"status":"concluida","data_hora_fim":"2026-10-19T01:59:35.001922+00:00","numero_tentativa":1}]
+    ```
+
+    **16. RLS: ler os labirintos com a chave anon** · HTTP 200
+
+    ```json
+    [{"tipo":"4x4","linhas":4,"colunas":4}, 
+     {"tipo":"8x4","linhas":4,"colunas":8}, 
+     {"tipo":"12x4","linhas":4,"colunas":12}]
+    ```
+
+    **17. RLS: inserir corrida direto com a chave anon** · HTTP 401
+
+    ```json
+    {"code":"42501","details":null,"hint":null,"message":"new row violates row-level security policy for table \"corridas\""}
+    ```
+
+    **18. RLS: inserir telemetria direto com a chave anon** · HTTP 401
+
+    ```json
+    {"code":"42501","details":null,"hint":null,"message":"new row violates row-level security policy for table \"telemetria\""}
+    ```
+
+    **19. RLS: alterar corrida direto com a chave anon** · HTTP 204
+
+    ```json
+    (sem corpo)
+    ```
+
+    **20. Chamar a função SQL `criar_corrida` direto com a chave anon** · HTTP 401
+
+    ```json
+    {"code":"42501","details":null,"hint":null,"message":"permission denied for function criar_corrida"}
+    ```
+
+
+#### Pendências desta etapa
+
+- Apagar as 4 corridas de teste antes das corridas reais (`DELETE FROM corridas WHERE id IN (1, 2, 3, 4);` no SQL Editor, por um dono do projeto). Enquanto elas existirem, a próxima corrida do 4×4 será a tentativa 3.
+- Caminho do dashboard para criar corridas (decisão da #233): aceitar o JWT de um operador logado como alternativa ao `x-device-token` e responder ao CORS do navegador, junto com o login de operador da HU-15.
+- Ingestão de telemetria e do mapa (`telemetria` e `mapa_celulas`) por Edge Function, com o mesmo token de dispositivo, em issue separada.
