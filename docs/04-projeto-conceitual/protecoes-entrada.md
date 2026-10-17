@@ -1,7 +1,5 @@
 # Dimensionamento das Proteções de Entrada (Polaridade Reversa e Sobrecorrente)
 
-Este documento formaliza o memorial de cálculo, a seleção de componentes, a validação térmica e o esquemático de integração da **malha de proteção de entrada** do Micromouse, atendendo integralmente aos critérios de aceitação da **Issue #200** (*Atividade: Proteções de Entrada — #142*) e complementando a arquitetura definida em [4.2 Energia](energia.md).
-
 ---
 
 ## 1. Contextualização e Justificativa de Engenharia
@@ -10,7 +8,7 @@ A fonte primária homologada para o robô é o pack **Tattu LiPo 2S1P 650 mAh 75
 
 Essa característica impõe dois requisitos críticos para o estágio de entrada da placa de circuito impresso (PCB):
 
-1. **Proteção contra Curto-Circuito e Travamento de Motores (Fusível Rearmável PPTC):** Um eventual curto-circuito acidental nos barramentos ou o travamento mecânico prolongado (*stall*) de ambos os micromotores GA12-N20 na pista geraria correntes elevadas capazes de carbonizar trilhas de cobre, danificar o driver DRV8833 ou provocar estufamento térmico das células LiPo. O uso de um fusível polimérico rearmável (**PPTC — *Polymeric Positive Temperature Coefficient***) garante o seccionamento automático sob anomalia e o rearme passivo após a remoção da falha, sem necessidade de substituição de fusíveis de vidro durante a competição.
+1. **Proteção contra Curto-Circuito e Travamento de Motores (Fusível Rearmável PPTC):** Um eventual curto-circuito acidental nos barramentos ou o travamento mecânico prolongado (*stall*) de ambos os micromotores GA12-N20 na pista geraria correntes elevadas capazes de carbonizar trilhas de cobre, danificar o driver DRV8833 ou provocar estufamento térmico das células da bateria. O uso de um fusível polimérico rearmável (**PPTC — *Polymeric Positive Temperature Coefficient***) garante o seccionamento automático sob anomalia e o rearme passivo após a remoção da falha, sem necessidade de substituição de fusíveis de vidro durante a competição.
 2. **Proteção Ativa contra Inversão de Polaridade (P-MOSFET High-Side):** Embora o conector XT-30 possua chanfro mecânico polarizado, testes de bancada com fontes ajustáveis, cabos adaptadores ou retrabalho de solda expõem o robô ao risco de conexão reversa, o que destruiria instantaneamente os reguladores LM2596, MP1584EN, o driver DRV8833 e o microcontrolador ESP32-C3.
    * **Por que não utilizar um Diodo Schottky convencional em série?** Um diodo Schottky de potência apresenta queda de tensão direta típica de $V_F \approx 0{,}35\text{ V a }0{,}50\text{ V}$. Quando a bateria atinge o limiar inferior de operação em **6,60 V** (definido pelo corte de subtensão UVLO), um diodo reduziria a tensão entregue ao regulador Buck de 5 V (**LM2596**) para $\approx 6{,}15\text{ V}$, violando a tensão mínima de *dropout* do LM2596 ($V_{\text{in,mín}} = 5{,}0\text{ V} + 1{,}5\text{ V} = \mathbf{6{,}50\text{ V}}$) e desestabilizando o sensor LiDAR ToF.
    * **Solução Adotada:** Emprega-se um transistor **MOSFET de Canal P (P-MOSFET)** em configuração reversa *High-Side* com resistência de condução ultrabaixa ($R_{\text{DS(on)}} < 50\text{ m}\Omega$), reduzindo a queda de tensão no regime nominal para **menos de 0,02 V**.
@@ -174,21 +172,7 @@ Para a integração física e lógica do subcircuito `hw/protecao_entrada.kicad_
 | **`+VBAT_PROT`** | **Saída Principal** | Pino `2 (Source)` de `Q1` e Cátodo (`1`) de `D_Z1` | Terminal `1` da Chave Geral `SW1` (KCD1) $\rightarrow$ Barramento **`+VBAT_2S`** (entradas `IN` do LM2596 e MP1584EN, pino `VM` do DRV8833 e resistor $R_1$ do divisor ADC GPIO 2) | $6{,}57\text{ V a }8{,}39\text{ V}$ (protegido contra inversão e curto) |
 | **`GND`** | **Referência Comum** | Pino `2 (-)` do conector XT-30 (`BT1`) e Pino `2` de `R_G1` | Nó central de **GND em Estrela** da PCB (retorno de potência do DRV8833, reguladores Buck e lógica do ESP32-C3) | $0{,}00\text{ V}$ |
 
----
-
-## 6. Matriz de Verificação dos Critérios de Pronto (Issue #200)
-
-| Critério de Aceitação Estipulado na Issue #200 | Especificação Projetada | Resultado Obtido | Status |
-| :--- | :--- | :--- | :---: |
-| **P-MOSFET com $R_{\text{DS(on)}} < 50\text{ m}\Omega$, saturação em 6,6 V e queda $< 0{,}05\text{ V}$** | AO3407A ($R_{\text{DS(on)}} = 28\text{ m}\Omega\text{ a }33\text{ m}\Omega$, $V_{GS(\text{th})} = -0{,}9\text{ V}$) | Saturação plena em $V_{GS}=-6{,}6\text{ V}$; $\Delta V = \mathbf{0{,}013\text{ V}}$ (@ $0{,}43\text{ A}$) e $\mathbf{0{,}026\text{ V}}$ (@ $0{,}60\text{ A}$) | **Aprovado** |
-| **Fusível PPTC com $I_{\text{hold}} \approx 1{,}8\text{ A}$, $I_{\text{trip}} \approx 3{,}5\text{ A}$ e $V_{\text{max}} \ge 16\text{ V}$** | Bourns MF-R185 / MF-MSMF185 | $I_{\text{hold}} = \mathbf{1{,}85\text{ A}}$ ($1{,}78\text{ A}$ @ $25\text{ °C}$), $I_{\text{trip}} = \mathbf{3{,}55\text{ A a }3{,}70\text{ A}}$, $V_{\text{max}} = \mathbf{30\text{ V}}$ | **Aprovado** |
-| **Malha inserida no KiCad com *footprints* definidos** | `hw/protecao_entrada.kicad_sch` | Footprints `AMASS_XT30U-M`, `Fuse_Bourns_MF-R185`, `SOT-23`, `R_0805`, `D_SOD-123` | **Aprovado** |
-| **Memorial de cálculo anexado no repositório** | Seções 2, 3 e 4 deste documento (`protecoes-entrada.md`) | Equacionamento de queda de tensão, perdas térmicas e tempos de atuação | **Aprovado** |
-| **Pinagem de integração documentada com o circuito principal** | Seção 5 e Figura 1 (`esquematico-protecao-entrada.svg`) | Mapeamento completo dos nós `VBAT_RAW`, `+VBAT_PROT` e `GND` | **Aprovado** |
-
----
-
-## 7. Referências Bibliográficas
+## 6. Referências Bibliográficas
 
 1. **ALPHA & OMEGA SEMICONDUCTOR.** *AO3407A: 20V P-Channel MOSFET Datasheet*. Rev. 7.0, 2013. Disponível em: <http://www.aosmd.com/pdfs/datasheet/AO3407A.pdf>.
 2. **BOURNS INC.** *MF-R Series — Radial Leaded Resettable Polymeric PTC Fuses Datasheet*. Rev. 08/2023. Disponível em: <https://www.bourns.com/docs/Product-Datasheets/mfr.pdf>.

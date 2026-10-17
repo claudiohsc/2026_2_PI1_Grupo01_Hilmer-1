@@ -5,7 +5,7 @@
 	(uuid "8a91d2f4-51c2-49b0-9f18-7d61e23c9001")
 	(paper "A4")
 	(title_block
-		(title "Micromouse PI1 - Malha de Protecao de Entrada (Issue #200)")
+		(title "Micromouse PI1 - Malha de Protecao de Entrada")
 		(date "2026-10-17")
 		(rev "1.0")
 		(company "UnB / FCTE - Grupo 01 (Prof. Hilmer Neri)")
