@@ -188,17 +188,7 @@ Antes de apertar `START` no carregador, confira todos os itens:
 
 ---
 
-## 7. Matriz de Verificação dos Critérios de Pronto (Issue #210)
-
-| Critério de Pronto da Issue #210 | Seção Correspondente neste Documento | Status |
-| :--- | :--- | :---: |
-| **Guia passo a passo de conexão, monitoramento e desconexão segura redigido em Markdown** | Seção 4 (Fases A a F), Fluxograma e Figura 1 (`diagrama-pop-recarga-b6v3.svg`) | **Aprovado** |
-| **Regras de contingência para aquecimento ou estufamento de célula homologadas pela equipe** | Seção 3 (Limites Térmicos) e Seção 5 (Protocolos 5.1 a 5.5) | **Aprovado** |
-| **Evidência registrada (arquivo `pop-recarga-bateria.md` comitado no repositório)** | Arquivo `docs/04-projeto-conceitual/pop-recarga-bateria.md` registrado como `4.2.4` | **Aprovado** |
-
----
-
-## 8. Referências Bibliográficas
+## 7. Referências Bibliográficas
 
 1. **GENS ACE / TATTU.** *LiPo Battery Safety Guide and Standard Charging Instructions*. Manual Técnico do Fabricante, 2024. Disponível em: <https://www.gensace.de/lipo-battery-guide>.
 2. **SKYRC TECHNOLOGY.** *iMAX B6 / B6 V3 AC/DC Professional Balance Charger/Discharger Instruction Manual*. Versão 3.1, 2022.
