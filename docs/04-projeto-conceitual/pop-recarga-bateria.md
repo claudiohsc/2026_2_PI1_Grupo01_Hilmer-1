@@ -200,4 +200,4 @@ Antes de apertar `START` no carregador, confira todos os itens:
 
 | Versão | Data | Descrição | Autor(es) | Revisor(es) |
 | :---: | :---: | :--- | :--- | :--- |
-| 1.0 | 18/10/2026 | Elaboração e homologação do Procedimento Operacional Padrão (POP) de recarga balanceada e contingência para a bateria LiPo 2S — Issue #210 | Paulo Melo | Equipe de Energia |
+| 1.0 | 18/10/2026 | Elaboração e homologação do Procedimento Operacional Padrão (POP) de recarga balanceada e contingência para a bateria LiPo 2S | Paulo Melo | Equipe de Energia |
