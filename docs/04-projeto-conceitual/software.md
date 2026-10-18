@@ -937,4 +937,4 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 0.6 | 28/09/2026 | Adiciona a arquitetura de software e o DER | Cláudio Henrique | Ana Carolina |
 | 0.7 | 28/09/2026 | Adiciona o roteiro de testes de software | Eduardo Viana | Bruno Duarte |
 | 0.8 | 07/10/2026 | Adiciona o histórico de versões | Ana Carolina Fialho | Cláudio Henrique |
-| 0.9 | 16/10/2026 | Documenta a implementação do banco no Supabase: migrações, restrições, *seed*, RLS e Realtime ([#228](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228)) | Eduardo Viana | Rafael Lima |
+| 0.9 | 16/10/2026 | Documenta a implementação do banco no Supabase: migrações, restrições, *seed*, RLS e Realtime (#228) | Eduardo Viana | Cláudio Henrique |
