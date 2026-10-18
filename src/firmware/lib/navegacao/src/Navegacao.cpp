@@ -7,6 +7,14 @@
 
 namespace micromouse {
 
+namespace {
+
+bool mesmaCelula(PosicaoCelula a, PosicaoCelula b) {
+  return a.linha == b.linha && a.coluna == b.coluna;
+}
+
+}  // namespace
+
 Navegacao::Navegacao(const Mapa& mapa)
     : mapa_(mapa),
       posicao_atual_({0, 0}),
@@ -27,11 +35,13 @@ Navegacao::Navegacao(const Mapa& mapa, PosicaoCelula objetivo, Pose poseInicial)
 void Navegacao::definirPose(const Pose& pose) {
   posicao_atual_ = pose.celula;
   direcao_atual_ = pose.direcao;
+  passo_pendente_ = false;
 }
 
 void Navegacao::moverPara(uint8_t linha, uint8_t coluna, Direcao direcao) {
   posicao_atual_ = PosicaoCelula{linha, coluna};
   direcao_atual_ = direcao;
+  passo_pendente_ = false;
 }
 
 void Navegacao::definirObjetivo(PosicaoCelula objetivo) {
@@ -157,21 +167,51 @@ bool Navegacao::decidirProximaDirecao(Direcao& proximaDirecao) {
   return false;
 }
 
-bool Navegacao::avancar(Direcao direcao) {
-  PosicaoCelula novaPosicao = {};
-  if (!vizinha(posicao_atual_, direcao, novaPosicao) || !mapa_.posValida(novaPosicao)) {
+bool Navegacao::darPasso(Direcao& direcaoMovimento) {
+  if (passo_pendente_) {
     return false;
   }
-  posicao_atual_ = novaPosicao;
-  direcao_atual_ = direcao;
+
+  Direcao direcao = direcao_atual_;
+  if (!decidirProximaDirecao(direcao)) {
+    return false;
+  }
+
+  PosicaoCelula esperada = {};
+  if (!vizinha(posicao_atual_, direcao, esperada) || !mapa_.posValida(esperada)) {
+    return false;
+  }
+
+  celula_esperada_ = esperada;
+  passo_pendente_ = true;
+  direcaoMovimento = direcao;
   return true;
 }
 
-bool Navegacao::darPasso(Direcao& direcaoMovimento) {
-  if (!decidirProximaDirecao(direcaoMovimento)) {
-    return false;
+ResultadoConfirmacao Navegacao::confirmarPose(const Pose& poseMedida) {
+  if (!mapa_.posValida(poseMedida.celula)) {
+    return ResultadoConfirmacao::Invalida;
   }
-  return avancar(direcaoMovimento);
+
+  const PosicaoCelula origem = posicao_atual_;
+  posicao_atual_ = poseMedida.celula;
+  direcao_atual_ = poseMedida.direcao;
+
+  if (!passo_pendente_) {
+    return ResultadoConfirmacao::Confirmada;
+  }
+
+  if (mesmaCelula(posicao_atual_, celula_esperada_)) {
+    passo_pendente_ = false;
+    return ResultadoConfirmacao::Confirmada;
+  }
+
+  if (mesmaCelula(posicao_atual_, origem)) {
+    return ResultadoConfirmacao::EmAndamento;
+  }
+
+  passo_pendente_ = false;
+  return ResultadoConfirmacao::Divergente;
 }
 
 }  // namespace micromouse

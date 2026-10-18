@@ -17,6 +17,14 @@
 
 namespace micromouse {
 
+/// Resultado de `Navegacao::confirmarPose()`.
+enum class ResultadoConfirmacao : uint8_t {
+  Confirmada,   ///< Robô na célula esperada (ou sem passo pendente): pose adotada.
+  EmAndamento,  ///< Robô ainda na célula de origem do passo: pose adotada, passo segue pendente.
+  Divergente,   ///< Robô em outra célula: pose medida adotada e passo cancelado para replanejar.
+  Invalida,     ///< Pose fora do mapa: ignorada, a pose e o passo pendente não mudam.
+};
+
 /// Gerenciador de navegação e resolução do labirinto.
 class Navegacao {
  public:
@@ -46,10 +54,11 @@ class Navegacao {
   /// Célula objetivo configurada.
   PosicaoCelula obterObjetivo() const { return objetivo_; }
 
-  /// Define a pose atual do robô.
+  /// Define a pose atual do robô sem compará-la com um passo (ex.: posição inicial).
+  /// Cancela o passo pendente, se houver.
   void definirPose(const Pose& pose);
 
-  /// Posiciona o robô em uma célula e orientação específicas.
+  /// Posiciona o robô em uma célula e orientação específicas. Cancela o passo pendente.
   void moverPara(uint8_t linha, uint8_t coluna, Direcao direcao);
 
   /// Altera a célula objetivo.
@@ -78,21 +87,41 @@ class Navegacao {
   /// @return true se foi encontrada uma direção válida até o objetivo; false se inalcançável ou já no objetivo.
   bool decidirProximaDirecao(Direcao& proximaDirecao);
 
-  /// Move o robô uma célula na direção especificada, atualizando posição e orientação.
-  /// @param direcao Direção do movimento.
-  /// @return true se o movimento é válido dentro do mapa; false caso contrário.
-  bool avancar(Direcao direcao);
-
-  /// Decide a próxima direção e avança um passo imediatamente.
-  /// @param[out] direcaoMovimento Recebe a direção em que o robô avançou.
-  /// @return true se avançou com sucesso; false se não há caminho ou já atingiu o objetivo.
+  /// Inicia um passo: decide a próxima direção e registra a célula vizinha esperada.
+  ///
+  /// A pose não muda aqui. O controle de movimento deve levar o robô até a célula esperada,
+  /// e a pose só é atualizada quando os sensores a confirmarem por `confirmarPose()`.
+  /// Não inicia outro passo enquanto houver um pendente.
+  ///
+  /// @param[out] direcaoMovimento Recebe a direção em que o robô deve se mover.
+  /// @return true se o passo foi iniciado; false se há passo pendente, não há caminho ou já
+  ///         atingiu o objetivo.
   bool darPasso(Direcao& direcaoMovimento);
+
+  /// Atualiza a pose com a medida dos sensores (por exemplo, a odometria) e a compara com o
+  /// passo pendente.
+  ///
+  /// A pose medida é a referência: exceto quando inválida, ela substitui a pose atual, e
+  /// o próximo `darPasso()` replaneja a partir dela.
+  ///
+  /// @param poseMedida Célula e direção informadas pelos sensores.
+  /// @return Resultado da comparação com a célula esperada (veja `ResultadoConfirmacao`).
+  ResultadoConfirmacao confirmarPose(const Pose& poseMedida);
+
+  /// Retorna se há um passo iniciado aguardando confirmação dos sensores.
+  bool passoPendente() const { return passo_pendente_; }
+
+  /// Célula esperada ao fim do passo pendente (só tem significado se `passoPendente()`).
+  PosicaoCelula obterCelulaEsperada() const { return celula_esperada_; }
 
  private:
   const Mapa& mapa_;
   PosicaoCelula posicao_atual_ = {0, 0};
   Direcao direcao_atual_ = Direcao::Norte;
   PosicaoCelula objetivo_ = {0, 0};
+
+  bool passo_pendente_ = false;
+  PosicaoCelula celula_esperada_ = {0, 0};
 
   uint8_t distancias_[MAX_LINHAS_LABIRINTO][MAX_COLUNAS_LABIRINTO] = {};
 };
