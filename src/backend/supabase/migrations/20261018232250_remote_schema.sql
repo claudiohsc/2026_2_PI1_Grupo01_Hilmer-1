@@ -67,3 +67,15 @@ BEGIN
     RETURN v_corrida;
 END;
 $function$;
+
+-- ------------------------------------------------------------------------------
+-- Permissões das funções (Issue #233)
+-- O `db pull` traz só os corpos das funções. O Supabase concede EXECUTE a `anon` e a
+-- `authenticated` por padrão, e o PostgREST expõe as funções do schema public a quem tem
+-- EXECUTE. Aqui só a chave de serviço (Edge Function `corridas`) executa. O teste
+-- `tests/banco.test.ts` confere essa restrição.
+-- ------------------------------------------------------------------------------
+REVOKE ALL ON FUNCTION public.criar_corrida(TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.encerrar_corrida(INT, TEXT, FLOAT, FLOAT, FLOAT, FLOAT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.criar_corrida(TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.encerrar_corrida(INT, TEXT, FLOAT, FLOAT, FLOAT, FLOAT) TO service_role;
