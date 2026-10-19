@@ -718,3 +718,136 @@ native         test_armazenamento_mapa  PASSED    00:00:01.287
 - A navegação (Épico 02) ainda precisa chamar `congelarMapa()` quando detectar a célula objetivo; por enquanto o objetivo é sinalizado pelos próprios testes.
 - O envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), entra com a telemetria (Épico 03).
 - Medir no ESP32-C3 (`pio run -e esp32c3`) a RAM estática do `ArmazenamentoMapa` com o mapa final; no computador, o `sizeof` é de 392 bytes.
+
+---
+
+### Sprint 4 · Estrutura do frontend e layout do dashboard
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#230 Criar a estrutura do frontend (React + Vite) e o layout do dashboard](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230) |
+| História de usuário | HU-14 · Supervisionar a corrida pelo dashboard web ([#48](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/48)) |
+| Código testado | `src/frontend` (branch `feat/230-estrutura-frontend`, PR [#361](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/361)) |
+| Data da execução | 19/10/2026 |
+| Executado por | Eduardo Viana |
+| Documentação do código | [Software: implementação do frontend](../04-projeto-conceitual/software.md#implementacao-do-frontend) e [README do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/frontend) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Node.js e npm | Node.js instalado pelo nvm, npm 11.19.1 |
+| Ferramentas de build | Vite 6.4.4 e TypeScript 5 (`tsc --noEmit`) |
+| Bibliotecas | React 18.3, Recharts 2.15.4 e supabase-js 2 |
+| Banco | Projeto Supabase `pi1-micromouse`, lido com a chave `anon` |
+| Navegador | Navegador baseado em Chromium |
+| Sistema operacional | Linux (Ubuntu 24.04.5 LTS, kernel 7.0) |
+
+#### Instalação e build (critério 1)
+
+Comandos executados em `src/frontend`:
+
+```bash
+npm install
+cp .env.example .env.local   # preenchido com a URL e a chave anon do projeto
+npm run build
+npm run dev
+```
+
+- `npm install`: 118 pacotes, **0 vulnerabilidades**. O npm avisa que a linha 2.x do Recharts não recebe mais atualizações (veja as pendências).
+- `npm run build`: a checagem de tipos passou sem erros e o Vite gerou a pasta `dist/` sem avisos. O gráfico (Recharts) fica num arquivo à parte, carregado sob demanda, e nenhum arquivo passa de 500 kB.
+- `npm run dev`: servidor em `http://localhost:5173`, página carregada sem erros no console do navegador.
+
+```text
+> micromouse-dashboard@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v6.4.4 building for production...
+✓ 716 modules transformed.
+dist/index.html                              0.60 kB │ gzip:   0.37 kB
+dist/assets/index-D1oFPzN7.css               7.50 kB │ gzip:   2.18 kB
+dist/assets/index-CbxUmf35.js              390.33 kB │ gzip: 112.57 kB
+dist/assets/GraficoVelocidade-DlvwY1UI.js  395.18 kB │ gzip: 108.76 kB
+✓ built in 4.91s
+```
+
+#### Verificação das telas (critérios 2 a 7)
+
+Cada caso foi feito na página servida pelo `npm run dev`, clicando na interface e conferindo o texto e os elementos exibidos.
+
+| # | Caso | Critério | Esperado | Obtido | Resultado |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | Abrir a página só com `VITE_SUPABASE_URL` no `.env.local`, sem a chave | 2 | As telas funcionam com os dados de exemplo e o rodapé avisa que o Supabase não está configurado | Rodapé: "Supabase não configurado (crie o .env.local a partir do .env.example)" | **Aprovado** |
+| 2 | Abrir a página com as duas variáveis preenchidas | 2 | O app lê a tabela `labirintos` e o rodapé confirma | Rodapé: "Supabase conectado: labirintos lidos do banco"; seletor com Labirinto 1 · 4x4, Labirinto 2 · 8x4 e Labirinto 3 · 12x4 | **Aprovado** |
+| 3 | `git status` em `src/frontend` depois de criar o `.env.local` | 2 | O `.env.local` não aparece (está no `.gitignore`) | Só o `package-lock.json` aparece como novo | **Aprovado** |
+| 4 | Clicar nas abas do cabeçalho | 3 | Alternar entre "Telemetria ao Vivo" e "Histórico de Consultas"; o seletor e o badge só aparecem na tela ao vivo | Alterna; seletor e badge somem no histórico | **Aprovado** |
+| 5 | Abrir a tela ao vivo antes da largada (Frame 01) | 4 | Robô na largada, 100 %, 8.4V · 0 mA, 0.00 m/s, 00:00.000, "Tentativa 1 de 3 · Limite: 10:00", badge cinza `NÃO` e botão `INICIAR CORRIDA` | Como esperado | **Aprovado** |
+| 6 | Clicar em `INICIAR CORRIDA` (Frame 02) | 4 | Badge vermelho `NÃO (EM ANDAMENTO)`, botão `CORRIDA EM ANDAMENTO` travado, seletor travado, trajeto e paredes aparecendo, cards e gráfico atualizando | Como esperado; aos 17,6 s no 8x4: 97 %, 8.3V · 600 mA, média 0.12 m/s, pico 0.36 m/s | **Aprovado** |
+| 7 | Esperar a chegada ao objetivo (Frame 03) | 4 | Badge verde `SIM`, robô no objetivo, cronômetro congelado e nota da tentativa | 8x4: 00:38.220, "Concluído na Tentativa 1 · Nota 10", 96 %; 4x4: 00:09.731, "Nota 10" | **Aprovado** |
+| 8 | Clicar em `RESETAR / NOVA TENTATIVA` | 4 | Volta ao Frame 01, na tentativa seguinte | "Tentativa 2 de 3 · Limite: 10:00", 00:00.000, badge `NÃO` e botão `INICIAR CORRIDA` | **Aprovado** |
+| 9 | Trocar o labirinto no seletor | 4 | A malha muda de tamanho e a tentativa volta a 1 | Malha 4×4 desenhada; "Tentativa 1 de 3" ao voltar para o 8x4 | **Aprovado** |
+| 10 | Abrir o histórico (Frame 04) | 5 | Tabela com as colunas do protótipo, da corrida mais recente para a mais antiga | 5 corridas, de 16/10/2026 15:20 a 16/10/2026 14:02; tentativas com nota ("2ª Tentativa (Nota 7.5)") ou "Não concluída" | **Aprovado** |
+| 11 | Usar os filtros (M1, M2 e M3) | 5 | Só as corridas do labirinto escolhido | Todos: 5; 4×4: 2; 8×4: 1; 12×4: 2 | **Aprovado** |
+| 12 | Conferir o gráfico durante e depois da corrida | 6 | Gráfico do Recharts com a velocidade ao longo do tempo | Linha desenhada; eixo Y de 0.0 a 0.5 m/s, marcado de 0.1 em 0.1; título "Velocidade (m/s) × tempo (s)" | **Aprovado** |
+| 13 | Conferir o README | 7 | `src/frontend/README.md` com como rodar, variáveis, estrutura e telas | Presente | **Aprovado** |
+| 14 | Abrir a página numa janela estreita (cerca de 630 px) | — | Os cards descem para baixo do mapa e a tabela rola na horizontal | Como esperado | **Aprovado** |
+| 15 | Conferir os arquivos baixados pelo navegador antes e depois de `INICIAR CORRIDA` | 6 | O Recharts só é baixado quando o gráfico aparece | Antes do clique: nenhum arquivo do gráfico; depois: `GraficoVelocidade.tsx` e `recharts.js` | **Aprovado** |
+
+**15 de 15 casos aprovados.**
+
+#### Prints
+
+<figure markdown>
+
+![Tela ao vivo antes da largada, no labirinto 8x4](../figs/frontend-01-aguardando.png){ width="800" }
+
+<figcaption>
+
+**Figura.** Frame 01 · aguardando largada (labirinto 8x4). No rodapé, a confirmação da leitura no Supabase.
+
+</figcaption>
+
+</figure>
+
+<figure markdown>
+
+![Tela ao vivo com a corrida em andamento, no labirinto 8x4](../figs/frontend-02-em-execucao.png){ width="800" }
+
+<figcaption>
+
+**Figura.** Frame 02 · corrida em andamento (labirinto 8x4): trajeto, paredes já mapeadas, robô com a orientação, badge vermelho e botão travado.
+
+</figcaption>
+
+</figure>
+
+<figure markdown>
+
+![Tela ao vivo com o desafio concluído, no labirinto 8x4](../figs/frontend-03-concluido.png){ width="800" }
+
+<figcaption>
+
+**Figura.** Frame 03 · desafio concluído (labirinto 8x4): robô no objetivo, cronômetro congelado, nota da tentativa e badge verde.
+
+</figcaption>
+
+</figure>
+
+<figure markdown>
+
+![Tela de histórico com todas as corridas](../figs/frontend-04-historico.png){ width="800" }
+
+<figcaption>
+
+**Figura.** Frame 04 · histórico de consultas com o filtro "Todos os Labirintos".
+
+</figcaption>
+
+</figure>
+
+#### Pendências desta etapa
+
+- **Testes automatizados no frontend:** ainda não há testes unitários nem E2E. Os candidatos são Vitest para `lib/labirinto.ts` e `lib/formatacao.ts`, e Playwright para os casos 4 a 12 acima. Eles devem entrar junto com os dados reais (HUs 08, 10 e 15).
+- **Unidade de `corridas.consumo_bateria`:** precisa ser fechada na HU-09. Hoje o histórico assume % consumida.
+- **Percentual da bateria:** hoje é linear entre 6,6 V e 8,4 V. Pode passar a usar a tabela de SoC da [#139](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/139) na HU-08.
+- **Recharts:** migrar da 2.15 para a 3.x, já que a linha 2.x não recebe mais atualizações.
