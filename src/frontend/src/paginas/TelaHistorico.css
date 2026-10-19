@@ -1,0 +1,20 @@
+.historico {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 480px;
+  padding: 20px;
+}
+
+.historico__topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.historico__contagem {
+  color: var(--cor-texto-suave);
+  font-size: 12px;
+}

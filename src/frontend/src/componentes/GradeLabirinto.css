@@ -1,0 +1,100 @@
+.grade {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.grade__svg {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+}
+
+.grade__fundo {
+  fill: var(--grade-fundo);
+}
+
+.grade__linha {
+  stroke: var(--grade-linha);
+  stroke-width: 1;
+}
+
+.grade__largada {
+  fill: var(--largada);
+}
+
+.grade__objetivo {
+  fill: var(--objetivo);
+  stroke: var(--objetivo-borda);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.grade__parede {
+  fill: none;
+  stroke: var(--grade-parede);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.grade__trajeto {
+  fill: none;
+  stroke: var(--trajeto);
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.grade__robo circle {
+  fill: var(--grade-fundo);
+  stroke: #f8fafc;
+  stroke-width: 2.5;
+}
+
+.grade__robo path {
+  fill: #f8fafc;
+}
+
+.grade__legenda {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 16px;
+  color: var(--cor-texto-suave);
+  font-size: 12px;
+}
+
+.grade__legenda span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grade__amostra {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.grade__amostra--largada {
+  background: var(--largada);
+  border: 1px solid #86efac;
+}
+
+.grade__amostra--objetivo {
+  background: var(--objetivo);
+  border: 1px dashed var(--objetivo-borda);
+}
+
+.grade__amostra--trajeto {
+  height: 3px;
+  background: var(--trajeto);
+}
+
+.grade__amostra--parede {
+  background: var(--grade-fundo);
+  border-top: 3px solid var(--grade-parede);
+}

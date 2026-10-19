@@ -1,0 +1,106 @@
+/* Cores e base do dashboard, tiradas do protótipo do Figma. */
+:root {
+  --cor-fundo: #eef2f7;
+  --cor-superficie: #ffffff;
+  --cor-borda: #e2e8f0;
+  --cor-texto: #0f172a;
+  --cor-texto-suave: #64748b;
+  --cor-aba-ativa: #e5eaf3;
+  --cor-primaria: #4c1df5;
+  --cor-primaria-hover: #3d12d6;
+
+  --neutro-fundo: #f1f5f9;
+  --neutro-borda: #e2e8f0;
+  --neutro-texto: #475569;
+  --erro-fundo: #fee2e2;
+  --erro-borda: #fca5a5;
+  --erro-texto: #dc2626;
+  --sucesso-fundo: #dcfce7;
+  --sucesso-borda: #86efac;
+  --sucesso-texto: #15803d;
+
+  /* Malha do labirinto (HU-06) */
+  --grade-fundo: #0f172a;
+  --grade-linha: #1e293b;
+  --grade-parede: #e2e8f0;
+  --largada: #bbf7d0;
+  --objetivo: #fecdd3;
+  --objetivo-borda: #f43f5e;
+  --trajeto: #f97316;
+
+  color: var(--cor-texto);
+  background: var(--cor-fundo);
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--cor-fundo);
+}
+
+/* Superfície branca usada no cabeçalho, nos cards e nas telas. */
+.cartao {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+}
+
+.botao {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.botao--primario {
+  background: var(--cor-primaria);
+  color: #ffffff;
+}
+
+.botao--primario:hover {
+  background: var(--cor-primaria-hover);
+}
+
+.botao--contorno {
+  background: var(--cor-superficie);
+  border-color: var(--cor-borda);
+  color: var(--cor-texto-suave);
+}
+
+.botao:disabled {
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 2px solid var(--cor-primaria);
+  outline-offset: 2px;
+}
+
+/* Texto só para leitores de tela. */
+.visualmente-oculto {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
