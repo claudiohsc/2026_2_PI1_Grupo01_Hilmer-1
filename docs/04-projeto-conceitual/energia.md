@@ -103,6 +103,61 @@ Com base no dimensionamento de 130 mAh (missão unitária) e na demanda estendid
 3. **Alívio Mecânico e Dinâmica de Pista:** A massa contida de 43 g reduz a inércia rotacional do conjunto móvel, alivia as cargas radiais sobre os mancais e pinhões metálicos da redução dos motores N20 e minimiza o escorregamento dos pneus nas curvas de 90° e 180°, aumentando a precisão da odometria.
 4. **Padronização de Conectores e Carga:** O conector de alta corrente XT-30 previne desconexões mecânicas por vibração, enquanto o plugue JST-XHR-3P viabiliza o carregamento com balanceamento individual de células no carregador inteligente de bancada (B6 V3 Smart Charger em modo *LiPo Balance* a 0,6 A / 0,7 A).
 
+* **Modelo Comercial Homologado:** Bateria LiPo 2S de **650 mAh** (modelo **Tattu 650mAh 2S1P 75C / 150C burst** com conector XT-30).
+* **Justificativa Técnica:** Essa capacidade garante fornecimento contínuo de pico de até 48,75 A sem colapsar a tensão do barramento (*voltage sag*), assegura peso baixo compatível com o chassi (43 g ±20 g) e estende a autonomia contínua para mais de 65 minutos em regime de corrida, cobrindo com folga de +118% a meta regulamentar de 30 minutos dos 3 labirintos (RNF-04).
+
+### 4.5 Mapeamento Matemático da Curva de Descarga (Issue #139)
+
+O comportamento de descarga de células eletroquímicas à base de Polímero de Lítio (LiPo) não é linear, apresentando três zonas operacionais características: uma queda exponencial pronunciada logo após a plena carga, um extenso platô de tensão relativamente constante e um joelho de descarga profunda com decaimento acentuado de tensão.
+
+Para permitir a simulação do comportamento da bateria no firmware (Issue #215) e o diagnóstico preditivo de carga sem demandar testes destrutivos imediatos de bancada, implementou-se o modelo matemático eletroquímico de **Shepherd modificado** (formalizado por Tremblay e Dessaint):
+
+$$V_{\text{cel}}(Q_{\text{d}}) = E_0 - R \cdot I - K \cdot \left(\frac{Q}{Q - Q_{\text{d}}}\right) \cdot Q_{\text{d}} + A \cdot e^{-B \cdot Q_{\text{d}}}$$
+
+$$V_{\text{pack}}(t) = 2 \cdot V_{\text{cel}}(Q_{\text{d}}(t))$$
+
+Onde:
+* $V_{\text{pack}}(t)$: Tensão total nos terminais do pack LiPo 2S (V).
+* $E_0$: Tensão constante do patamar eletroquímico por célula ($E_0 = 3{,}740\text{ V}$).
+* $R$: Resistência interna série por célula ($R = 15\text{ m}\Omega \implies 30\text{ m}\Omega$ no pack).
+* $I$: Corrente média de descarga contínua em regime de missão nominal ($I = 0{,}476\text{ A}$).
+* $K$: Coeficiente de polarização na zona de esgotamento ($K = 0{,}085\text{ V}$).
+* $Q$: Capacidade nominal total da célula ($Q = 0{,}650\text{ Ah} = 650\text{ mAh}$).
+* $Q_{\text{d}}$: Carga acumulada descarregada até o instante $t$ ($Q_{\text{d}} = I \cdot t$).
+* $A$: Amplitude da zona exponencial inicial de estabilização pós-carga ($A = 0{,}440\text{ V}$).
+* $B$: Constante de capacidade inversa da zona exponencial ($B = 16{,}0\ \text{Ah}^{-1}$).
+
+#### Curva de Descarga Teórica Simulada
+
+O script computacional implementado em `scripts/curva_descarga_lipo.py` modela a resposta dinâmica sob regime de corrida nominal ($476\text{ mA}$) e regime de baixo consumo ($150\text{ mA}$ em *standby* / leitura de sensores), gerando a curva característica apresentada na figura abaixo:
+
+![Curva Teórica de Descarga LiPo 2S](../figs/curva-descarga-lipo-2s.svg)
+
+#### Tabela de Correlação: Estado de Carga (SoC) vs. Tensão de Terminal
+
+A relação entre o Estado de Carga (*State of Charge* - SoC), a tensão sob carga nominal contínua ($I = 476\text{ mA}$) e a energia residual útil do pack Tattu 650 mAh é sumarizada na tabela abaixo:
+
+| Estado de Carga (SoC) | Tensão do Pack 2S ($V_{\text{pack}}$) | Tensão por Célula ($V_{\text{cel}}$) | Capacidade Restante (mAh) | Regime Operacional / Diagnóstico |
+| :---: | :---: | :---: | :---: | :--- |
+| **100%** | **8,35 V a 8,40 V** | 4,17 V a 4,20 V | 650 mAh | Bateria plena pós-carregamento balanceado |
+| **90%**  | 7,78 V | 3,89 V | 585 mAh | Fim da zona de decaimento exponencial inicial |
+| **80%**  | 7,57 V | 3,78 V | 520 mAh | Início do platô estável de corrida |
+| **70%**  | 7,48 V | 3,74 V | 455 mAh | Platô nominal de regime permanente |
+| **60%**  | 7,43 V | 3,72 V | 390 mAh | **Ponto operacional aos 30 min de prova (RNF-04)** |
+| **50%**  | 7,39 V | 3,69 V | 325 mAh | Metade da carga útil |
+| **40%**  | 7,31 V | 3,66 V | 260 mAh | Operação em corrida contínua segura |
+| **30%**  | 7,19 V | 3,59 V | 195 mAh | Alerta amarelo no Dashboard de telemetria |
+| **20%**  | 6,92 V | 3,46 V | 130 mAh | Aproximação do joelho de descarga rápida |
+| **10%**  | 6,09 V | 3,04 V | 65 mAh | Zona de esgotamento acentuado |
+| **0% (Corte UVLO)**| **6,60 V** | **3,30 V** | **~45 mAh (7%)** | **Desarme forçado via software (PWM = 0)** |
+
+#### Integração com a Camada de Software e Firmware
+
+Os coeficientes e a tabela de conversão foram exportados diretamente para o arquivo de cabeçalho C++ `src/firmware/lib/simulacao/TabelaDescargaLiPo.h`. Essa tabela é consumida pela classe de emulação `SensorBateriaMock` (Issue #215), garantindo que:
+1. O Dashboard web receba leituras realistas e reproduzíveis de tensão e porcentagem de bateria ao longo do tempo.
+2. A máquina de estados de subtensão (*Under-Voltage Lockout* — UVLO) seja testada com antecedência, cortando a tração quando $V_{\text{pack}} \le 6{,}60\text{ V}$.
+3. Haja um gabarito teórico formal para validação e cálculo do erro experimental quando a bateria física for submetida ao ensaio de descarga em bancada.
+
 ---
 
 ## 5. Planejamento do Circuito de Alimentação
@@ -144,6 +199,7 @@ $$V_{\text{ADC}} = V_{\text{BAT}} \cdot \left(\frac{R_2}{R_1 + R_2}\right) = V_{
 
 * **Rotinas de Aquisição e Proteção:**
   * O firmware realiza leituras periódicas do canal ADC com filtro digital de média móvel para rejeitar flutuações induzidas pelo chaveamento PWM do driver.
+
   * O software implementa proteção de subtensão lógica (*Under-Voltage Lockout* - UVLO): se a leitura atestar tensão global inferior a **6,6 V** (equivalente a **3,3 V por célula**) em amostragens sucessivas, os sinais de controle PWM para o DRV8833 são zerados, cortando a tração dos motores e preservando as células LiPo contra descarga profunda.
   * *Compatibilidade com o Regulador Buck de 5 V:* O limiar de corte em 6,6 V garante também que o conversor Step-Down LM2596 (responsável pela linha do LiDAR) opere sempre acima de sua tensão mínima de *dropout* ($V_{\text{in}} \ge 5{,}0\text{ V} + 1{,}5\text{ V} = 6{,}5\text{ V}$), impedindo flutuações e reinicializações ## 7. Dimensionamento e Análise dos Reguladores Step-Down (LM2596 de 6 V, LM2596 de 5 V e MP1584EN de 3,3 V)
 
@@ -377,6 +433,20 @@ flowchart TD
 4. **TEXAS INSTRUMENTS.** *DRV8833 Dual H-Bridge Motor Driver*. Datasheet SLVSAR1E, Rev. Julho 2015. Disponível em: <https://www.ti.com/lit/ds/symlink/drv8833.pdf>.
 5. **GIBILISCO, Stan.** *Beginner's Guide to Reading Schematics*. 3. ed. Nova York: McGraw-Hill Education, 2014.
 6. **MOHAN, Ned; UNDELAND, Tore M.; ROBBINS, William P.** *Power Electronics: Converters, Applications, and Design*. 3. ed. Nova York: John Wiley & Sons, 2003.
+=======
+  * O software implementa proteção de subtensão lógica (*Under-Voltage Lockout*): se a leitura atestar tensão global inferior a 6,4 V (equivalente a 3,2 V por célula) em amostragens sucessivas, os sinais de controle PWM para o DRV8833 são zerados, cortando a tração e preservando a bateria contra descarga profunda.
+  * A telemetria empacota o tempo contínuo de atividade e a leitura instantânea de tensão, registrando os dados de consumo em tempo real para contraste com o modelo de energia projetado.
+
+---
+
+## 7. Referências Bibliográficas
+
+1. **SHEPHERD, C. M.** *Design of Primary and Secondary Cells - Part 2: An equation describing battery discharge*. Journal of The Electrochemical Society, v. 112, n. 7, p. 657-664, 1965.
+2. **TREMBLAY, Olivier; DESSAINT, Louis-A.** *Experimental Validation of a Battery Dynamic Model for EV Applications*. World Electric Vehicle Journal, v. 3, n. 2, p. 289-298, 2009.
+3. **TATTU.** *Tattu 650mAh 75C 2S1P Lipo Battery Pack with XT30 Plug Specification Sheet*. Gens Ace & Tattu Battery Co., 2023.
+4. **ESPRESSIF SYSTEMS.** *ESP32-C3-MINI-1 Datasheet*. Versão 1.4, 2024. Disponível em: <https://www.espressif.com>.
+5. **MOHAN, Ned; UNDELAND, Tore M.; ROBBINS, William P.** *Power Electronics: Converters, Applications, and Design*. 3. ed. Nova York: John Wiley & Sons, 2003.
+>>>>>>> docs/139-201-mapeamento-de-descarga
 
 ---
 
@@ -388,4 +458,4 @@ flowchart TD
 | 1.1 | 10/10/2026 | Atualização das especificações dinâmicas da bateria LiPo e modelo Tattu 650mAh | Paulo Melo | Bruno Duarte |
 | 1.2 | 12/10/2026 | Dimensionamento dos reguladores Step-Down LM2596 e MP1584EN, cálculo de componentes passivos, análise de dissipação térmica | Elias Oliveira | Equipe de Hardware |
 | 1.3 | 18/10/2026 | Inclusão do dimensionamento do conversor Buck dedicado de 6 V para os motores com suporte até ~3 A de stall, reanálise de dropout, atualização da autonomia para 65,5 min e consolidação dos três reguladores | Elias Oliveira | Bruno Duarte (System Architect) |
-
+| 1.4 | 18/10/2026 | Mapeamento matemático da curva de descarga da bateria LiPo 2S (Equação de Shepherd), gráfico vetorial de descarga e geração da tabela SoC para o firmware (#139) | Elias Oliveira | Bruno Duarte (System Architect) |

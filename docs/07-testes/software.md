@@ -721,6 +721,76 @@ native         test_armazenamento_mapa  PASSED    00:00:01.287
 
 ---
 
+### Sprint 4 · Odometria
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#187 Orientação e posição na malha](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187) |
+| História de usuário | HU-05 · Estimar a posição do robô por odometria ([#41](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)), RF05 |
+| Código testado | `src/firmware` (branch `feat/187-odometria`) |
+| Data da execução | 19/10/2026 |
+| Executado por | Cláudio Henrique |
+| Documentação do código | [Firmware: odometria](../04-projeto-conceitual/firmware.md#navegacao-odometria) |
+
+Esta etapa registra a lógica da odometria e a ligação no `main.cpp`. A calibração do giro e os testes de bancada (critério de bancada da tarefa) dependem do robô montado e estão na seção de pendências.
+
+**Ambiente de execução:** macOS, PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1 e `gcovr` 8.6.
+
+#### Testes da odometria (`test_odometria`)
+
+```bash
+pio test -e native -f test_odometria
+```
+
+Nos testes, 1 pulso vale 250 µm e 400 pulsos de diferença entre as rodas valem 90°, então uma célula de 18 cm são 720 pulsos por roda. Os valores não dependem dos parâmetros provisórios.
+
+| Grupo | Casos | O que verificam |
+|---|:-:|---|
+| Estado inicial | 3 | Pose inicial (0, 0) virada para o Norte; configuração padrão; sem movimento a pose não muda |
+| Avanço | 5 | Uma e três células para o Norte; a célula muda ao cruzar a parede; marcha à ré; atualizar de uma vez ou em passos dá o mesmo resultado |
+| Giros | 8 | 90° nos dois sentidos, 180° nos dois sentidos, quatro giros voltando ao Norte, 270°, giro no lugar sem mudar a célula, o limite de 45°, e roda um pouco mais rápida em linha reta sem girar |
+| Percursos | 5 | Em L, em U, retorno à partida, serpentina completa no 12×4 e corredor de 11 células com erro de 1% em uma roda |
+| Reinício e encoders | 3 | `reiniciar` com referência nova, leitura de dois `EncoderSimulado` e `zerar` seguido de `reiniciar` |
+| Fora da malha | 4 | Posição negativa, acima de 255, volta para dentro e contagens extremas |
+| Letra da direção (`test_nucleo`) | 1 | `N`, `L`, `S` e `O` como na coluna `orientacao` do banco |
+
+**28 casos aprovados** na odometria e 9 em `test_nucleo`.
+
+Para confirmar que os testes detectam falhas, o código foi alterado de propósito e restaurado em seguida: com o sinal do giro invertido, 9 casos falharam; sem arredondar ao múltiplo de 90° mais próximo, 1; usando só a roda esquerda no avanço, 1; e com o Norte invertido, 14.
+
+#### Suíte completa com cobertura (o mesmo comando do CI)
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa | **197 aprovados, 0 falhas** |
+| Cobertura das linhas de `lib/` | **99%** (798 de 804), acima da meta de 80% |
+| Cobertura de `Odometria.cpp` e `Odometria.h` | 100% |
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Compilação | **Sucesso**, sem avisos |
+| Uso de RAM | 4,4% (14.540 de 327.680 bytes) |
+| Uso de Flash | 19,5% (255.084 de 1.310.720 bytes) |
+
+#### Pendências desta etapa
+
+- **Calibrar o giro na bancada:** girar o robô 90° no lugar e ler `contagem esquerda − contagem direita`; trocar o valor provisório de 625 pulsos por 90° em `ConfiguracaoOdometria.h`.
+- **Testes de bancada da #187:** giros de 90° e 180° e um percurso de 3 células, com o erro registrado, usando o `main.cpp` (a linha de JSON traz a pose).
+- Registrar aqui a execução final de bancada.
+
+---
+
 ### Sprint 4 · Centralização no corredor e parada frontal
 
 | Item | Valor |
