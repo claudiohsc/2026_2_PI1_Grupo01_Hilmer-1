@@ -12,12 +12,13 @@ import './TabelaHistorico.css';
 interface TabelaHistoricoProps {
   corridas: Corrida[];
   labirintos: Labirinto[];
+  filtroAtivo?: boolean;
 }
 
 const TRACO = '—';
 
 /** Tabela do histórico de corridas (Frame 04; HU-10, critério 2). */
-export function TabelaHistorico({ corridas, labirintos }: TabelaHistoricoProps) {
+export function TabelaHistorico({ corridas, labirintos, filtroAtivo = false }: TabelaHistoricoProps) {
   const tipoDoLabirinto = (id: number) => labirintos.find((l) => l.id === id)?.tipo;
 
   return (
@@ -59,7 +60,11 @@ export function TabelaHistorico({ corridas, labirintos }: TabelaHistoricoProps) 
         </tbody>
       </table>
 
-      {corridas.length === 0 && <p className="tabela-historico__vazio">Nenhuma corrida registrada para este filtro.</p>}
+      {corridas.length === 0 && (
+        <p className="tabela-historico__vazio">
+          {filtroAtivo ? 'Nenhuma corrida registrada para este filtro.' : 'Nenhuma corrida registrada.'}
+        </p>
+      )}
     </div>
   );
 }
