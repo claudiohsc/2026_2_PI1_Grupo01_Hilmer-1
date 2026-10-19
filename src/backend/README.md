@@ -25,7 +25,7 @@ src/backend/
     └── migrations/
         ├── 20261014180000_esquema_inicial.sql    # DDL das 4 tabelas, restrições e seed de labirintos
         ├── 20261014180500_seguranca_rls.sql      # Políticas RLS e ativação do Realtime
-        └── 20261016120000_funcoes_corridas.sql   # criar_corrida e encerrar_corrida (só service_role)
+        └── 20261018232250_remote_schema.sql      # criar_corrida e encerrar_corrida (só service_role)
 ```
 ---
 
@@ -80,7 +80,7 @@ O backend adota uma estratégia de **segurança em camadas**:
 
 ## Edge Function `corridas` (criar e encerrar corridas)
 
-A criação e o encerramento de corridas passam por uma Edge Function (`supabase/functions/corridas`), que usa a chave de serviço (`service_role`). A regra de negócio fica em duas funções SQL (`20261016120000_funcoes_corridas.sql`), executáveis só pela chave de serviço: `anon` e `authenticated` não têm permissão de `EXECUTE` nelas nem de escrita nas tabelas.
+A criação e o encerramento de corridas passam por uma Edge Function (`supabase/functions/corridas`), que usa a chave de serviço (`service_role`). A regra de negócio fica em duas funções SQL (`criar_corrida` e `encerrar_corrida`, na migração `20261018232250_remote_schema.sql`, gerada pelo `supabase db pull` e completada com o `REVOKE` e o `GRANT`), executáveis só pela chave de serviço: `anon` e `authenticated` não têm permissão de `EXECUTE` nelas nem de escrita nas tabelas. Os testes do banco (`tests/banco.test.ts`) conferem essa restrição.
 
 | Requisição | Corpo | Resposta |
 |---|---|---|
