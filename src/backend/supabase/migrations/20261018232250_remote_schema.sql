@@ -1,4 +1,6 @@
-drop extension if exists "pg_net";
+-- Migração remota sincronizada via `supabase db pull`
+-- Espelha as stored procedures de gerenciamento do ciclo de vida das corridas
+-- (criar_corrida e encerrar_corrida), introduzidas no escopo da Issue #233.
 
 set check_function_bodies = off;
 
