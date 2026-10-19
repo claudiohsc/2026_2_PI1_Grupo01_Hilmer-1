@@ -15,6 +15,7 @@
 #include "MedidorDeslocamento.h"
 #include "Odometria.h"
 #include "Pinos.h"
+#include "MotoresDrv8833.h"
 
 /// Dono do mapa da corrida. Fica fora das tarefas para sobreviver ao reinício delas (HU-04).
 /// A navegação recebe `armazenamentoMapa.mapa()` para registrar paredes; a telemetria, a versão
@@ -101,11 +102,23 @@ static void tarefaTelemetria(void*) {
   }
 }
 
+/// Motores de tração pelo DRV8833 (M1 à esquerda, M2 à direita). O direito fica invertido, como o
+/// encoder, pela montagem espelhada; confirme na bancada que `definirPotencia({300, 300})` faz as
+/// duas rodas andarem para a frente. O `ControleMovimento` (#191) entra na tarefa de navegação
+/// junto com o LiDAR.
+static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_A_IN1,
+                                          micromouse::pinos::MOTOR_A_IN2,
+                                          micromouse::pinos::MOTOR_B_IN1,
+                                          micromouse::pinos::MOTOR_B_IN2,
+                                          false,
+                                          true);
+
 /// Inicializa o log serial (115200 baud), os encoders e cria as duas tarefas.
 void setup() {
   Serial.begin(115200);
   Serial.println("micromouse: iniciando");
 
+  motores.iniciar();  // começa freado
   encoderEsq.iniciar();
   encoderDir.iniciar();
 
