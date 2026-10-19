@@ -7,4 +7,17 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Separa as bibliotecas grandes em arquivos próprios: o navegador guarda cada uma
+        // em cache e o build não passa do limite de 500 kB por arquivo.
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          recharts: ['recharts'],
+          supabase: ['@supabase/supabase-js'],
+        },
+      },
+    },
+  },
 });

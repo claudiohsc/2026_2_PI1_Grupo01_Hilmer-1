@@ -67,7 +67,8 @@
   margin-left: auto;
 }
 
-@media (max-width: 600px) {
+/* Em telas estreitas o cabeçalho quebra linha e o separador ficaria solto. */
+@media (max-width: 900px) {
   .cabecalho__separador {
     display: none;
   }
