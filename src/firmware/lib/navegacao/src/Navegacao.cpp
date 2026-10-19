@@ -19,8 +19,7 @@ Navegacao::Navegacao(const Mapa& mapa)
     : mapa_(mapa),
       posicao_atual_({0, 0}),
       direcao_atual_(Direcao::Norte),
-      objetivo_({static_cast<uint8_t>(mapa.obterLinhas() > 0 ? mapa.obterLinhas() - 1 : 0),
-                 static_cast<uint8_t>(mapa.obterColunas() > 0 ? mapa.obterColunas() - 1 : 0)}) {
+      detector_(mapa.obterLinhas(), mapa.obterColunas()) {
   recalcularDistancias();
 }
 
@@ -28,7 +27,7 @@ Navegacao::Navegacao(const Mapa& mapa, PosicaoCelula objetivo, Pose poseInicial)
     : mapa_(mapa),
       posicao_atual_(poseInicial.celula),
       direcao_atual_(poseInicial.direcao),
-      objetivo_(objetivo) {
+      detector_(objetivo) {
   recalcularDistancias();
 }
 
@@ -45,12 +44,12 @@ void Navegacao::moverPara(uint8_t linha, uint8_t coluna, Direcao direcao) {
 }
 
 void Navegacao::definirObjetivo(PosicaoCelula objetivo) {
-  objetivo_ = objetivo;
+  detector_.definirObjetivo(objetivo);
   recalcularDistancias();
 }
 
 bool Navegacao::atingiuObjetivo() const {
-  return posicao_atual_.linha == objetivo_.linha && posicao_atual_.coluna == objetivo_.coluna;
+  return detector_.alcancouObjetivo(posicao_atual_);
 }
 
 void Navegacao::recalcularDistancias() {
@@ -60,7 +59,8 @@ void Navegacao::recalcularDistancias() {
     }
   }
 
-  if (!mapa_.posValida(objetivo_)) {
+  const PosicaoCelula objetivo = detector_.celulaObjetivo();
+  if (!mapa_.posValida(objetivo)) {
     return;
   }
 
@@ -70,8 +70,8 @@ void Navegacao::recalcularDistancias() {
   size_t inicio = 0;
   size_t fim = 0;
 
-  distancias_[objetivo_.linha][objetivo_.coluna] = 0;
-  fila[fim++] = objetivo_;
+  distancias_[objetivo.linha][objetivo.coluna] = 0;
+  fila[fim++] = objetivo;
 
   const Direcao direcoes[4] = {Direcao::Norte, Direcao::Leste, Direcao::Sul, Direcao::Oeste};
 

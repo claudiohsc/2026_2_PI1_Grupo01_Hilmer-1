@@ -17,11 +17,13 @@
 #include "ArmazenamentoMapa.h"
 #include "Configuracao.h"
 #include "ConversorDeslocamento.h"
+#include "DetectorObjetivo.h"
 #include "EncoderEsp32.h"
 #include "MedidorDeslocamento.h"
+#include "MotoresDrv8833.h"
 #include "Odometria.h"
 #include "Pinos.h"
-#include "MotoresDrv8833.h"
+#include "TelemetriaJson.h"
 
 /// Dono do mapa da corrida. Fica fora das tarefas para sobreviver ao reinício delas (HU-04).
 /// A navegação recebe `armazenamentoMapa.mapa()` para registrar paredes; a telemetria, a versão
@@ -43,7 +45,19 @@ static micromouse::MedidorDeslocamento medidorDeslocamento(encoderEsq, encoderDi
 /// Pose (célula e direção) estimada pela odometria diferencial. A tarefa de navegação a atualiza a
 /// cada 10 ms e a telemetria a lê, então todo acesso passa pela seção crítica `travaOdometria`.
 static micromouse::Odometria odometria;
+static micromouse::DetectorObjetivo detectorObjetivo(micromouse::DimensaoMapa::Labirinto4x4);
 static portMUX_TYPE travaOdometria = portMUX_INITIALIZER_UNLOCKED;
+
+/// Motores de tração pelo DRV8833 (IN1/IN2 no motor esquerdo, IN3/IN4 no direito). O direito fica
+/// invertido, como o encoder, pela montagem espelhada; confirme na bancada que
+/// `definirPotencia({300, 300})` faz as duas rodas andarem para a frente. O `ControleMovimento`
+/// (#191) entra na tarefa de navegação junto com os sensores de distância.
+static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
+                                          micromouse::pinos::MOTOR_ESQ_IN2,
+                                          micromouse::pinos::MOTOR_DIR_IN3,
+                                          micromouse::pinos::MOTOR_DIR_IN4,
+                                          false,
+                                          true);
 
 /// Tarefa de navegação: ciclo percepção → decisão → atuação, a cada 10 ms.
 ///
@@ -54,7 +68,19 @@ static void tarefaNavegacao(void*) {
     // Odometria: o intervalo curto (10 ms) mantém cada atualização com giro ou avanço, não os dois.
     portENTER_CRITICAL(&travaOdometria);
     odometria.atualizar(encoderEsq, encoderDir);
+    const micromouse::Pose pose = odometria.pose();
+    const bool poseValida = odometria.posicaoValida();
     portEXIT_CRITICAL(&travaOdometria);
+
+    if (poseValida) {
+      // Chegada detectada pela posição na malha: para os motores imediatamente e congela o mapa final (HU-07 / #189)
+      detectorObjetivo.processarChegada(pose, motores, &armazenamentoMapa);
+    }
+
+    if (detectorObjetivo.objetivoAlcancado()) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
 
     // Ciclo percepção, decisão e atuação: percepção, mapeamento, navegação e atuação entram aqui.
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -63,7 +89,7 @@ static void tarefaNavegacao(void*) {
 
 /// Tarefa de telemetria: coleta e envia os dados a cada `PERIODO_TELEMETRIA_MS`.
 ///
-/// Prioridade 1. Transmite as leituras dos encoders e a pose da odometria em formato JSON
+/// Prioridade 1. Transmite as leituras dos encoders, pose da odometria e eventos pontuais em formato JSON
 /// estruturado e aceita o comando 'Z' para zerar os encoders e voltar a odometria à pose atual.
 static void tarefaTelemetria(void*) {
   for (;;) {
@@ -78,19 +104,23 @@ static void tarefaTelemetria(void*) {
     portENTER_CRITICAL(&travaOdometria);
     const micromouse::Pose pose = odometria.pose();
     const bool poseValida = odometria.posicaoValida();
+    const bool objetivoAlcancado = detectorObjetivo.objetivoAlcancado();
     portEXIT_CRITICAL(&travaOdometria);
 
-    Serial.printf("{\"esq_pulsos\":%ld,\"dir_pulsos\":%ld,\"esq_mm\":%ld,\"dir_mm\":%ld,\"medio_mm\":%ld,"
-                  "\"linha\":%u,\"coluna\":%u,\"orientacao\":\"%c\",\"pose_valida\":%s}\n",
-                  static_cast<long>(pulsosEsq),
-                  static_cast<long>(pulsosDir),
-                  static_cast<long>(d.esquerdaMm),
-                  static_cast<long>(d.direitaMm),
-                  static_cast<long>(medio),
-                  static_cast<unsigned>(pose.celula.linha),
-                  static_cast<unsigned>(pose.celula.coluna),
-                  micromouse::letraDaDirecao(pose.direcao),
-                  poseValida ? "true" : "false");
+    micromouse::PacoteTelemetria pacote;
+    pacote.pulsosEsq = pulsosEsq;
+    pacote.pulsosDir = pulsosDir;
+    pacote.esqMm = d.esquerdaMm;
+    pacote.dirMm = d.direitaMm;
+    pacote.medioMm = medio;
+    pacote.pose = pose;
+    pacote.poseValida = poseValida;
+    pacote.evento = objetivoAlcancado ? "objetivo_alcancado" : nullptr;
+
+    char buffer[256];
+    if (micromouse::TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)) > 0) {
+      Serial.println(buffer);
+    }
 
     // Comando serial para zerar medição (usado na bancada)
     while (Serial.available()) {
@@ -100,6 +130,7 @@ static void tarefaTelemetria(void*) {
         portENTER_CRITICAL(&travaOdometria);
         medidorDeslocamento.zerar();
         odometria.reiniciar(odometria.pose(), 0, 0);
+        detectorObjetivo.resetar();
         portEXIT_CRITICAL(&travaOdometria);
         Serial.println("{\"status\":\"encoders_zerados\"}");
       }
@@ -109,17 +140,6 @@ static void tarefaTelemetria(void*) {
   }
 }
 
-/// Motores de tração pelo DRV8833 (IN1/IN2 no motor esquerdo, IN3/IN4 no direito). O direito fica
-/// invertido, como o encoder, pela montagem espelhada; confirme na bancada que
-/// `definirPotencia({300, 300})` faz as duas rodas andarem para a frente. O `ControleMovimento`
-/// (#191) entra na tarefa de navegação junto com os sensores de distância.
-static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
-                                          micromouse::pinos::MOTOR_ESQ_IN2,
-                                          micromouse::pinos::MOTOR_DIR_IN3,
-                                          micromouse::pinos::MOTOR_DIR_IN4,
-                                          false,
-                                          true);
-
 /// Inicializa o log serial pela USB nativa, os encoders e cria as duas tarefas.
 void setup() {
   Serial.begin(115200);
@@ -128,6 +148,7 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   Serial.println("micromouse: iniciando");
 
+  armazenamentoMapa.iniciarCorrida(micromouse::DimensaoMapa::Labirinto4x4);
   motores.iniciar();  // começa freado
   encoderEsq.iniciar();
   encoderDir.iniciar();

@@ -11,6 +11,9 @@
 
 namespace micromouse {
 
+class ArmazenamentoMapa;
+class IMotores;
+
 /// Responsável por determinar a célula objetivo e verificar se ela foi alcançada.
 ///
 /// O labirinto inicia na célula (0, 0) no canto inferior esquerdo. O objetivo
@@ -77,8 +80,23 @@ class DetectorObjetivo {
     return alcancouObjetivo(pose.celula);
   }
 
+  /// Verifica a chegada ao objetivo e, caso alcançado, para os motores imediatamente
+  /// e congela o mapa em ArmazenamentoMapa (HU-07 / #189).
+  /// @param pose Pose atual do robô.
+  /// @param motores Interface dos motores (camada HAL) a ser freada imediatamente.
+  /// @param armazenamento Armazenamento do mapa (opcional) a ser congelado.
+  /// @return `true` se o objetivo foi alcançado (nesta chamada ou anteriormente).
+  bool processarChegada(const Pose& pose, IMotores& motores, ArmazenamentoMapa* armazenamento = nullptr);
+
+  /// Retorna se o objetivo já foi alcançado e processado.
+  bool objetivoAlcancado() const { return alcancado_; }
+
+  /// Reseta o estado de conclusão (ex.: para nova corrida ou reinício de tentativa).
+  void resetar() { alcancado_ = false; }
+
  private:
   PosicaoCelula objetivo_{0, 0};
+  bool alcancado_ = false;
 };
 
 }  // namespace micromouse

@@ -1,5 +1,8 @@
 #include "DetectorObjetivo.h"
 
+#include "ArmazenamentoMapa.h"
+#include "IMotores.h"
+
 namespace micromouse {
 
 PosicaoCelula DetectorObjetivo::calcularObjetivo(uint8_t linhas, uint8_t colunas) {
@@ -34,6 +37,22 @@ DetectorObjetivo::DetectorObjetivo(uint8_t linhas, uint8_t colunas) : objetivo_(
 
 bool DetectorObjetivo::alcancouObjetivo(const PosicaoCelula& atual) const {
   return alcancouObjetivo(atual, objetivo_);
+}
+
+bool DetectorObjetivo::processarChegada(const Pose& pose, IMotores& motores, ArmazenamentoMapa* armazenamento) {
+  if (alcancado_) {
+    motores.parar();
+    return true;
+  }
+  if (alcancouObjetivo(pose)) {
+    alcancado_ = true;
+    motores.parar();
+    if (armazenamento != nullptr) {
+      armazenamento->congelarMapa();
+    }
+    return true;
+  }
+  return false;
 }
 
 }  // namespace micromouse
