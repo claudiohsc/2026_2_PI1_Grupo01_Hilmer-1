@@ -27,6 +27,7 @@ export function GraficoVelocidade({ leituras }: GraficoVelocidadeProps) {
         />
         <YAxis
           domain={[0, 0.5]}
+          ticks={[0, 0.1, 0.2, 0.3, 0.4, 0.5]}
           tickFormatter={(valor: number) => valor.toFixed(1)}
           tick={{ fontSize: 11, fill: '#64748B' }}
           stroke="#CBD5E1"

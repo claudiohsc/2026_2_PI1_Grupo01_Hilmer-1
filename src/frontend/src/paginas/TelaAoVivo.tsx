@@ -74,7 +74,7 @@ export function TelaAoVivo({ corridaExemplo, reproducao, tentativa, aoIniciar, a
         />
 
         <div className="ao-vivo__grafico">
-          <h2 className="ao-vivo__titulo">Velocidade × tempo</h2>
+          <h2 className="ao-vivo__titulo">Velocidade (m/s) × tempo (s)</h2>
           {leituras.length === 0 ? (
             <p className="grafico-vazio">O gráfico aparece quando a corrida começar.</p>
           ) : (
