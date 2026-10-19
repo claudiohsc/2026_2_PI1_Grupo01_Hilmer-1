@@ -1,0 +1,75 @@
+.cabecalho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 12px 20px;
+}
+
+.cabecalho__marca {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.cabecalho__abas {
+  display: flex;
+  gap: 4px;
+}
+
+.cabecalho__aba {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cor-texto-suave);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cabecalho__aba:hover {
+  color: var(--cor-texto);
+}
+
+.cabecalho__aba--ativa {
+  background: var(--cor-aba-ativa);
+  color: var(--cor-texto);
+  font-weight: 600;
+}
+
+.cabecalho__separador {
+  width: 1px;
+  height: 22px;
+  background: var(--cor-texto);
+}
+
+.cabecalho__seletor select {
+  appearance: none;
+  padding: 6px 30px 6px 10px;
+  border: 1px solid var(--cor-borda);
+  border-radius: 8px;
+  background: var(--cor-fundo)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2364748B' stroke-width='1.5'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+  color: var(--cor-texto);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cabecalho__seletor select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.cabecalho__badge {
+  margin-left: auto;
+}
+
+/* Em telas estreitas o cabeçalho quebra linha e o separador ficaria solto. */
+@media (max-width: 900px) {
+  .cabecalho__separador {
+    display: none;
+  }
+}

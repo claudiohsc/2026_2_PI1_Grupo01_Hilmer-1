@@ -1,0 +1,36 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1280px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 20px 24px;
+}
+
+.app__conteudo {
+  flex: 1;
+}
+
+.app__rodape {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  color: var(--cor-texto-suave);
+  font-size: 12px;
+}
+
+.app__conexao--conectado {
+  color: var(--sucesso-texto);
+}
+
+.app__conexao--erro {
+  color: var(--erro-texto);
+}
+
+@media (max-width: 600px) {
+  .app {
+    padding: 12px 16px;
+  }
+}
