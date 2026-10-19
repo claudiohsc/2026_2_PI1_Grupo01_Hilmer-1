@@ -1,6 +1,6 @@
+import { lazy, Suspense } from 'react';
 import { CartaoMetrica } from '../componentes/CartaoMetrica';
 import { GradeLabirinto } from '../componentes/GradeLabirinto';
-import { GraficoVelocidade } from '../componentes/GraficoVelocidade';
 import { TAMANHO_CELULA_M, type CorridaExemplo } from '../dados/corridaExemplo';
 import {
   LIMITE_TEMPO_S,
@@ -16,6 +16,14 @@ import { mapaConhecido } from '../lib/labirinto';
 import type { ReproducaoCorrida } from '../hooks/useReproducaoCorrida';
 import type { Orientacao, Posicao } from '../tipos';
 import './TelaAoVivo.css';
+
+/**
+ * O gráfico usa o Recharts, a maior dependência do projeto. Ele é importado sob demanda:
+ * o navegador só baixa esse arquivo quando a corrida começa e o gráfico aparece.
+ */
+const GraficoVelocidade = lazy(() =>
+  import('../componentes/GraficoVelocidade').then((modulo) => ({ default: modulo.GraficoVelocidade })),
+);
 
 interface TelaAoVivoProps {
   corridaExemplo: CorridaExemplo;
@@ -67,7 +75,13 @@ export function TelaAoVivo({ corridaExemplo, reproducao, tentativa, aoIniciar, a
 
         <div className="ao-vivo__grafico">
           <h2 className="ao-vivo__titulo">Velocidade × tempo</h2>
-          <GraficoVelocidade leituras={leituras} />
+          {leituras.length === 0 ? (
+            <p className="grafico-vazio">O gráfico aparece quando a corrida começar.</p>
+          ) : (
+            <Suspense fallback={<p className="grafico-vazio">Carregando o gráfico…</p>}>
+              <GraficoVelocidade leituras={leituras} />
+            </Suspense>
+          )}
         </div>
       </section>
 

@@ -7,13 +7,10 @@ interface GraficoVelocidadeProps {
 
 /**
  * Gráfico de exemplo com Recharts: velocidade instantânea ao longo da tentativa.
- * Cresce a cada leitura recebida; antes da largada mostra só um aviso.
+ * Cresce a cada leitura recebida. É carregado sob demanda pela `TelaAoVivo`, que mostra
+ * um aviso no lugar dele antes da largada.
  */
 export function GraficoVelocidade({ leituras }: GraficoVelocidadeProps) {
-  if (leituras.length === 0) {
-    return <p className="grafico-vazio">O gráfico aparece quando a corrida começar.</p>;
-  }
-
   const dados = leituras.map((l) => ({ tempo: l.tempo_decorrido, velocidade: l.velocidade }));
 
   return (
