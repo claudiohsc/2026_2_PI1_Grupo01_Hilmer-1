@@ -824,6 +824,84 @@ lê-lo no navegador.
    diretamente via `supabase-js`.
 5. **Dados:** modelo relacional descrito no MER e no DER acima.
 
+#### Implementação do frontend
+
+O dashboard fica em `src/frontend` (tarefa
+[#230](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230), PR
+[#361](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/361), HU-14). É um
+projeto **React 18 + Vite + TypeScript**, com **Recharts** para os gráficos, **supabase-js**
+para ler o banco e CSS simples, sem *framework* de estilos. Nesta etapa as telas seguem o
+[protótipo navegável](#prototipo-navegavel) com **dados de exemplo** no formato das
+tabelas do banco; a única leitura real é a tabela `labirintos`, que confirma a conexão. Como
+rodar está no [README do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/frontend).
+
+**Variáveis de ambiente.** O cliente do Supabase (`src/lib/supabase.ts`) é criado a partir
+de `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`. O `.env.example` traz só os nomes, e o
+`.env.local` com os valores reais está no `.gitignore`. Toda variável com prefixo `VITE_` é
+embutida no código que roda no navegador, então ali entra **só a chave `anon`**, que pelo
+RLS apenas lê. A `service_role` e o `DEVICE_TOKEN` nunca vão para o frontend.
+
+**Telas e estados.** Cada estado do protótipo virou um estado da tela ao vivo, e o
+histórico segue o Frame 04:
+
+| Tela / estado | Frame | O que mostra | HUs |
+|---|---|---|---|
+| Ao vivo · aguardando largada | `01_Idle` | Malha vazia com o robô na largada, cards zerados (100 %, 8.4 V, 00:00.000) e `INICIAR CORRIDA` | HU-14 |
+| Ao vivo · em execução | `02_Running` | Trajeto laranja, paredes já mapeadas, robô com a orientação, cards e gráfico atualizando, badge vermelho `NÃO (EM ANDAMENTO)` e botão travado | HU-06, HU-08, HU-14 |
+| Ao vivo · desafio concluído | `03_Completed` | Robô no objetivo, cronômetro congelado, nota da tentativa, badge verde `SIM` e `RESETAR / NOVA TENTATIVA` | HU-07, HU-14 |
+| Histórico de consultas | `04_History_View`, `M1` a `M3` | Tabela de corridas (data/hora, labirinto, tentativa e nota, tempo final, velocidade, bateria e status) e filtro por labirinto | HU-10, HU-15 |
+
+```mermaid
+flowchart LR
+    App["App<br/>aba, labirinto e tentativa"] --> Cab["Cabecalho<br/>abas, seletor e badge"]
+    App --> Vivo["TelaAoVivo"]
+    App --> Hist["TelaHistorico"]
+    Vivo --> Grade["GradeLabirinto<br/>malha SVG"]
+    Vivo --> Cards["CartaoMetrica × 3"]
+    Vivo --> Graf["GraficoVelocidade<br/>Recharts"]
+    Hist --> Filtro["FiltroLabirinto"]
+    Hist --> Tab["TabelaHistorico"]
+    App -. useLabirintos .-> SB[("Supabase<br/>tabela labirintos")]
+    App -. useReproducaoCorrida .-> Ex["Dados de exemplo<br/>telemetria e corridas"]
+```
+
+**Figura.** Componentes do dashboard. As linhas tracejadas são as fontes de dados: hoje só
+`labirintos` vem do banco; telemetria e corridas são de exemplo.
+
+O `GraficoVelocidade` é importado sob demanda (`React.lazy`): o Recharts, a maior
+dependência, fica num arquivo à parte e só é baixado quando a corrida começa e o gráfico
+aparece. Assim a primeira carga da página leva só o React, o supabase-js e o código das telas.
+
+**Malha do labirinto.** O `GradeLabirinto` desenha a malha em SVG com as mesmas convenções
+do firmware: a célula (0, 0) é a largada, no canto inferior esquerdo; Norte aumenta a
+linha e Leste aumenta a coluna; o objetivo é a célula (linhas − 1, colunas − 1). As paredes
+vêm no formato de `mapa_celulas` e do JSON do mapa
+([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)): `true` é
+desenhada, `false` e `null` (não explorada) não. A malha usa os tamanhos reais dos
+labirintos (4×4, 8×4 e 12×4), e não a grade 16×16 do protótipo.
+
+**Dados de exemplo e troca pelos dados reais.** Os tipos de `src/tipos.ts` repetem os nomes
+das colunas da migração, então a troca não muda os componentes:
+
+| Hoje (exemplo) | Depois (real) | Quando |
+|---|---|---|
+| Labirintos de `LabirintosExemplo.h` do firmware, com trajeto gerado respeitando as paredes | Linhas novas de `telemetria` e `mapa_celulas` pelo Supabase Realtime | HU-08, HU-16 e HU-06 (Sprints 6–7) |
+| `useReproducaoCorrida` reproduz a corrida 4× mais rápido e termina pelo evento `objetivo_alcancado` | O mesmo estado, alimentado pelas leituras recebidas | HU-08 |
+| Botões só controlam a reprodução | `INICIAR CORRIDA` cria a corrida pela Edge Function `corridas` | HU-15 |
+| Lista fixa de corridas | Consulta à tabela `corridas`, com filtro por `labirinto_id` | HU-10 e HU-15 (Sprints 4–5) |
+
+**Regras de exibição.**
+
+- **Nota:** desafio cumprido na 1ª tentativa vale 10, na 2ª vale 7,5 e na 3ª vale 5, como no
+  tema do PI1.
+- **Bateria:** o percentual é estimado de forma linear pela tensão, entre 6,6 V (corte) e
+  8,4 V (carga plena) da LiPo 2S. É provisório, porque a curva real não é linear; na HU-08
+  ele pode passar a usar a [tabela de SoC × tensão](energia.md#tabela-de-correlacao-estado-de-carga-soc-vs-tensao-de-terminal)
+  da [#139](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/139).
+- **Consumo no histórico:** a coluna `corridas.consumo_bateria` ainda admite "mAh ou %
+  consumida". A tela assume % consumida e mostra a carga restante (`100 − consumo`), como no
+  Frame 04. A unidade precisa ser fechada na HU-09.
+
 > - **Roteiro de testes funcionais:**
 >   - Código do caso de teste;
 >   - Nome do caso de teste;
@@ -999,3 +1077,4 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 0.8 | 07/10/2026 | Adiciona o histórico de versões | Ana Carolina Fialho | Cláudio Henrique |
 | 0.9 | 16/10/2026 | Documenta a implementação do banco no Supabase: migrações, restrições, *seed*, RLS e Realtime (#228) | Eduardo Viana | Cláudio Henrique |
 | 1.0 | 18/10/2026 | Documenta a escrita de corridas mediada por Edge Function e a decisão sobre quem cria a corrida ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)) | Eduardo Viana | Cláudio Henrique |
+| 1.1 | 19/10/2026 | Documenta a implementação do frontend: estrutura, variáveis de ambiente, telas, componentes e dados de exemplo ([#230](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230)) | Eduardo Viana | Ana Carolina Fialho |
