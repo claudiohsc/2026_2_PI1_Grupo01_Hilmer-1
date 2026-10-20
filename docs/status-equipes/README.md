@@ -13,8 +13,63 @@ Página de consulta rápida para saber **onde cada equipe está no projeto**, o 
 
 A gerência geral do projeto é de Ana Carolina Fialho. A lista de integrantes do início do projeto está no [TAP](../01-tap.md); a gerência de software e a gerência geral mudaram depois dele.
 
-!!! note "Para quem lê (pessoas e IAs)"
+!!! note "Como ler"
     Tudo o que está escrito aqui vem de uma fonte citada: *issues* e PRs do GitHub, páginas desta documentação ou o cronograma. Quando uma informação **não consta** nas fontes, a página diz isso em vez de supor. Se algo parecer desatualizado, confira a data de "Última atualização" da página da equipe e os links antes de usar a informação.
+
+## Contexto geral do projeto
+
+**Projeto:** Desenvolvimento de um Micromouse Autônomo com Sistema de Telemetria, da disciplina Projeto Integrador 1 (PI1) da FCTE/UnB, semestre 2026/2, Grupo 01, orientado pelo Prof. Dr. Hilmer Rodrigues Neri. Início em 07/09/2026 e término em 04/12/2026 ([TAP](../01-tap.md)).
+
+**Objetivo:** construir um robô pequeno (o *micromouse*) que explora sozinho um labirinto desconhecido e chega à célula objetivo, no canto oposto ao início, sem controle remoto, sem intervenção humana e sem danificar a pista. Além do robô, o projeto tem uma interface web que mostra a telemetria em tempo real e um banco de dados que guarda as corridas para consulta posterior.
+
+**Labirintos do desafio:**
+
+| **Labirinto** | **Células** | **Dimensão** |
+|:-------------:|:-----------:|:------------:|
+| 1º | 4 × 4 | 72 × 72 cm |
+| 2º | 8 × 4 | 144 × 72 cm |
+| 3º | 12 × 4 | 216 × 72 cm |
+
+**Restrições principais** ([Requisitos](../02-requisitos.md)): o robô não pode passar de 16,5 cm de comprimento ou largura; cada labirinto deve ser concluído em até 10 minutos; a bateria deve bastar para os três labirintos em sequência; a telemetria deve aparecer no sistema web em até 2 segundos; voo, salto, escalada e propulsão por combustão são proibidos.
+
+**Como o sistema é formado:**
+
+| **Parte** | **O que há nela** | **Equipe** |
+|-----------|-------------------|:----------:|
+| Estrutura | Chassi, sistema de tração, suportes e labirinto físico de testes | Estrutura |
+| Energia | Bateria LiPo 2S, reguladores de tensão (*buck*), proteções e carregamento | Energia |
+| Eletrônica | ESP32-C3, LiDAR por UART, dois encoders, driver de motores DRV8833 e dois motores DC | Eletrônica |
+| Firmware | Código do ESP32-C3 em C++ (PlatformIO): percepção das paredes, mapa, navegação e controle dos motores | Software |
+| Backend | Supabase: banco PostgreSQL e Edge Function que registra as corridas | Software |
+| Frontend | Dashboard web em React, Vite e TypeScript, que lê os dados do Supabase | Software |
+
+O fluxo previsto é: o robô percorre o labirinto, monta o mapa e envia a telemetria ao Supabase, e o dashboard exibe a corrida ao vivo e o histórico. O envio da telemetria pelo robô ainda está em desenvolvimento (Épico 03).
+
+**Convenções do software:** a posição no labirinto é (linha, coluna), com a partida em (0, 0); Norte aumenta a linha e Leste aumenta a coluna. A dimensão do labirinto é escrita como "colunas × linhas" (por exemplo, 8x4 tem 8 colunas e 4 linhas). Uma **corrida** é uma tentativa de resolver o labirinto, registrada no banco com identificador único. O robô não usa IMU: a posição vem da odometria dos encoders.
+
+**Termos usados nas páginas:**
+
+| **Termo** | **Significado** |
+|-----------|-----------------|
+| ED1, ED2, APT | Entrega definitiva 1, entrega definitiva 2 e apresentação final |
+| Sprint | Ciclo semanal de quinta a quarta-feira ([calendário](../05-cronograma.md#calendario-de-sprints)) |
+| Épico, HU | Grupo de trabalho do software e história de usuário do [backlog](../04-projeto-conceitual/software.md) |
+| RF, RNF | Requisito funcional e requisito não funcional |
+| #123 | Número de uma *issue* ou PR em [github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer) |
+
+**Onde fica cada coisa no repositório:**
+
+| **Pasta** | **Conteúdo** |
+|-----------|--------------|
+| `docs/` | Esta documentação (MkDocs); alterações nela vão por PR para a branch `documentacao` |
+| `src/firmware/` | Firmware do ESP32-C3 e seus testes |
+| `src/backend/` | Supabase: migrações, funções SQL, Edge Function e testes |
+| `src/frontend/` | Dashboard web |
+| `hw/` e `mec/` | Arquivos de hardware (esquemáticos) e de mecânica |
+| `scripts/` | Scripts de apoio, como o da curva de descarga da bateria |
+| `.github/workflows/` | Verificações automáticas: CI do firmware e publicação da documentação |
+
+Código vai por PR para a branch `main`; documentação vai por PR para a `documentacao`. Documentos de referência: [TAP](../01-tap.md), [Requisitos](../02-requisitos.md), [EAP](../03-eap.md), [Cronograma](../05-cronograma.md) e [Orçamento](../06-orcamento.md).
 
 ## Marcos do projeto
 
