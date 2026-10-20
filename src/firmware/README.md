@@ -22,9 +22,9 @@ src/firmware/
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula), atualização a partir das leituras classificadas e armazenamento em memória |
-| `navegacao` | Navegação | Localização, decisão de movimento e detecção do objetivo |
+| `navegacao` | Navegação | Localização (`Odometria`), decisão de movimento e detecção do objetivo (`DetectorObjetivo`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
-| `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
+| `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, e `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, sem hardware |
 | `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (LiDAR por UART, encoders, DRV8833, WiFi) |
 
@@ -188,6 +188,28 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `temParede(celula, direcao)` | `true` se há parede naquele lado; célula fora do labirinto conta como parede |
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
 | `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
+
+## Detecção do objetivo e conclusão do desafio
+
+O `DetectorObjetivo` (`lib/navegacao`) identifica o instante em que o robô chega à célula de destino (canto diametralmente oposto à partida) a partir da pose estimada pela odometria ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), HU-07 / RF-07):
+
+```cpp
+DetectorObjetivo detector(DimensaoMapa::Labirinto4x4); // Objetivo em (3, 3)
+
+// A cada ciclo da tarefa de navegação:
+if (detector.processarChegada(pose, motores, &armazenamentoMapa)) {
+  // Motores freados imediatamente e mapa final congelado
+}
+```
+
+| Critério de aceite | Solução implementada |
+|---|---|
+| Chegada detectada na malha | `DetectorObjetivo::calcularObjetivo` determina a célula oposta (`linhas - 1, colunas - 1`) para 4×4 (`(3, 3)`), 8×4 (`(3, 7)`), 12×4 (`(3, 11)`) ou dimensões customizadas, comparando com a célula atual estimada pela odometria independente da orientação |
+| Motores parados imediatamente | Ao detectar a chegada, aciona `motores.parar()` (freio elétrico instantâneo via DRV8833) e congela o estado de navegação com idempotência |
+| Congelamento do mapa final | `ArmazenamentoMapa::congelarMapa()` salva a imagem imutável das paredes exploradas para telemetria e persistência (HU-04, [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) |
+| Evento na telemetria | `TelemetriaJson` inclui `"evento": "objetivo_alcancado"` no payload JSON reportado na telemetria periódica e no banco de dados Supabase |
+
+Para mais detalhes, consulte [Firmware: implementação](../../docs/04-projeto-conceitual/firmware.md#navegacao-deteccao-do-objetivo-e-evento-na-telemetria) e o registro de execução dos 13 testes em [Testes de Software](../../docs/07-testes/software.md#sprint-4-deteccao-do-objetivo-e-evento-na-telemetria).
 
 ## Instalação
 

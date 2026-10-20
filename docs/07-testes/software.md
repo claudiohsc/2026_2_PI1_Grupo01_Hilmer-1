@@ -973,6 +973,158 @@ native         test_controle_movimento  PASSED    00:00:01.515
 
 ---
 
+### Sprint 4 · Detecção do objetivo e evento na telemetria
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#189 Detecção da célula objetivo e evento na telemetria](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189) |
+| História de usuário | HU-07 · Detecção da célula objetivo e evento na telemetria ([#43](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/43)), RF07 |
+| Código testado | `src/firmware` (branch `feat/189-deteccao-objetivo`, commit `6be37b9`, PR [#351](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/351)) |
+| Data da execução | 19/10/2026 |
+| Executado por | rafaellimastn |
+| Documentação do código | [Firmware: detecção do objetivo e telemetria](../04-projeto-conceitual/firmware.md#navegacao-deteccao-do-objetivo-e-evento-na-telemetria) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 24.04.5 LTS, kernel 7.0) |
+| PlatformIO Core | 6.2.0 |
+| Plataforma de testes no computador | native 1.2.1 |
+| Framework de testes | Unity 2.6.1 |
+| Biblioteca JSON | ArduinoJson 7.x |
+| Plataforma da placa | Espressif 32 7.1.3 (ESP32-C3-DevKitM-1), `framework-arduinoespressif32` 4.20017 (Arduino-ESP32 2.0.17) |
+
+#### Critérios de pronto da #189
+
+| Critério | Como foi atendido | Casos de teste |
+| :--- | :--- | :--- |
+| Chegada detectada pela posição na malha | `DetectorObjetivo::calcularObjetivo` determina a célula oposta (`linhas - 1, colunas - 1`) para 4×4 (`(3, 3)`), 8×4 (`(3, 7)`), 12×4 (`(3, 11)`) ou dimensões customizadas; `alcancouObjetivo` compara com a pose estimada pela odometria em qualquer orientação | `test_calcular_objetivo_por_dimensao`, `test_calcular_objetivo_por_linhas_e_colunas`, `test_alcancou_objetivo_estatico`, `test_construtores_e_definicao_objetivo`, `test_alcancou_objetivo_por_pose_em_qualquer_orientacao` |
+| Motores parados imediatamente | Ao alcançar a célula alvo, `processarChegada` comanda `motores.parar()` (freio elétrico instantâneo via DRV8833), congela o estado de navegação e aciona `ArmazenamentoMapa::congelarMapa()` | `test_processar_chegada_para_motores_imediatamente_e_congela_mapa`, `test_processar_chegada_idempotente_mantem_parado`, `test_resetar_detector_objetivo`, `test_processar_chegada_sem_armazenamento_opcional` |
+| Evento `objetivo alcançado` enviado na telemetria | `TelemetriaJson::serializar` inclui `"evento": "objetivo_alcancado"` no payload JSON reportado na telemetria periódica e persistido no Supabase | `test_serializa_telemetria_padrao_sem_evento`, `test_serializa_telemetria_com_evento_objetivo_alcancado`, `test_buffer_insuficiente_retorna_zero`, `test_buffer_nulo_ou_capacidade_zero` |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/navegacao/src/DetectorObjetivo.h/.cpp` | Classe `DetectorObjetivo`: cálculo estático/dinâmico da célula objetivo por dimensões ou coordenadas, detecção de chegada invariante à orientação, parada imediata dos motores (`IMotores::parar()`), congelamento do mapa final (`ArmazenamentoMapa::congelarMapa()`) e controle de idempotência (`6be37b9`) |
+| `lib/comunicacao/src/TelemetriaJson.h/.cpp` | Estrutura `PacoteTelemetria` e classe `TelemetriaJson`: serialização JSON compacta com pulsos, distâncias lineares em mm, pose da malha e inclusão condicional do campo de evento pontual (`"evento": "objetivo_alcancado"`) |
+| `lib/navegacao/src/Navegacao.h/.cpp` | Adição de `alcancouObjetivo()` e bloqueio de novos passos em `darPasso()` quando o robô já se encontra na célula objetivo |
+| `src/main.cpp` | Integração de `DetectorObjetivo` e `TelemetriaJson` nas tarefas FreeRTOS (`tarefaNavegacao` e `tarefaTelemetria`), parada e congelamento em tempo real e reset por comando serial `'Z'` |
+| `test/test_detector_objetivo/test_detector_objetivo.cpp` | Suíte unitária com 9 casos cobrindo cálculo de dimensão, invariância de orientação, parada de motores, idempotência e tratamento sem armazenamento |
+| `test/test_telemetria_json/test_telemetria_json.cpp` | Suíte unitária com 4 casos cobrindo serialização padrão sem evento, serialização com evento de vitória, estouro e proteção de buffer |
+
+#### Testes unitários e de integração (ambiente native)
+
+Comandos executados em `src/firmware`:
+
+```bash
+pio test -e native -f test_detector_objetivo
+pio test -e native -f test_telemetria_json
+```
+
+| Suíte | Casos | Resultado | Duração |
+| :--- | :--- | :--- | :--- |
+| `test_detector_objetivo` | 9 | **9 aprovados** | 0,38 s |
+| `test_telemetria_json` | 4 | **4 aprovados** | 0,35 s |
+| **Total** | **13** | **13 aprovados** | **0,73 s** |
+
+---
+
+#### Casos de teste
+
+A coluna "Critério" se refere aos critérios de aceite da HU-07 / [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189): (1) Chegada detectada pela posição na malha, (2) Motores parados imediatamente e mapa congelado e (3) Evento `objetivo alcançado` enviado na telemetria.
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_calcular_objetivo_por_dimensao` | Determina (3, 3) para 4×4, (3, 7) para 8×4 e (3, 11) para 12×4 a partir do enum `DimensaoMapa` | 1 | Aprovado |
+| `test_calcular_objetivo_por_linhas_e_colunas` | Calcula $(linhas - 1, colunas - 1)$; dimensões nulas (0, 0), (0, 5) e (5, 0) retornam (0, 0) com segurança | 1 | Aprovado |
+| `test_alcancou_objetivo_estatico` | Valida predicado estático: coincide com (3, 3) e rejeita posições distintas (0, 0), (3, 2) e (2, 3) | 1 | Aprovado |
+| `test_construtores_e_definicao_objetivo` | Instanciação padrão, por enum, por coordenadas explícitas e mutação dinâmica via `definirObjetivo` | 1 | Aprovado |
+| `test_alcancou_objetivo_por_pose_em_qualquer_orientacao` | Reconhece chegada em (3, 3) em qualquer das 4 orientações cardeais (N, L, S, O); rejeita células anteriores | 1 | Aprovado |
+| `test_processar_chegada_para_motores_imediatamente_e_congela_mapa` | Em trânsito mantém motores ligados e mapa destravado; ao atingir (3, 3), aciona `motores.parar()` (freio elétrico instantâneo), congela o mapa em `ArmazenamentoMapa` e sinaliza vitória | 2 | Aprovado |
+| `test_processar_chegada_idempotente_mantem_parado` | Ciclos periódicos subsequentes mantêm motores com freio acionado sem reacionamento | 2 | Aprovado |
+| `test_resetar_detector_objetivo` | `resetar()` retorna `alcancado_` para `false` permitindo reinício de corridas ou novas tentativas | 2 | Aprovado |
+| `test_processar_chegada_sem_armazenamento_opcional` | `processarChegada` com ponteiro nulo de armazenamento freia os motores sem falha de segmentação | 2 | Aprovado |
+| `test_serializa_telemetria_padrao_sem_evento` | Pacote periódico sem evento serializa pulsos, mm, pose e campo `"evento": null` | 3 | Aprovado |
+| `test_serializa_telemetria_com_evento_objetivo_alcancado` | Pacote ao atingir meta serializa `"evento": "objetivo_alcancado"` em conformidade com o schema | 3 | Aprovado |
+| `test_buffer_insuficiente_retorna_zero` | Buffer menor que o necessário devolve `0` e mantém string vazia segura | 3 | Aprovado |
+| `test_buffer_nulo_ou_capacidade_zero` | Passagem de buffer nulo ou capacidade 0 não causa overflow nem travamento | 3 | Aprovado |
+
+---
+
+#### Saída da execução do PlatformIO
+
+```text
+Processing test_detector_objetivo in native environment
+-------------------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_detector_objetivo/test_detector_objetivo.cpp:142: test_calcular_objetivo_por_dimensao	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:143: test_calcular_objetivo_por_linhas_e_colunas	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:144: test_alcancou_objetivo_estatico	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:145: test_construtores_e_definicao_objetivo	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:146: test_alcancou_objetivo_por_pose_em_qualquer_orientacao	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:147: test_processar_chegada_para_motores_imediatamente_e_congela_mapa	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:148: test_processar_chegada_idempotente_mantem_parado	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:149: test_resetar_detector_objetivo	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:150: test_processar_chegada_sem_armazenamento_opcional	[PASSED]
+---------------- native:test_detector_objetivo [PASSED] Took 0.38 seconds ----------------
+
+Processing test_telemetria_json in native environment
+-------------------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_telemetria_json/test_telemetria_json.cpp:98: test_serializa_telemetria_padrao_sem_evento	[PASSED]
+test/test_telemetria_json/test_telemetria_json.cpp:99: test_serializa_telemetria_com_evento_objetivo_alcancado	[PASSED]
+test/test_telemetria_json/test_telemetria_json.cpp:100: test_buffer_insuficiente_retorna_zero	[PASSED]
+test/test_telemetria_json/test_telemetria_json.cpp:101: test_buffer_nulo_ou_capacidade_zero	[PASSED]
+---------------- native:test_telemetria_json [PASSED] Took 0.35 seconds ----------------
+
+========================================= SUMMARY =========================================
+Environment    Test                    Status    Duration
+-------------  ----------------------  --------  ------------
+native         test_detector_objetivo  PASSED    00:00:00.384
+native         test_telemetria_json    PASSED    00:00:00.351
+======================= 13 test cases: 13 succeeded in 00:00:00.735 =======================
+```
+
+#### Verificação de detecção de falhas (testes negativos)
+
+Para validar a sensibilidade da suíte na detecção de defeitos:
+
+1. **Objetivo com cálculo invertido:** ao subtrair `1` de forma incorreta ou retornar `(colunas - 1, linhas - 1)`, os testes `test_calcular_objetivo_por_dimensao` e `test_calcular_objetivo_por_linhas_e_colunas` falharam imediatamente no 8×4 e 12×4 (`Expected 7 Was 3`).
+2. **Sem parada de motores:** ao remover a chamada `motores.parar()` dentro de `processarChegada`, o teste `test_processar_chegada_para_motores_imediatamente_e_congela_mapa` falhou com `Expected TRUE Was FALSE` na asserção `TEST_ASSERT_TRUE(motores.freados())`.
+3. **Sem congelamento do mapa:** ao comentar a invocação `armazenamento->congelarMapa()`, a asserção `TEST_ASSERT_TRUE(armazenamento.mapaCongelado())` falhou imediatamente.
+4. **Omissão do evento na telemetria:** ao não injetar o campo `evento` no documento JSON, o teste `test_serializa_telemetria_com_evento_objetivo_alcancado` falhou com `Expected FALSE Was TRUE` em `TEST_ASSERT_FALSE(doc["evento"].isNull())`.
+
+#### Compilação para a placa ESP32-C3
+
+```bash
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Compilação e geração do `firmware.bin` | **Sucesso** |
+| Uso de RAM | 4,4% (14.536 de 327.680 bytes) |
+| Uso de Flash | 20,2% (265.120 de 1.310.720 bytes) |
+
+```text
+RAM:   [          ]   4.4% (used 14536 bytes from 327680 bytes)
+Flash: [==        ]  20.2% (used 265120 bytes from 1310720 bytes)
+Building .pio/build/esp32c3/firmware.bin
+Successfully created esp32c3 image.
+============================== [SUCCESS] Took 115.42 seconds ==============================
+```
+
+#### Pendências desta etapa
+
+- **Teste de bancada integrado:** posicionar o robô físico no labirinto de testes, navegar até a célula objetivo e verificar a parada imediata com verificação visual do acionamento dos freios do DRV8833.
+- **Recepção do evento no dashboard:** validar o recebimento do payload com `"evento": "objetivo_alcancado"` pelo cliente Supabase do frontend e a transição para o Frame 03 (badge verde de conclusão).
+
+---
+
 ### Sprint 4 · Estrutura do frontend e layout do dashboard
 
 | Item | Valor |
