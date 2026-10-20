@@ -22,7 +22,7 @@ src/firmware/
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula), atualização a partir das leituras classificadas e armazenamento em memória |
-| `navegacao` | Navegação | Localização, decisão de movimento e detecção do objetivo |
+| `navegacao` | Navegação | Algoritmo de resolução do labirinto por *flood fill* (`Navegacao`, [#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)); localização e detecção do objetivo nas próximas tarefas |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
 | `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, e `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, sem hardware |
@@ -188,6 +188,45 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `temParede(celula, direcao)` | `true` se há parede naquele lado; célula fora do labirinto conta como parede |
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
 | `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
+
+## Resolução do labirinto (navegação)
+
+A `Navegacao` (`lib/navegacao`) decide para qual célula vizinha o robô deve ir para chegar ao objetivo, usando o que o `Mapa` sabe sobre as paredes ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183), HU-01). O objetivo padrão é o canto oposto à partida: (3, 3) no 4×4, (3, 7) no 8×4 e (3, 11) no 12×4. Ela **não aciona os motores**: devolve a direção e a célula esperada, e só muda a pose do robô quando os sensores a confirmam.
+
+**Como a direção é escolhida**, a cada passo:
+
+1. ***Flood fill*:** uma busca em largura a partir do objetivo dá a cada célula a distância, em células, até ele.
+2. **Mapa otimista:** só parede confirmada (`Parede`) bloqueia; `Livre` e `Desconhecido` contam como passagem. Assim o algoritmo funciona com o mapa parcial e desvia de cada parede nova no cálculo seguinte, refeito a cada decisão.
+3. **Menor distância:** vai para a vizinha alcançável mais próxima do objetivo. No empate: frente, direita, esquerda e trás, nessa ordem, para evitar giros.
+
+**Como um passo acontece:** decidir, mover e confirmar.
+
+```cpp
+Navegacao navegacao(armazenamentoMapa.mapa());   // partida (0, 0) virada para o Norte
+
+// a cada ciclo da tarefa de navegação
+if (!navegacao.passoPendente()) {
+  // 1. ler o LiDAR e atualizar o mapa na célula atual (AtualizadorMapa)
+  Direcao direcao;
+  if (navegacao.darPasso(direcao)) {
+    // 2. o controle de movimento (#184) gira até `direcao` e anda até navegacao.obterCelulaEsperada()
+  }
+}
+// 3. os sensores confirmam onde o robô está (ex.: odometria, #187)
+ResultadoConfirmacao r = navegacao.confirmarPose(odometria.pose());
+```
+
+| Regra | Comportamento |
+|---|---|
+| `darPasso()` | Decide a direção e registra a célula esperada; a pose **não muda**. Devolve `false` se já há passo pendente, se não há caminho ou se o robô já está no objetivo |
+| `confirmarPose()` → `Confirmada` | Pose medida na célula esperada (ou sem passo pendente): adota a pose e conclui o passo |
+| `confirmarPose()` → `EmAndamento` | Pose medida ainda na célula de origem: adota a pose e mantém o passo pendente |
+| `confirmarPose()` → `Divergente` | Pose medida em outra célula: adota a pose medida, cancela o passo, e o próximo `darPasso()` replaneja a partir dela |
+| `confirmarPose()` → `Invalida` | Pose fora do mapa: ignorada, a pose e o passo não mudam |
+| Objetivo inalcançável | Com as paredes conhecidas fechando o caminho, a distância é `DISTANCIA_INFINITA` (255) e não há decisão |
+| Memória | Distâncias numa matriz fixa 4×12 e fila estática de 48 posições, sem alocação dinâmica |
+
+Detalhes e o diagrama de estados do passo em [Firmware: navegação](../../docs/04-projeto-conceitual/firmware.md#navegacao-algoritmo-de-resolucao-do-labirinto).
 
 ## Instalação
 
