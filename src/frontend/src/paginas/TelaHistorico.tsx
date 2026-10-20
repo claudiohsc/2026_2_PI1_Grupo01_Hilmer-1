@@ -64,7 +64,8 @@ export function TelaHistorico({ corridas: corridasProp, labirintos }: TelaHistor
         <div className="historico__carregando">
           <p>Carregando histórico do banco de dados…</p>
         </div>
-      ) : (
+      ) : erro && corridas.length === 0 ? null : (
+        // Com erro e sem corridas, só o alerta aparece: "Nenhuma corrida registrada" seria enganoso.
         <TabelaHistorico corridas={visiveis} labirintos={labirintos} filtroAtivo={filtro !== 'todos'} />
       )}
     </section>

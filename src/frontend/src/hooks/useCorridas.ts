@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CORRIDAS_EXEMPLO } from '../dados/historicoExemplo';
 import { supabase } from '../lib/supabase';
 import type { Corrida } from '../tipos';
@@ -23,6 +23,9 @@ export function useCorridas(): RetornoUseCorridas {
   const [carregando, setCarregando] = useState<boolean>(Boolean(supabase));
   const [erro, setErro] = useState<string | null>(null);
 
+  // Evita atualizar o estado depois que a tela foi desmontada (resposta que chega tarde).
+  const montado = useRef(true);
+
   const recarregar = useCallback(async () => {
     if (!supabase) {
       setCorridas(CORRIDAS_EXEMPLO);
@@ -39,6 +42,8 @@ export function useCorridas(): RetornoUseCorridas {
       .select('*')
       .order('data_hora_inicio', { ascending: false });
 
+    if (!montado.current) return;
+
     if (error) {
       console.warn('Supabase: não foi possível ler a tabela corridas.', error);
       setErro('Não foi possível carregar as corridas do Supabase.');
@@ -49,35 +54,14 @@ export function useCorridas(): RetornoUseCorridas {
     setCarregando(false);
   }, []);
 
+  // A primeira carga usa a mesma consulta do botão "Atualizar".
   useEffect(() => {
-    let ativo = true;
-
-    if (!supabase) return;
-
-    setCarregando(true);
-    setErro(null);
-
-    supabase
-      .from('corridas')
-      .select('*')
-      .order('data_hora_inicio', { ascending: false })
-      .then(({ data, error }) => {
-        if (!ativo) return;
-
-        if (error) {
-          console.warn('Supabase: não foi possível ler a tabela corridas.', error);
-          setErro('Não foi possível carregar as corridas do Supabase.');
-        } else {
-          setCorridas((data as Corrida[]) ?? []);
-        }
-
-        setCarregando(false);
-      });
-
+    montado.current = true;
+    void recarregar();
     return () => {
-      ativo = false;
+      montado.current = false;
     };
-  }, []);
+  }, [recarregar]);
 
   return { corridas, carregando, erro, recarregar };
 }
