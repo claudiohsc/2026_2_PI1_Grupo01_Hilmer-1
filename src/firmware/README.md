@@ -17,14 +17,15 @@ src/firmware/
 | Pasta em `lib/` | Camada | O que entra |
 |---|---|---|
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
-| `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar` e, nos próximos épicos, encoders e motores) |
+| `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar`, `IEncoder` e, nos próximos épicos, motores) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` a partir das distâncias do LiDAR |
+| `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula), atualização a partir das leituras classificadas e armazenamento em memória |
 | `navegacao` | Navegação | Localização, decisão de movimento e detecção do objetivo |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
 | `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
-| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, e `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, sem hardware |
+| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, e `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, sem hardware |
 | `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (LiDAR por UART, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
@@ -111,6 +112,28 @@ ResultadoAtualizacao res = AtualizadorMapa::atualizar(mapa, pose, classificador,
 | `Desconhecido` | Leituras desconhecidas não alteram o mapa e retornam `Invalida` |
 | Conflitos | Se uma leitura contradiz o mapa, `temConflito` é marcado como `true`, retorna `Conflito` e o valor antigo do mapa é preservado; a política de navegação fica com quem chama (#188) |
 | Pose inválida | Coordenadas fora dos limites do mapa retornam `Invalida` para todas as direções |
+
+## Odometria
+
+A `Odometria` (`lib/navegacao`) estima a pose do robô (célula e direção) pela odometria diferencial dos encoders: a diferença entre as rodas gira a direção, e a média avança o robô na direção atual. A arquitetura não tem IMU. Não depende do Arduino e só usa inteiros.
+
+```cpp
+Odometria odometria;                              // parte em (0, 0), virada para o Norte
+odometria.atualizar(encoderEsq, encoderDir);      // a cada ciclo, com os dois IEncoder
+Pose pose = odometria.pose();                     // célula e direção
+char letra = letraDaDirecao(pose.direcao);        // 'N', 'L', 'S' ou 'O', como no banco
+```
+
+| Regra | Comportamento |
+|---|---|
+| Giro | `contagem esquerda − contagem direita` dividida por `pulsosDiferenciaisPor90Graus`, arredondada para o múltiplo de 90° mais próximo; só muda a direção depois de 45° |
+| Avanço | Média das duas rodas, na direção atual; a célula muda ao cruzar a parede, a meia célula do centro |
+| Giro no lugar | Não muda a célula |
+| Fora da malha | A célula fica limitada a 0 e 255, e `posicaoValida()` devolve `false` |
+| Reinício | `reiniciar(pose, contagemEsquerda, contagemDireita)` define a pose e a referência das contagens |
+| Parâmetros | `ConfiguracaoOdometria.h`: 251 µm por pulso (roda de 32 mm, 400 pulsos por volta) e **625 pulsos por 90° (provisório)**, a calibrar na bancada |
+
+No `main.cpp`, a tarefa de navegação atualiza a odometria a cada 10 ms, e a telemetria acrescenta `linha`, `coluna`, `orientacao` e `pose_valida` à linha de JSON dos encoders.
 
 ## Serialização do mapa em JSON
 

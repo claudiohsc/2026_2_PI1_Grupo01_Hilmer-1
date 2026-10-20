@@ -164,6 +164,17 @@ Os coeficientes e a tabela de conversão foram exportados diretamente para o arq
 
 A distribuição de energia segrega a malha de acionamento eletromecânico dos circuitos lógicos e de sensoriamento:
 
+* **Entrada de Energia, Proteções e Chaveamento (detalhado em [4.2.1 Proteções de entrada](protecoes-entrada.md)):**
+  * O polo positivo da bateria LiPo 2S conecta-se ao circuito através do conector polarizado de alta corrente **XT-30**.
+  * Em série com a linha positiva (`VBAT_RAW`), posiciona-se um **Fusível Rearmável PPTC Bourns MF-R185** ($I_{\text{hold}} = 1{,}85\text{ A}$, $I_{\text{trip}} \approx 3{,}5\text{ A a }3{,}7\text{ A}$, $V_{\text{max}} = 30\text{ V}$), salvaguardando o circuito contra curtos-circuitos e travamento severo dos motores N20 sem desarmar em arrancadas.
+  * Após o PPTC, integra-se uma malha ativa contra inversão de polaridade com **P-MOSFET Canal P de baixa perda (AO3407A, $R_{\text{DS(on)}} \approx 28\text{ m}\Omega$)** em configuração *High-Side*, garantindo queda de tensão inferior a $0{,}02\text{ V}$ em regime nominal e preservando a margem de *dropout* do regulador de 5 V.
+  * Na saída protegida (`+VBAT_PROT`), uma **Chave de Potência** mecânica (`SW1`) comanda a energização geral do barramento `+VBAT_2S` antes da derivação para os conversores e ponte H.
+* **Barramento Direto dos Motores (+VBAT_2S / Pinos VM):**
+  * O terminal `VM` do driver DRV8833 recebe diretamente a tensão não regulada da bateria (+VBAT_2S, entre 7,4 V e 8,4 V).
+  * *Validação da Tensão de 8,4 V em Motores Nominais de 6,0 V:* O DRV8833 suporta até 10,8 V em VM, operando com ampla folga de segurança. Para proteger as bobinas dos micromotores N20 sem a inclusão de um regulador de potência de 6 V, adota-se **limitação por software via modulação PWM**: o *duty cycle* máximo enviado pelo ESP32-C3 é travado em **71%** ($6,0\text{ V} / 8,4\text{ V}$), garantindo que a tensão eficaz nos motores não ultrapasse os 6,0 V nominais sob bateria plena.
+* **Barramento de Regulação Chaveada (Dois Módulos Buck Independentes):**
+  * **Conversor Buck +5V0:** Regulador Step-Down com capacidade mínima de 1 A contínuo. Alimenta de forma isolada a linha de potência do sensor LiDAR ToF 360°.
+  * **Conversor Buck +3V3:** Regulador Step-Down com capacidade mínima de 1 A contínuo. Alimenta a linha digital do microcontrolador ESP32-C3-MINI-1, os encoders de quadratura e a polarização lógica do DRV8833. A especificação de 1 A supre com ampla folga os picos transitórios de rádio do chip ESP32 (de até 350 mA).
 * **Entrada de Energia, Gerenciamento e Chaveamento:**
   * O polo positivo da bateria LiPo 2S conecta-se ao circuito através de conector de alta corrente **XT30**.
   * Em série com a linha positiva (+VBAT), posiciona-se um **Fusível de Proteção de Ação Rápida (3 A a 5 A)** (formato mini automotivo ou SMD), indispensável para salvaguardar o circuito contra curtos-circuitos acidentais decorrentes da elevada capacidade de descarga da célula LiPo (75C contínuo / 150C pico).
@@ -433,20 +444,11 @@ flowchart TD
 4. **TEXAS INSTRUMENTS.** *DRV8833 Dual H-Bridge Motor Driver*. Datasheet SLVSAR1E, Rev. Julho 2015. Disponível em: <https://www.ti.com/lit/ds/symlink/drv8833.pdf>.
 5. **GIBILISCO, Stan.** *Beginner's Guide to Reading Schematics*. 3. ed. Nova York: McGraw-Hill Education, 2014.
 6. **MOHAN, Ned; UNDELAND, Tore M.; ROBBINS, William P.** *Power Electronics: Converters, Applications, and Design*. 3. ed. Nova York: John Wiley & Sons, 2003.
-=======
-  * O software implementa proteção de subtensão lógica (*Under-Voltage Lockout*): se a leitura atestar tensão global inferior a 6,4 V (equivalente a 3,2 V por célula) em amostragens sucessivas, os sinais de controle PWM para o DRV8833 são zerados, cortando a tração e preservando a bateria contra descarga profunda.
-  * A telemetria empacota o tempo contínuo de atividade e a leitura instantânea de tensão, registrando os dados de consumo em tempo real para contraste com o modelo de energia projetado.
-
----
-
-## 7. Referências Bibliográficas
-
-1. **SHEPHERD, C. M.** *Design of Primary and Secondary Cells - Part 2: An equation describing battery discharge*. Journal of The Electrochemical Society, v. 112, n. 7, p. 657-664, 1965.
-2. **TREMBLAY, Olivier; DESSAINT, Louis-A.** *Experimental Validation of a Battery Dynamic Model for EV Applications*. World Electric Vehicle Journal, v. 3, n. 2, p. 289-298, 2009.
-3. **TATTU.** *Tattu 650mAh 75C 2S1P Lipo Battery Pack with XT30 Plug Specification Sheet*. Gens Ace & Tattu Battery Co., 2023.
-4. **ESPRESSIF SYSTEMS.** *ESP32-C3-MINI-1 Datasheet*. Versão 1.4, 2024. Disponível em: <https://www.espressif.com>.
-5. **MOHAN, Ned; UNDELAND, Tore M.; ROBBINS, William P.** *Power Electronics: Converters, Applications, and Design*. 3. ed. Nova York: John Wiley & Sons, 2003.
->>>>>>> docs/139-201-mapeamento-de-descarga
+7. **SHEPHERD, C. M.** *Design of Primary and Secondary Cells - Part 2: An equation describing battery discharge*. Journal of The Electrochemical Society, v. 112, n. 7, p. 657-664, 1965.
+8. **TREMBLAY, Olivier; DESSAINT, Louis-A.** *Experimental Validation of a Battery Dynamic Model for EV Applications*. World Electric Vehicle Journal, v. 3, n. 2, p. 289-298, 2009.
+9. **TATTU.** *Tattu 650mAh 75C 2S1P Lipo Battery Pack with XT30 Plug Specification Sheet*. Gens Ace & Tattu Battery Co., 2023.
+10. **ESPRESSIF SYSTEMS.** *ESP32-C3-MINI-1 Datasheet*. Versão 1.4, 2024. Disponível em: <https://www.espressif.com>.
+11. **MOHAN, Ned; UNDELAND, Tore M.; ROBBINS, William P.** *Power Electronics: Converters, Applications, and Design*. 3. ed. Nova York: John Wiley & Sons, 2003.
 
 ---
 
@@ -457,5 +459,6 @@ flowchart TD
 | 1.0 | 05/10/2026 | Estruturação inicial do consumo de energia e dimensionamento da bateria LiPo 2S | Bruno Duarte e Paulo Melo | Equipe Micromouse |
 | 1.1 | 10/10/2026 | Atualização das especificações dinâmicas da bateria LiPo e modelo Tattu 650mAh | Paulo Melo | Bruno Duarte |
 | 1.2 | 12/10/2026 | Dimensionamento dos reguladores Step-Down LM2596 e MP1584EN, cálculo de componentes passivos, análise de dissipação térmica | Elias Oliveira | Equipe de Hardware |
-| 1.3 | 18/10/2026 | Inclusão do dimensionamento do conversor Buck dedicado de 6 V para os motores com suporte até ~3 A de stall, reanálise de dropout, atualização da autonomia para 65,5 min e consolidação dos três reguladores | Elias Oliveira | Bruno Duarte (System Architect) |
-| 1.4 | 18/10/2026 | Mapeamento matemático da curva de descarga da bateria LiPo 2S (Equação de Shepherd), gráfico vetorial de descarga e geração da tabela SoC para o firmware (#139) | Elias Oliveira | Bruno Duarte (System Architect) |
+| 1.3 | 17/10/2026 | Alinhamento da seção de proteções de entrada com o dimensionamento do PPTC (MF-R185) e P-MOSFET (AO3407A) | Paulo Melo | Equipe de Energia |
+| 1.4 | 18/10/2026 | Inclusão do dimensionamento do conversor Buck dedicado de 6 V para os motores com suporte até ~3 A de stall, reanálise de dropout, atualização da autonomia para 65,5 min e consolidação dos três reguladores | Elias Oliveira | Bruno Duarte|
+| 1.5 | 18/10/2026 | Mapeamento matemático da curva de descarga da bateria LiPo 2S (Equação de Shepherd), gráfico vetorial de descarga e geração da tabela SoC para o firmware (#139) | Elias Oliveira | Bruno Duarte|
