@@ -896,7 +896,7 @@ das colunas da migração, então a troca não muda os componentes:
   tema do PI1.
 - **Bateria:** o percentual é estimado de forma linear pela tensão, entre 6,6 V (corte) e
   8,4 V (carga plena) da LiPo 2S. É provisório, porque a curva real não é linear; na HU-08
-  ele pode passar a usar a [tabela de SoC × tensão](energia.md#tabela-de-correlacao-estado-de-carga-soc-vs-tensao-de-terminal)
+  ele pode passar a usar a [tabela de SoC × tensão](energia/curva-descarga-lipo.md#4-tabela-de-correlacao-estado-de-carga-soc-vs-tensao-de-terminal)
   da [#139](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/139).
 - **Consumo no histórico:** a coluna `corridas.consumo_bateria` ainda admite "mAh ou %
   consumida". A tela assume % consumida e mostra a carga restante (`100 − consumo`), como no
