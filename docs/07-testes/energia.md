@@ -4,7 +4,7 @@
 
 | **ID** | **Descrição** | **Data de Início** | **Data de Conclusão** | **Responsável** | **Resultados Esperados** | **Resultados Obtidos** | **Aprovação Interna (S/N)** | **Aprovação do Orientador (S/N)** | **Observações** |
 |:------:|---------------|--------------------|-----------------------|-----------------|--------------------------|------------------------|:---------------------------:|:--------------------------------:|-----------------|
-| 2.1 | | | | | | | | | |
+| 2.1 | [Inspeção e Carga de Baterias em Bancada](energia/teste-componentes/bateria/teste-bancada.md) | 21/10/2026 | 21/10/2026 | Equipe de Energia | Setup instrumental calibrado e packs carregados a 8,4 V | Setup montado com Yaxun 1502DD e multímetro, packs LiPo e 18650 inspecionados e carregados a 8,4 V | S | S | Issue #201 concluída |
 | 2.2 | | | | | | | | | |
 | 2.3 | | | | | | | | | |
 | 2.4 | | | | | | | | | |

@@ -106,6 +106,7 @@ nav:
       - 07-testes/README.md
       - 7.1 Estrutura: 07-testes/estrutura.md
       - 7.2 Energia: 07-testes/energia.md
+      - 7.2.1 Ensaio de Bancada de Baterias: 07-testes/energia/teste-componentes/bateria/teste-bancada-bateria.md
       - 7.3 Hardware: 07-testes/hardware.md
       - 7.4 Software: 07-testes/software.md
       - 7.5 Integração: 07-testes/integracao.md
