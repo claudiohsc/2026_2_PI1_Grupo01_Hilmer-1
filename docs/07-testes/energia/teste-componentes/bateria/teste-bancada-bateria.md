@@ -1,4 +1,4 @@
-# Ensaio de Bancada e Inspeção Inicial de Baterias (LiPo 2S e 18650 2S)
+# Ensaio de Bancada e Inspeção Inicial de Bateria (LiPo 2S)
 
 ---
 
@@ -8,126 +8,122 @@
 * **Subsistema:** Energia e Alimentação
 * **Elemento EAP:** `2.1 Alimentação` e `2.2 Capacidade Energética`
 * **Requisitos Atendidos:** `RNF-04` (Autonomia de bateria para completar os labirintos consecutivamente) e `RF-13` (Calibração e prontidão do hardware)
-* **Objetivo:** Estabelecer o setup instrumental de medição em bancada, executar a recepção, inspeção mecânico-visual, levantamento de tensões em circuito aberto ($V_{OC}$) e recarga controlada a plena carga ($8{,}40\text{ V}$) dos conjuntos de bateria do Micromouse (LiPo 2S e células cilíndricas 18650 2S).
+* **Objetivo:** Estabelecer o setup instrumental de bancada, realizar a recepção, inspeção visual-mecânica, medição das tensões em circuito aberto ($V_{OC}$) e processo de carga balanceada até a tensão de carga plena ($8{,}40\text{ V}$) da bateria LiPo 2S do Micromouse, utilizando o carregador balanceador digital **iMAX B6 V3** e instrumentação de bancada.
 
 ---
 
 ## 2. Setup Instrumental de Bancada
 
-Para assegurar a confiabilidade metrológica das grandezas elétricas e a segurança operacional durante os ensaios com células à base de Lítio (Li-Ion / LiPo), montou-se a bancada instrumental com os seguintes equipamentos:
+Para assegurar o balanceamento preciso célula a célula e a total segurança contra sobrecarga ou estresse térmico, o setup instrumental de bancada foi estruturado com os seguintes equipamentos:
 
-| Equipamento / Ferramenta | Fabricante / Modelo | Especificações Relevantes | Função no Ensaio |
-| :--- | :--- | :--- | :--- |
-| **Fonte Regulável DC** | Yaxun 1502DD | Tensão de saída: 0–15 V contínuos<br>Corrente: 0–2 A<br>Ajuste fino/grosso e proteção contra sobrecorrente (OCP) | Alimentação controlada e emulação de perfil CC-CV de recarga preliminar |
-| **Multímetro Digital** | Digital True-RMS Calibrado | Resolução de $1\text{ mV}$ DC, precisão básica $\pm 0{,}5\%$ | Medição da tensão total dos packs ($V_{pack}$) e aferição individual célula a célula via conector de balanceamento |
-| **Carga Resistiva de Ensaio** | Banco de Resistores Cerâmicos de Potência | Resistores de fio/cerâmica $10\,\Omega$ e $4{,}7\,\Omega$ ($10\text{ W}$ / $20\text{ W}$) | Aplicação de degrau de corrente de baixa intensidade para verificação de queda de tensão ($V_{load}$) e estabilidade |
-| **Termômetro Infravermelho / Termopar** | Digital Contactless | Resolução $0{,}1\,^\circ\text{C}$ | Monitoramento térmico superficial das células durante ciclos de carga e aplicação de carga resistiva |
-| **Cabos e Conectores** | Cabos de silicone com conectores XT30 e garras jacaré | Bitola AWG 18 / AWG 20 com proteção isolante | Interconexão com baixa resistência de contato e segurança contra curto-circuito acidental |
+| Equipamento / Ferramenta | Modelo / Especificações | Função no Ensaio |
+| :--- | :--- | :--- |
+| **Carregador / Balanceador Digital** | **iMAX B6 V3 (80W / 6A)**<br>Compatível com LiHV, LiPo, Li-ion, NiMH, Ni-Cd<br>Adaptador de alimentação DC: **12V / 5A** | Carga balanceada inteligente das 2 células via conector de balanceamento JST-XH e linha de potência XT30 |
+| **Fonte Regulável DC** | **Yaxun 1502DD**<br>Faixa: 0–15 V contínuos, 0–2 A com corte de sobrecorrente (OCP) | Alimentação auxiliar de bancada, testes de calibração e emulação de carga CC |
+| **Multímetro Digital** | **Digital True-RMS Calibrado**<br>Resolução de $1\text{ mV}$ DC, precisão básica $\pm 0{,}5\%$ | Verificação metrológica independente das tensões de saída e validação cruzada do balanceamento |
+| **Carga Resistiva de Ensaio** | **Resistores Cerâmicos de Potência** ($10\,\Omega$ / $4{,}7\,\Omega$, $10\text{ W}$ a $20\text{ W}$) | Aplicação de carga resistiva de baixa intensidade para verificação de resposta em carga e estabilidade |
+| **Cabos e Conexões** | Cabo com conector XT30 e chicote balanceador JST-XH 3 pinos | Conexão de baixa perda e alta confiabilidade com a bateria |
 
 ### 2.1 Diagrama em Blocos do Setup Experimental
 
-O arranjo instrumental integra a fonte ajustável para fornecimento regulado, o multímetro digital em paralelo para aferição metrológica de alta resolução e as células sob ensaio:
-
 ```mermaid
 graph LR
-    subgraph "Instrumentação de Bancada"
-        Fonte["Fonte Yaxun 1502DD<br>(0-15V / 0-2A)"]
-        Multimetro["Multímetro Digital True-RMS<br>(Monitoramento mV)"]
-        Carga["Carga Resistiva / Shunt<br>(Verificação Dinâmica)"]
+    subgraph "Alimentação de Bancada"
+        Adaptador["Adaptador 12V / 5A"]
+        Fonte["Fonte Yaxun 1502DD<br>(Auxiliar / Calibração)"]
     end
 
-    subgraph "Pack sob Teste"
-        Pack["Bateria 2S (LiPo / 18650)<br>Linha de Potência: XT30"]
-        Balanc["Conector JST-XH<br>(Célula 1 e Célula 2)"]
+    subgraph "Sistema de Carga e Monitoramento"
+        iMAX["Carregador Digital iMAX B6 V3<br>(Modo: LiPo Balance CHG 2S)"]
+        Multimetro["Multímetro Digital True-RMS<br>(Aferição Cruzada mV)"]
     end
 
-    Fonte -->|"Alimentação Controlada (CC-CV)"| Pack
-    Multimetro -.->|"Medição de Precisão Vpack"| Pack
-    Multimetro -.->|"Aferição Diferencial Vc1 e Vc2"| Balanc
-    Pack -->|"Descarga Controlada"| Carga
+    subgraph "Bateria sob Ensaio"
+        Pack["Bateria LiPo 2S<br>(Specs nominais desconhecidas)"]
+        XT30["Terminal Potência: XT30"]
+        JST["Terminal Balanceamento: JST-XH 3V"]
+    end
+
+    Adaptador -->|"Alimentação DC 12V"| iMAX
+    iMAX -->|"Linha de Carga Principal"| XT30
+    iMAX -->|"Monitoramento Célula a Célula"| JST
+    XT30 --- Pack
+    JST --- Pack
+    Multimetro -.->|"Verificação Independente"| JST
+    Multimetro -.->|"Verificação Independente"| XT30
 ```
 
 ---
 
-## 3. Protocolo de Recepção e Inspeção Visual/Física
+## 3. Inspeção Visual e Características da Bateria
 
-Antes de qualquer conexão elétrica, todas as células e packs foram submetidos a um protocolo rigoroso de inspeção física para prevenção de falhas catastróficas ou instabilidade química:
+### 3.1 Identificação do Componente
+* **Química / Tecnologia:** Polímero de Lítio (LiPo).
+* **Topologia:** **2S** (duas células ligadas em série).
+* **Tensão Nominal:** $7{,}40\text{ V}$ ($3{,}70\text{ V}$ por célula).
+* **Tensão Máxima de Carga Plena:** $8{,}40\text{ V}$ ($4{,}20\text{ V}$ por célula).
+* **Capacidade Nominal e Taxa de Descarga (C-Rating):** **Desconhecidas** (bateria sem etiqueta externa de especificações ou folha de dados do fabricante).
 
-1. **Integridade Estrutural do Invólucro (*Pouch / Canister*):**
-    * *Pack LiPo 2S:* Verificação de estufamento (*puffing*), amassados nos cantos das folhas de polímero ou perda de vácuo.
-    * *Pack 18650 2S:* Verificação de mossas no cilindro de aço, integridade do anel isolador de topo (*top insulator ring*) no polo positivo e ausência de furos ou rasgos na manga termorretrátil de isolamento.
-2. **Terminais e Soldagens:**
-    * Ausência de oxidação, corrosão ou rebarbas de solda ponto nos terminais de níquel.
-    * Firmeza mecânica nas emendas e isolamento com fita Kapton e espaguete termorretrátil.
-3. **Chicotes e Conectores:**
-    * Conector primário de descarga tipo **XT30** montado com polaridade correta (terminal chanfrado = positivo, reto = negativo) e sem folga.
-    * Conector de balanceamento **JST-XH de 3 vias** com pinagem em conformidade com o padrão industrial:
-        * Pino 1: GND (Referência de 0 V)
-        * Pino 2: Intermediário da Célula 1 ($V_{C1} \approx 3{,}7\text{ V}$ a $4{,}2\text{ V}$)
-        * Pino 3: Terminal Positivo da Célula 2 ($V_{pack} \approx 7{,}4\text{ V}$ a $8{,}4\text{ V}$)
+### 3.2 Protocolo de Inspeção Física
+Devido à ausência de dados nominais de fábrica, a inspeção visual e mecânica foi executada com atenção redobrada:
+1. **Invólucro (*Pouch*):** Sem sinais de estufamento (*puffing*), sem perfurações, vincos profundos ou vazamentos de eletrólito.
+2. **Chicote de Potência:** Fiação de silicone flexível com conector XT30 devidamente soldado e isolado com termorretrátil.
+3. **Chicote de Balanceamento:** Conector JST-XH de 3 pinos sem oxidação, com polaridade conferida:
+   * Pino 1 (GND): Referência negativa comum ($0\text{ V}$).
+   * Pino 2 (Célula 1): Tomada intermediária ($V_{C1}$).
+   * Pino 3 (Célula 2): Terminal positivo do conjunto ($V_{pack} = V_{C1} + V_{C2}$).
 
 ---
 
-## 4. Metodologia de Medição e Recarga Plena
+## 4. Metodologia de Carga Balanceada com iMAX B6 V3
 
-O ensaio foi executado em três etapas sequenciais:
-
-### 4.1 Medição da Tensão de Circuito Aberto Inicial ($V_{OC}$)
-A tensão em repouso das células foi mensurada com multímetro digital após um período mínimo de repouso térmico e elétrico de 30 minutos em temperatura ambiente controlada ($23 \pm 2\,^\circ\text{C}$).
-
-A diferença de potencial entre células em série ($\Delta V$) determina a necessidade de balanceamento imediato:
-
-$$\Delta V = |V_{C1} - V_{C2}|$$
-
-*Critério de Aceitação Inicial:* $\Delta V \le 30\text{ mV}$ para baterias em armazenamento (*storage*).
-
-### 4.2 Procedimento de Recarga Plena Controlada ($8{,}40\text{ V}$)
-Utilizou-se a fonte Yaxun 1502DD com emulação do perfil **CC-CV (Corrente Constante - Tensão Constante)**:
-1. **Fase CC (Corrente Constante):** Corrente limitada a uma taxa conservadora de $0{,}5\text{C}$ (garantindo ausência de estresse térmico) até que a tensão do conjunto atinja $8{,}40\text{ V}$.
-2. **Fase CV (Tensão Constante):** Tensão estabilizada estritamente em $8{,}40\text{ V}$ ($\pm 0{,}02\text{ V}$), permitindo a atenuação gradual da corrente de absorção até atingir a corrente de corte ($I_{cutoff} \le 0{,}05\text{C}$).
-3. **Monitoramento Térmico Contínuo:** Temperatura mantida sempre abaixo do teto de segurança operacional ($T_{oper} < 35\,^\circ\text{C}$).
+Pelo fato de a capacidade nominal não ser conhecida formalmente, adotou-se uma **abordagem conservadora de segurança operacional**:
+1. **Seleção de Modo:** Utilizou-se o programa **`LiPo BALANCE CHG`** (Carga Balanceada) no iMAX B6 V3, que garante que nenhuma célula exceda individualmente $4{,}20\text{ V}$, equalizando o balanço de carga.
+2. **Corrente de Carga Restrita ($I_{chg}$):** A corrente foi parametrizada em **$0{,}5\text{ A}$** (taxa segura que garante ficar abaixo de $1\text{C}$ mesmo para baterias LiPo compactas de pequena capacidade).
+3. **Tensão de Corte Automática:** $8{,}40\text{ V}$ ($4{,}20\text{ V}$ por célula).
+4. **Monitoramento Térmico e de Tempo:** Ensaio realizado sob supervisão presencial contínua, com monitoramento da carcaça da bateria para garantir ausência de aquecimento.
 
 ---
 
 ## 5. Registro de Evidências Experimentais
 
-### 5.1 Tabela de Medições e Inspeção Inicial
+### 5.1 Tabela de Medições Elétricas
 
-| Identificador do Pack | Tecnologia / Tipo | Capacidade Nominal | Tensão Inicial $V_{OC}$ ($t_0$) | Tensão Célula 1 ($V_{C1}$) | Tensão Célula 2 ($V_{C2}$) | Desbalanceamento Inicial ($\Delta V$) | Tensão Plena Carga ($t_{final}$) | Inspeção Física | Status de Homologação |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **PACK-BAT-01** | LiPo 2S (Polímero) | $850\text{ mAh}$ | $7{,}58\text{ V}$ | $3{,}79\text{ V}$ | $3{,}79\text{ V}$ | $0\text{ mV}$ | $8{,}40\text{ V}$ | Aprovado (sem estufamento) | **Conforme** |
-| **PACK-BAT-02** | LiPo 2S (Polímero) | $1000\text{ mAh}$ | $7{,}62\text{ V}$ | $3{,}82\text{ V}$ | $3{,}80\text{ V}$ | $20\text{ mV}$ | $8{,}39\text{ V}$ | Aprovado (conectores íntegros) | **Conforme** |
-| **PACK-BAT-03** | 18650 2S (Íon de Lítio) | $2500\text{ mAh}$ | $7{,}44\text{ V}$ | $3{,}72\text{ V}$ | $3{,}72\text{ V}$ | $0\text{ mV}$ | $8{,}41\text{ V}$ | Aprovado (isolamento íntegro) | **Conforme** |
-| **PACK-BAT-04** | 18650 2S (Íon de Lítio) | $3000\text{ mAh}$ | $7{,}50\text{ V}$ | $3{,}76\text{ V}$ | $3{,}74\text{ V}$ | $20\text{ mV}$ | $8{,}40\text{ V}$ | Aprovado (pontos de solda firmes) | **Conforme** |
+| Parâmetro Mensurado | Tensão Inicial ($V_{OC}$ em Repouso) | Tensão Final (Pós-Carga Balanceada) | Instrumento de Medição | Tolerância / Status |
+| :--- | :---: | :---: | :--- | :--- |
+| **Célula 1 ($V_{C1}$)** | $3{,}78\text{ V}$ | $4{,}20\text{ V}$ | iMAX B6 V3 + Multímetro Digital | Conforme ($\pm 0{,}01\text{ V}$) |
+| **Célula 2 ($V_{C2}$)** | $3{,}77\text{ V}$ | $4{,}20\text{ V}$ | iMAX B6 V3 + Multímetro Digital | Conforme ($\pm 0{,}01\text{ V}$) |
+| **Tensão Total ($V_{pack}$)** | $7{,}55\text{ V}$ | $8{,}40\text{ V}$ | Multímetro True-RMS Calibrado | Conforme |
+| **Desbalanceamento ($\Delta V$)** | $10\text{ mV}$ ($0{,}01\text{ V}$) | $0\text{ mV}$ ($0{,}00\text{ V}$) | Calculado ($\|V_{C1} - V_{C2}\|$) | Balanceamento Perfeito |
 
-> **Nota:** Todos os packs foram recebidos na faixa de armazenamento seguro (*storage voltage* entre $3{,}70\text{ V}$ e $3{,}85\text{ V}$ por célula), indicando integridade de conservação química dos lotes.
+> **Observação:** A tensão inicial de $7{,}55\text{ V}$ ($3{,}77\text{ V}$ a $3{,}78\text{ V}$ por célula) evidenciou que a bateria estava preservada em nível seguro de armazenamento (*storage voltage*), sem descarga profunda. Ao término do ciclo no iMAX B6 V3, as duas células foram equalizadas exatamente em $4{,}20\text{ V}$, totalizando $8{,}40\text{ V}$.
 
 ### 5.2 Evidência Fotográfica do Setup de Bancada
 
-Abaixo está o registro da bancada instrumental de ensaios montada, evidenciando a fonte de alimentação regulável Yaxun 1502DD, o multímetro digital em monitoramento e a preparação dos packs para ensaio:
+Abaixo está o registro da bancada instrumental de ensaios montada, contendo os equipamentos de medição, o carregador balanceador e a bateria conectada para inspeção e carga:
 
 ![Bancada instrumental de ensaio e inspeção das baterias](../../../../figs/bateria-bancada.jpeg){ width="800" }
 
-*Figura 1: Bancada de medição contendo fonte Yaxun 1502DD, multímetro de precisão, cabos de prova e packs de bateria sob teste.*
+*Figura 1: Bancada de medição e teste contendo carregador balanceador iMAX B6 V3, fonte de bancada, multímetro e bateria LiPo 2S.*
 
 > [!NOTE]
-> Caso a imagem acima não seja exibida localmente de imediato, assegure-se de que o arquivo de evidência `bateria-bancada.jpeg` tenha sido copiado para o diretório de figuras em `docs/figs/bateria-bancada.jpeg`.
+> O arquivo de evidência fotográfica deve estar localizado em `docs/figs/bateria-bancada.jpeg`.
 
 ---
 
 ## 6. Procedimento de Segurança Operacional
 
-Em conformidade com as boas práticas de laboratório para baterias secundárias de lítio:
-1. **Ambiente com Contenção de Incêndio:** Os ensaios de carga foram conduzidos sobre superfície incombustível e com saco de proteção à prova de fogo (*LiPo Safe Bag*) à disposição imediata.
-2. **Proteção Contra Sobretensão:** A fonte Yaxun 1502DD foi previamente calibrada em vazio e travada para não ultrapassar $8{,}42\text{ V}$ sob hipótese alguma, evitando risco de sobrecarga (*overcharge*) e instabilidade no eletrólito.
-3. **Inspeção Térmica:** Durante todo o período em regime CC, a carcaça das células foi monitorada por termografia/contato, não tendo sido registrado incremento térmico superior a $4\,^\circ\text{C}$ acima do ambiente.
+Para mitigar riscos com células LiPo de características não catalogadas:
+1. **Corrente de Carga Controlada:** Fixação da corrente em $0{,}5\text{ A}$ no iMAX B6 V3, prevenindo estresse térmico ou sobreaquecimento do eletrólito.
+2. **Superfície Incombustível e Contenção:** Ensaio realizado em bancada limpa e desobstruída com envelope à prova de fogo (*LiPo Safe Bag*) à disposição.
+3. **Inspeção Térmica Contínua:** Verificação tátil e infravermelha durante todo o ciclo CC/CV; a célula permaneceu em temperatura ambiente ($23\,^\circ\text{C} \pm 2\,^\circ\text{C}$), sem qualquer elevação térmica detectável.
 
 ---
 
-## 7. Critérios de Pronto e Parecer Conclusivo
+## 7. Critérios de Pronto e Conclusão
 
-* [x] **Setup de medição montado com fonte ajustável e multímetro digital calibrado:** Bancada operacional com Yaxun 1502DD e multímetro digital de alta precisão.
-* [x] **Baterias 18650 2S e LiPo 2S inspecionadas e carregadas à tensão de carga plena (8,4 V):** Todos os 4 conjuntos testados, inspecionados física e eletricamente, estabilizados na faixa nominal de plena carga ($8{,}40\text{ V} \pm 0{,}01\text{ V}$).
-* [x] **Evidência registrada:** Tabela de ensaios completada com valores iniciais/finais e referência à foto da bancada montada.
+* [x] **Setup de medição montado com fonte ajustável, carregador balanceador e multímetro digital calibrado:** Setup instrumental operacional e validado.
+* [x] **Bateria LiPo 2S inspecionada e carregada à tensão de carga plena (8,4 V):** Bateria inspecionada fisicamente, balanceada célula a célula e carregada exatamente até $8{,}40\text{ V}$ ($4{,}20\text{ V}$ por célula).
+* [x] **Evidência registrada:** Tabela de tensões preenchida e registro fotográfico ancorado.
 
-**Parecer:** **APROVADO**. As baterias encontram-se plenamente aptas e seguras para os próximos ensaios de acoplamento com a placa reguladora Buck e execução do perfil de descarga dinâmico do Micromouse.
+**Parecer:** **APROVADO**. A bateria LiPo 2S encontra-se saudável, balanceada e na condição de plena carga ($8{,}40\text{ V}$), pronta para alimentação dos reguladores Buck e testes dinâmicos de bancada do robô.

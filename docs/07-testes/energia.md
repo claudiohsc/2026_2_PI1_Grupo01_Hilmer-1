@@ -4,7 +4,7 @@
 
 | **ID** | **Descrição** | **Data de Início** | **Data de Conclusão** | **Responsável** | **Resultados Esperados** | **Resultados Obtidos** | **Aprovação Interna (S/N)** | **Aprovação do Orientador (S/N)** | **Observações** |
 |:------:|---------------|--------------------|-----------------------|-----------------|--------------------------|------------------------|:---------------------------:|:--------------------------------:|-----------------|
-| 2.1 | [Inspeção e Carga de Baterias em Bancada](energia/teste-componentes/bateria/teste-bancada.md) | 21/10/2026 | 21/10/2026 | Equipe de Energia | Setup instrumental calibrado e packs carregados a 8,4 V | Setup montado com Yaxun 1502DD e multímetro, packs LiPo e 18650 inspecionados e carregados a 8,4 V | S | S | Issue #201 concluída |
+| 2.1 | [Inspeção e Carga de Bateria LiPo 2S em Bancada](energia/teste-componentes/bateria/teste-bancada-bateria.md) | 21/10/2026 | 21/10/2026 | Equipe de Energia | Setup instrumental calibrado e bateria carregada a 8,4 V | Setup montado com iMAX B6 V3, fonte Yaxun e multímetro; bateria LiPo 2S inspecionada, balanceada e carregada a 8,40 V | S | S | Issue #201 concluída |
 | 2.2 | | | | | | | | | |
 | 2.3 | | | | | | | | | |
 | 2.4 | | | | | | | | | |
