@@ -14,7 +14,74 @@
   gap: 12px;
 }
 
+.historico__acoes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.historico__recarregar {
+  padding: 6px 12px;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: 6px;
+  color: var(--cor-texto-suave);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.historico__recarregar:hover:not(:disabled) {
+  background: var(--neutro-fundo);
+  border-color: var(--neutro-texto);
+  color: var(--cor-texto);
+}
+
+.historico__recarregar:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .historico__contagem {
   color: var(--cor-texto-suave);
   font-size: 12px;
+}
+
+.historico__erro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--erro-fundo);
+  border: 1px solid var(--erro-borda);
+  border-radius: 8px;
+  color: var(--erro-texto);
+  font-size: 13px;
+}
+
+.historico__erro-botao {
+  background: transparent;
+  border: 1px solid var(--erro-borda);
+  border-radius: 4px;
+  color: var(--erro-texto);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.historico__erro-botao:hover {
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.historico__carregando {
+  padding: 48px;
+  text-align: center;
+  color: var(--cor-texto-suave);
+  border: 1px dashed var(--cor-borda);
+  border-radius: 8px;
 }

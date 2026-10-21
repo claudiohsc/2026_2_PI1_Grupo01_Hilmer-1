@@ -63,7 +63,7 @@ src/frontend/
     ├── componentes/           # Cabecalho, GradeLabirinto, CartaoMetrica, BadgeDesafio,
     │                          # GraficoVelocidade, FiltroLabirinto, TabelaHistorico (+ .css)
     ├── paginas/               # TelaAoVivo (Frames 01–03) e TelaHistorico (Frame 04)
-    ├── hooks/                 # useLabirintos (leitura no Supabase) e useReproducaoCorrida
+    ├── hooks/                 # useLabirintos, useCorridas (leitura no Supabase) e useReproducaoCorrida
     ├── lib/                   # supabase.ts (cliente), formatacao.ts, labirinto.ts
     └── dados/                 # Dados de exemplo: labirintos, corrida e histórico
 ```
@@ -84,7 +84,7 @@ Ao clicar em `INICIAR CORRIDA`, a corrida de exemplo é reproduzida 4× mais rá
 
 ### Histórico de Consultas (Frame 04 e filtros M1–M3)
 
-Tabela com Data/Hora, Labirinto, Tentativa (com a nota: 1ª = 10, 2ª = 7,5, 3ª = 5), Tempo final, Velocidade média, Bateria e Status, da corrida mais recente para a mais antiga, com o filtro `Todos os Labirintos` / `Labirinto 1 (4×4)` / `Labirinto 2 (8×4)` / `Labirinto 3 (12×4)`.
+Tabela integrada ao banco de dados via Supabase (`supabase-js`), consultando as corridas reais com Data/Hora, Labirinto, Tentativa (com a nota: 1ª = 10, 2ª = 7,5, 3ª = 5), Tempo final, Velocidade média, Bateria e Status, ordenadas da corrida mais recente para a mais antiga (`data_hora_inicio` decrescente). Suporta filtro por labirinto (`Todos os Labirintos` / `Labirinto 1 (4×4)` / `Labirinto 2 (8×4)` / `Labirinto 3 (12×4)`), atualização sob demanda e tratamento de estado vazio.
 
 ---
 

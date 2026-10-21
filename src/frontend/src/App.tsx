@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Cabecalho } from './componentes/Cabecalho';
 import { gerarCorridaExemplo } from './dados/corridaExemplo';
-import { CORRIDAS_EXEMPLO } from './dados/historicoExemplo';
 import { LABIRINTOS_EXEMPLO } from './dados/labirintosExemplo';
 import { type EstadoConexao, useLabirintos } from './hooks/useLabirintos';
 import { useReproducaoCorrida } from './hooks/useReproducaoCorrida';
@@ -68,7 +67,7 @@ export function App() {
             aoResetar={resetar}
           />
         ) : (
-          <TelaHistorico corridas={CORRIDAS_EXEMPLO} labirintos={labirintos} />
+          <TelaHistorico labirintos={labirintos} />
         )}
       </main>
 

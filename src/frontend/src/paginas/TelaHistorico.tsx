@@ -1,20 +1,27 @@
 import { useState } from 'react';
 import { FiltroLabirinto, type Filtro } from '../componentes/FiltroLabirinto';
 import { TabelaHistorico } from '../componentes/TabelaHistorico';
+import { useCorridas } from '../hooks/useCorridas';
 import type { Corrida, Labirinto } from '../tipos';
 import './TelaHistorico.css';
 
 interface TelaHistoricoProps {
-  corridas: Corrida[];
+  corridas?: Corrida[];
   labirintos: Labirinto[];
 }
 
 /**
  * Tela "Histórico de Consultas" (Frame 04 e filtros M1–M3; HUs 10 e 15): todas as
  * corridas, das mais recentes para as mais antigas, com filtro por labirinto.
+ *
+ * Consulta dados reais da tabela `corridas` no Supabase via `useCorridas` (HU-10 / Issue #235).
  */
-export function TelaHistorico({ corridas, labirintos }: TelaHistoricoProps) {
+export function TelaHistorico({ corridas: corridasProp, labirintos }: TelaHistoricoProps) {
   const [filtro, setFiltro] = useState<Filtro>('todos');
+  const hookCorridas = useCorridas();
+
+  const corridas = corridasProp ?? hookCorridas.corridas;
+  const { carregando, erro, recarregar } = hookCorridas;
 
   const idsFiltrados =
     filtro === 'todos' ? null : new Set(labirintos.filter((l) => l.tipo === filtro).map((l) => l.id));
@@ -26,11 +33,41 @@ export function TelaHistorico({ corridas, labirintos }: TelaHistoricoProps) {
     <section className="historico cartao" aria-label="Histórico de corridas">
       <div className="historico__topo">
         <FiltroLabirinto valor={filtro} aoMudar={setFiltro} />
-        <span className="historico__contagem">
-          {visiveis.length} {visiveis.length === 1 ? 'corrida' : 'corridas'}
-        </span>
+        <div className="historico__acoes">
+          {!corridasProp && (
+            <button
+              type="button"
+              className="historico__recarregar"
+              onClick={() => void recarregar()}
+              disabled={carregando}
+              title="Atualizar histórico de corridas do banco de dados"
+            >
+              {carregando ? 'Atualizando…' : 'Atualizar'}
+            </button>
+          )}
+          <span className="historico__contagem">
+            {visiveis.length} {visiveis.length === 1 ? 'corrida' : 'corridas'}
+          </span>
+        </div>
       </div>
-      <TabelaHistorico corridas={visiveis} labirintos={labirintos} />
+
+      {erro && (
+        <div className="historico__erro" role="alert">
+          <span>{erro}</span>
+          <button type="button" onClick={() => void recarregar()} className="historico__erro-botao">
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
+      {carregando && corridas.length === 0 ? (
+        <div className="historico__carregando">
+          <p>Carregando histórico do banco de dados…</p>
+        </div>
+      ) : erro && corridas.length === 0 ? null : (
+        // Com erro e sem corridas, só o alerta aparece: "Nenhuma corrida registrada" seria enganoso.
+        <TabelaHistorico corridas={visiveis} labirintos={labirintos} filtroAtivo={filtro !== 'todos'} />
+      )}
     </section>
   );
 }
