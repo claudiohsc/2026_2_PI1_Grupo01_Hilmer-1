@@ -17,21 +17,22 @@ src/firmware/
 | Pasta em `lib/` | Camada | O que entra |
 |---|---|---|
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
-| `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar` e, nos próximos épicos, encoders e motores) |
+| `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar`, `IEncoder` e, nos próximos épicos, motores) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` a partir das distâncias do LiDAR |
+| `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula), atualização a partir das leituras classificadas e armazenamento em memória |
 | `navegacao` | Navegação | Localização, decisão de movimento e detecção do objetivo |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
-| `comunicacao` | Comunicação | Pacotes de telemetria, serialização do mapa em JSON e *buffer* de reenvio |
-| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, sem hardware |
+| `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
+| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, e `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, sem hardware |
 | `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (LiDAR por UART, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
 
 - As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
 - O acesso ao hardware passa pelas interfaces de `hal`. Os drivers reais ficam em `drivers_esp32`, e `src/main.cpp` liga cada driver à sua interface.
-- Para testar a lógica sem sensor, use o `LidarSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência e `simularFalha(true)` faz o sensor parar de responder.
+- Para testar a lógica sem sensor, use o `LidarSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência, `simularFalha(true)` faz o sensor parar de responder e, com um `LabirintoSimulado`, `posicionar` faz a leitura vir da posição do robô (veja [Labirinto simulado](#labirinto-simulado)).
 - Evite alocação dinâmica na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo (`MAX_LINHAS_LABIRINTO` × `MAX_COLUNAS_LABIRINTO`) bastam.
 
 ## Mapa do labirinto
@@ -65,7 +66,31 @@ Mapa& paraNavegacao = armazenamentoMapa.mapa();                  // lê e regist
 const Mapa& paraTelemetria = armazenamentoMapa.mapa();           // só lê (pelo acesso const)
 ```
 
-O armazenamento não pode ser copiado, e o acesso `const` impede que a telemetria altere o mapa; as duas regras são conferidas em tempo de compilação. Medido no ESP32-C3, o objeto ocupa **196 bytes** de RAM estática (`.bss`): 195 do mapa e 1 do indicador de corrida.
+O armazenamento não pode ser copiado, e o acesso `const` impede que a telemetria altere o mapa; as duas regras são conferidas em tempo de compilação.
+
+#### Mapa final da corrida
+
+Ao alcançar a célula objetivo, a navegação chama `congelarMapa()`. O armazenamento copia o mapa da corrida para um segundo `Mapa`, o **mapa final**, que a partir daí só é lido: a navegação pode continuar registrando paredes no mapa da corrida (por exemplo, no caminho de volta) sem mudar o resultado ([#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180), HU-04).
+
+```cpp
+if (chegouAoObjetivo) {
+  armazenamentoMapa.congelarMapa();  // true na primeira vez; false se já estava congelado
+}
+
+static char json[TAMANHO_MAX_JSON_MAPA + 1];
+size_t tamanho = MapaJson::serializarFinal(armazenamentoMapa, json, sizeof(json));  // 0 se ainda não congelou
+```
+
+| Regra | Comportamento |
+|---|---|
+| Congelar antes de `iniciarCorrida()` | Recusado: `congelarMapa()` devolve `false` |
+| Congelar de novo | Recusado: devolve `false`, e o mapa final continua o da primeira vez |
+| `mapaFinal()` | `nullptr` enquanto não congelou; depois, o mapa final, só para leitura |
+| Escritas depois de congelar | Mudam só o mapa da corrida (`mapa()`); o mapa final e o JSON dele não mudam |
+| Nova corrida | `iniciarCorrida()` destrava o congelamento, e `mapaFinal()` volta a ser `nullptr` |
+| `serializarFinal()` | O mesmo JSON de `serializar()` (formato da [#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)), mas do mapa final; devolve `0` e deixa a string vazia se o mapa não foi congelado ou se o buffer não comporta o JSON |
+
+**Memória.** Com o mapa final, o objeto passou de 196 para **392 bytes** (`sizeof` no computador): dois mapas de 195 bytes e os dois indicadores, de corrida iniciada e de mapa congelado. O limite do teste `test_armazenamento_ocupa_pouca_memoria` subiu de 256 para 512 bytes. Antes do mapa final, a medida no ESP32-C3 era de 196 bytes de RAM estática (`.bss`), igual ao `sizeof`.
 
 ## Atualização do mapa
 
@@ -87,6 +112,28 @@ ResultadoAtualizacao res = AtualizadorMapa::atualizar(mapa, pose, classificador,
 | `Desconhecido` | Leituras desconhecidas não alteram o mapa e retornam `Invalida` |
 | Conflitos | Se uma leitura contradiz o mapa, `temConflito` é marcado como `true`, retorna `Conflito` e o valor antigo do mapa é preservado; a política de navegação fica com quem chama (#188) |
 | Pose inválida | Coordenadas fora dos limites do mapa retornam `Invalida` para todas as direções |
+
+## Odometria
+
+A `Odometria` (`lib/navegacao`) estima a pose do robô (célula e direção) pela odometria diferencial dos encoders: a diferença entre as rodas gira a direção, e a média avança o robô na direção atual. A arquitetura não tem IMU. Não depende do Arduino e só usa inteiros.
+
+```cpp
+Odometria odometria;                              // parte em (0, 0), virada para o Norte
+odometria.atualizar(encoderEsq, encoderDir);      // a cada ciclo, com os dois IEncoder
+Pose pose = odometria.pose();                     // célula e direção
+char letra = letraDaDirecao(pose.direcao);        // 'N', 'L', 'S' ou 'O', como no banco
+```
+
+| Regra | Comportamento |
+|---|---|
+| Giro | `contagem esquerda − contagem direita` dividida por `pulsosDiferenciaisPor90Graus`, arredondada para o múltiplo de 90° mais próximo; só muda a direção depois de 45° |
+| Avanço | Média das duas rodas, na direção atual; a célula muda ao cruzar a parede, a meia célula do centro |
+| Giro no lugar | Não muda a célula |
+| Fora da malha | A célula fica limitada a 0 e 255, e `posicaoValida()` devolve `false` |
+| Reinício | `reiniciar(pose, contagemEsquerda, contagemDireita)` define a pose e a referência das contagens |
+| Parâmetros | `ConfiguracaoOdometria.h`: 251 µm por pulso (roda de 32 mm, 400 pulsos por volta) e **625 pulsos por 90° (provisório)**, a calibrar na bancada |
+
+No `main.cpp`, a tarefa de navegação atualiza a odometria a cada 10 ms, e a telemetria acrescenta `linha`, `coluna`, `orientacao` e `pose_valida` à linha de JSON dos encoders.
 
 ## Serialização do mapa em JSON
 
@@ -114,6 +161,33 @@ Os nomes dos campos das células são os das colunas da tabela `mapa_celulas` do
 | Buffer | Do chamador, de tamanho fixo; a ArduinoJson só usa memória dinâmica durante a conversão, liberada ao final |
 | `TAMANHO_MAX_JSON_MAPA` (5.100 bytes) | Pior caso: um 12×4 com as 48 células conhecidas e todas as paredes internas `Livre` (`false` ocupa mais caracteres que `true` ou `null`; o perímetro continua `true`). Maior que a pilha das tarefas (4.096 bytes), por isso precisa ser `static` ou global |
 | Capacidade insuficiente, ou `saida` nulo/capacidade zero | Devolve `0` e deixa `saida` com string vazia, sem escrever além da capacidade informada |
+
+## Labirinto simulado
+
+O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes conhecidas. Com ele, o `LidarSimulado` devolve o que o sensor real veria na posição do robô, sem digitar leituras à mão. Serve para testar a classificação de paredes e a atualização do mapa num labirinto inteiro.
+
+**Formato do texto.** O labirinto é escrito em ASCII: cada célula ocupa 4 colunas e 2 linhas de texto, `+` marca os cantos, `---` uma parede horizontal, `|` uma parede vertical e espaço é passagem livre. A primeira linha é a borda Norte e a partida (0, 0) é a célula do canto inferior esquerdo, como no `Mapa`. Cada parede aparece uma única vez, então as duas células vizinhas sempre concordam. Há um exemplo de cada tamanho (4×4, 8×4 e 12×4) em `test/test_labirinto_simulado/LabirintosExemplo.h`.
+
+```cpp
+LabirintoSimulado labirinto;
+labirinto.carregar(exemplos::LABIRINTO_4X4);   // ResultadoCarga::Carregado
+labirinto.temParede({0, 0}, Direcao::Leste);   // true
+
+LidarSimulado lidar;
+lidar.usarLabirinto(labirinto);                // o labirinto precisa continuar vivo
+lidar.posicionar({{0, 0}, Direcao::Norte});
+DistanciasLaterais d;
+lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esquerda, direita, em mm)
+```
+
+**Distâncias.** O robô fica no centro da célula: a parede da própria célula está a 90 mm e cada célula livre no caminho soma 180 mm. Com o robô virado para Norte em (0, 0) do 4×4 há três células livres à frente, ou seja, 90 + 3 × 180 = 630 mm.
+
+| Operação | O que faz |
+|---|---|
+| `carregar(texto)` | Lê o labirinto. Se o texto for inválido, devolve o motivo (`TamanhoInvalido`, `CaractereInvalido`, `ParedeIncompleta` ou `PerimetroAberto`) e mantém o labirinto anterior |
+| `temParede(celula, direcao)` | `true` se há parede naquele lado; célula fora do labirinto conta como parede |
+| `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
+| `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
 
 ## Instalação
 

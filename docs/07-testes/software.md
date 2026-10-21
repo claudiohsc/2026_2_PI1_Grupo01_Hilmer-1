@@ -611,3 +611,711 @@ O formato foi confirmado com a equipe do dashboard e do banco antes da integraç
 #### Pendências desta etapa
 
 - Testar o envio de fato da lista de células à tabela `mapa_celulas` (via PostgREST, com o `corrida_id` acrescentado), que entra com a telemetria (Épico 03).
+
+---
+
+### Sprint 3 · Mapa final serializado
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#180 Mapa final serializado](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180) |
+| História de usuário | HU-04 · Armazenamento local ([#38](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/38)), RF04 |
+| Código testado | `src/firmware` (branch `feat/180-mapa-final-serializado`, PR [#330](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/330), na `main` desde 16/10/2026) |
+| Data da execução | 16/10/2026 |
+| Executado por | Eduardo Viana |
+| Documentação do código | [Firmware: mapa final da corrida](../04-projeto-conceitual/firmware.md#mapeamento-mapa-final-da-corrida) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 24.04.5 LTS, kernel 7.0) |
+| PlatformIO Core | 6.2.0 |
+| Plataforma de testes no computador | native 1.2.1 |
+| Framework de testes | Unity 2.6.1 |
+| ArduinoJson | 7.4.2 |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/mapeamento/src/ArmazenamentoMapa.h/.cpp` | `congelarMapa()`, `mapaCongelado()` e `mapaFinal()`; o mapa final é uma cópia (`mapaFinal_`) feita no congelamento, e `iniciarCorrida()` destrava o congelamento |
+| `lib/comunicacao/src/MapaJson.h/.cpp` | `serializarFinal()`, que serializa o mapa final no formato da [#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178) e devolve `0` se o mapa não foi congelado |
+| `test/test_mapa_final/test_mapa_final.cpp` | Suíte nova, um caso por critério de aceite e um de isolamento |
+| `test/test_armazenamento_mapa/test_armazenamento_mapa.cpp` | Caso novo `test_congelamento_do_mapa`; o limite de memória subiu de 256 para 512 bytes, porque o objeto agora guarda dois mapas (392 bytes) |
+
+#### Testes unitários e de integração (ambiente native)
+
+Comando executado em `src/firmware`:
+
+```bash
+pio test -e native -f test_mapa_final -f test_armazenamento_mapa
+```
+
+| Suíte | Casos | Resultado | Duração |
+| :--- | :--- | :--- | :--- |
+| `test_mapa_final` | 4 | **4 aprovados** | 13,14 s |
+| `test_armazenamento_mapa` | 10 | **10 aprovados** | 1,29 s |
+
+A suíte completa com cobertura (`pio test -e native_cobertura`, o mesmo comando do CI) também foi executada: **142 casos, 142 aprovados**, e o `gcovr` mediu **99%** de cobertura das linhas de `lib/` (557 de 561), acima da meta de 80%.
+
+A duração de `test_mapa_final` inclui a compilação na primeira execução, quando o PlatformIO também baixou a plataforma `native`, o Unity e o ArduinoJson.
+
+---
+
+#### Casos de teste
+
+| Caso de teste | O que verifica | Critério da #180 | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_congelamento_ao_sinalizar_objetivo` | Antes da corrida não há mapa final; ao sinalizar o objetivo, `congelarMapa()` congela uma única vez (a segunda chamada devolve `false`) e o mapa final guarda as paredes descobertas | 1 | Aprovado |
+| `test_serializacao_mapa_final_formato_5_3_3` | `serializarFinal` devolve `0` e string vazia antes do congelamento; depois, gera JSON válido com `dimensao`, `linhas`, `colunas` e as 16 células do 4×4, com os campos `parede_*`; com buffer de 32 bytes devolve `0` | 2 | Aprovado |
+| `test_mapa_final_testado_no_labirinto_simulado` | Com o `LabirintoSimulado` 4×4 e o `LidarSimulado`, o robô vai da partida (0, 0) ao objetivo (3, 3) atualizando o mapa sem conflito, congela ao chegar e o JSON do mapa final traz as paredes da partida e do objetivo | 3 | Aprovado |
+| `test_mapa_final_permanece_inalterado_apos_novos_registros` | Uma parede registrada depois do congelamento aparece no mapa da corrida e no JSON de `serializar()`, mas o mapa final e o JSON de `serializarFinal()` continuam idênticos | 1 | Aprovado |
+| `test_congelamento_do_mapa` (`test_armazenamento_mapa`) | Ciclo de vida completo: recusa sem corrida, recusa do segundo congelamento, isolamento da cópia e destrave com `iniciarCorrida()` | 1 | Aprovado |
+| `test_armazenamento_ocupa_pouca_memoria` (`test_armazenamento_mapa`) | `sizeof(ArmazenamentoMapa)` é de no máximo 512 bytes (392 com os dois mapas) | — | Aprovado |
+
+---
+
+#### Saída do PlatformIO
+
+```text
+Processing test_mapa_final in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_mapa_final/test_mapa_final.cpp:264: test_congelamento_ao_sinalizar_objetivo	[PASSED]
+test/test_mapa_final/test_mapa_final.cpp:265: test_serializacao_mapa_final_formato_5_3_3	[PASSED]
+test/test_mapa_final/test_mapa_final.cpp:266: test_mapa_final_testado_no_labirinto_simulado[PASSED]
+test/test_mapa_final/test_mapa_final.cpp:267: test_mapa_final_permanece_inalterado_apos_novos_registros	[PASSED]
+-------------- native:test_mapa_final [PASSED] Took 13.14 seconds --------------
+
+Processing test_armazenamento_mapa in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:281: test_comeca_sem_corrida_iniciada	[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:282: test_corrida_12x4_comporta_todas_as_paredes	[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:283: test_mapa_preservado_apos_reiniciar_navegacao	[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:284: test_mapa_preservado_apos_varios_reinicios	[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:285: test_navegacao_recriada_enxerga_paredes_anteriores	[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:286: test_mapa_e_sempre_o_mesmo_objeto	[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:287: test_nova_corrida_zera_o_mapa[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:288: test_nova_corrida_pode_trocar_o_tamanho	[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:289: test_armazenamento_ocupa_pouca_memoria	[PASSED]
+test/test_armazenamento_mapa/test_armazenamento_mapa.cpp:290: test_congelamento_do_mapa	[PASSED]
+---------- native:test_armazenamento_mapa [PASSED] Took 1.29 seconds ----------
+
+=================================== SUMMARY ===================================
+Environment    Test                     Status    Duration
+-------------  -----------------------  --------  ------------
+native         test_mapa_final          PASSED    00:00:13.143
+native         test_armazenamento_mapa  PASSED    00:00:01.287
+================= 14 test cases: 14 succeeded in 00:00:14.430 =================
+```
+
+#### Pendências desta etapa
+
+- A navegação (Épico 02) ainda precisa chamar `congelarMapa()` quando detectar a célula objetivo; por enquanto o objetivo é sinalizado pelos próprios testes.
+- O envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), entra com a telemetria (Épico 03).
+- Medir no ESP32-C3 (`pio run -e esp32c3`) a RAM estática do `ArmazenamentoMapa` com o mapa final; no computador, o `sizeof` é de 392 bytes.
+
+---
+
+### Sprint 4 · Odometria
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#187 Orientação e posição na malha](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187) |
+| História de usuário | HU-05 · Estimar a posição do robô por odometria ([#41](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)), RF05 |
+| Código testado | `src/firmware` (branch `feat/187-odometria`) |
+| Data da execução | 19/10/2026 |
+| Executado por | Cláudio Henrique |
+| Documentação do código | [Firmware: odometria](../04-projeto-conceitual/firmware.md#navegacao-odometria) |
+
+Esta etapa registra a lógica da odometria e a ligação no `main.cpp`. A calibração do giro e os testes de bancada (critério de bancada da tarefa) dependem do robô montado e estão na seção de pendências.
+
+**Ambiente de execução:** macOS, PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1 e `gcovr` 8.6.
+
+#### Testes da odometria (`test_odometria`)
+
+```bash
+pio test -e native -f test_odometria
+```
+
+Nos testes, 1 pulso vale 250 µm e 400 pulsos de diferença entre as rodas valem 90°, então uma célula de 18 cm são 720 pulsos por roda. Os valores não dependem dos parâmetros provisórios.
+
+| Grupo | Casos | O que verificam |
+|---|:-:|---|
+| Estado inicial | 3 | Pose inicial (0, 0) virada para o Norte; configuração padrão; sem movimento a pose não muda |
+| Avanço | 5 | Uma e três células para o Norte; a célula muda ao cruzar a parede; marcha à ré; atualizar de uma vez ou em passos dá o mesmo resultado |
+| Giros | 8 | 90° nos dois sentidos, 180° nos dois sentidos, quatro giros voltando ao Norte, 270°, giro no lugar sem mudar a célula, o limite de 45°, e roda um pouco mais rápida em linha reta sem girar |
+| Percursos | 5 | Em L, em U, retorno à partida, serpentina completa no 12×4 e corredor de 11 células com erro de 1% em uma roda |
+| Reinício e encoders | 3 | `reiniciar` com referência nova, leitura de dois `EncoderSimulado` e `zerar` seguido de `reiniciar` |
+| Fora da malha | 4 | Posição negativa, acima de 255, volta para dentro e contagens extremas |
+| Letra da direção (`test_nucleo`) | 1 | `N`, `L`, `S` e `O` como na coluna `orientacao` do banco |
+
+**28 casos aprovados** na odometria e 9 em `test_nucleo`.
+
+Para confirmar que os testes detectam falhas, o código foi alterado de propósito e restaurado em seguida: com o sinal do giro invertido, 9 casos falharam; sem arredondar ao múltiplo de 90° mais próximo, 1; usando só a roda esquerda no avanço, 1; e com o Norte invertido, 14.
+
+#### Suíte completa com cobertura (o mesmo comando do CI)
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa | **197 aprovados, 0 falhas** |
+| Cobertura das linhas de `lib/` | **99%** (798 de 804), acima da meta de 80% |
+| Cobertura de `Odometria.cpp` e `Odometria.h` | 100% |
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Compilação | **Sucesso**, sem avisos |
+| Uso de RAM | 4,4% (14.540 de 327.680 bytes) |
+| Uso de Flash | 19,5% (255.084 de 1.310.720 bytes) |
+
+#### Pendências desta etapa
+
+- **Calibrar o giro na bancada:** girar o robô 90° no lugar e ler `contagem esquerda − contagem direita`; trocar o valor provisório de 625 pulsos por 90° em `ConfiguracaoOdometria.h`.
+- **Testes de bancada da #187:** giros de 90° e 180° e um percurso de 3 células, com o erro registrado, usando o `main.cpp` (a linha de JSON traz a pose).
+- Registrar aqui a execução final de bancada.
+
+---
+
+### Sprint 4 · Centralização no corredor e parada frontal
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#191 Centralização no corredor e parada frontal](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191) |
+| História de usuário | HU-12 · Tratamento de colisões ([#182](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/182)), RF-12 |
+| Código testado | `src/firmware` (branch `feat/191-centralizacao-parada-frontal`, PR [#359](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/359)) |
+| Data da execução | 19/10/2026 |
+| Executado por | Eduardo Viana |
+| Documentação do código | [Firmware: atuação](../04-projeto-conceitual/firmware.md#atuacao-centralizacao-no-corredor-e-parada-frontal) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 24.04.5 LTS, kernel 7.0) |
+| PlatformIO Core | 6.2.0 |
+| Plataforma de testes no computador | native 1.2.1 |
+| Framework de testes | Unity 2.6.1 |
+| Plataforma da placa | Espressif 32 7.1.3 (ESP32-C3-DevKitM-1), `framework-arduinoespressif32` 4.20017 (Arduino-ESP32 2.0.17) |
+
+#### Testes unitários e de integração (ambiente native)
+
+Comando executado em `src/firmware`:
+
+```bash
+pio test -e native -f test_controle_movimento
+```
+
+| Suíte | Casos | Resultado | Duração |
+| :--- | :--- | :--- | :--- |
+| `test_controle_movimento` | 32 | **32 aprovados** | 1,51 s |
+
+---
+
+#### Casos de teste
+
+A coluna "Critério" se refere aos critérios de aceite da HU-12: (1) correção da trajetória pelas distâncias laterais, (2) redução de velocidade e parada antes da parede frontal e (3) nenhum contato do chassi com as paredes. Os casos sem critério testam a interface e o driver dos motores.
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_centralizado_nao_corrige` | Centralizado (84 mm de cada lado), a correção é zero | 1 | Aprovado |
+| `test_deslocado_para_a_direita_vira_para_a_esquerda` | 10 mm para a direita: correção +20 (virar para a esquerda) | 1 | Aprovado |
+| `test_deslocado_para_a_esquerda_vira_para_a_direita` | 10 mm para a esquerda: correção −20 | 1 | Aprovado |
+| `test_so_parede_esquerda_usa_a_distancia_alvo` | Só a parede da esquerda: erro = leitura − 84 mm | 1 | Aprovado |
+| `test_so_parede_direita_usa_a_distancia_alvo` | Só a parede da direita: erro = 84 mm − leitura | 1 | Aprovado |
+| `test_sem_parede_lateral_nao_corrige` | Sem parede ao lado, não corrige e zera a derivada | 1 | Aprovado |
+| `test_limiar_de_parede_lateral` | 180 mm ainda conta como parede; 181 mm, não | 1 | Aprovado |
+| `test_derivada_amortece_a_aproximacao_e_o_retorno` | A derivada reforça a correção ao se aproximar da parede e a suaviza ao voltar | 1 | Aprovado |
+| `test_troca_de_modo_zera_a_derivada` | Quando uma parede lateral acaba, a derivada recomeça do zero | 1 | Aprovado |
+| `test_dt_zero_nao_atualiza_a_derivada` | Com intervalo zero, a derivada não é atualizada | 1 | Aprovado |
+| `test_correcao_limitada` | A correção não passa do limite configurado, nos dois sentidos | 1 | Aprovado |
+| `test_caminho_livre_usa_a_potencia_de_cruzeiro` | Caminho livre (e o início da rampa, 264 mm): potência 400 | 2 | Aprovado |
+| `test_rampa_reduz_a_potencia_ate_a_minima` | Entre 264 e 84 mm, a potência cai sem subir até a mínima (150) | 2 | Aprovado |
+| `test_para_na_distancia_de_parada` | A 84 mm ou menos, a potência é zero | 2 | Aprovado |
+| `test_configuracao_sem_rampa` | Sem rampa configurada, cruzeiro até parar | 2 | Aprovado |
+| `test_movimento_combina_base_e_correcao` | Potência 380 na esquerda e 420 na direita para 10 mm à direita | 1 | Aprovado |
+| `test_correcao_limitada_pela_potencia_base` | Perto da parede, a correção fica em 60% da base e nenhuma roda gira para trás | 1 | Aprovado |
+| `test_parada_trava_ate_reiniciar` | Parado na parede, continua parado até `reiniciar()` | 2 | Aprovado |
+| `test_sem_leitura_segue_reto_e_depois_para` | Sem LiDAR, segue reto na mínima e freia depois de 500 ms | 2 | Aprovado |
+| `test_leitura_valida_zera_o_tempo_sem_leitura` | Uma leitura válida zera a contagem do tempo sem leitura | 2 | Aprovado |
+| `test_atualizar_le_o_lidar_e_comanda_os_motores` | Lê o `LidarSimulado` e comanda os `MotoresSimulados`, com freio na parada | 2 | Aprovado |
+| `test_potencia_limitada_a_faixa_permitida` | Potência fora de ±1000 é limitada | — | Aprovado |
+| `test_drv8833_potencia_positiva_avanca` | Potência 500: PWM em IN1 (511 de 1023) e IN2 em zero | — | Aprovado |
+| `test_drv8833_potencia_negativa_recua` | Potência −500: IN1 em zero e PWM em IN2 | — | Aprovado |
+| `test_drv8833_potencia_zero_deixa_a_roda_livre` | Potência zero: IN1 e IN2 em zero | — | Aprovado |
+| `test_drv8833_motor_invertido_troca_o_sentido` | Motor espelhado: o mesmo comando sai em IN2 | — | Aprovado |
+| `test_drv8833_potencia_limitada_a_100_por_cento` | Acima de 100%, o duty fica em 1023 | — | Aprovado |
+| `test_drv8833_freio_liga_as_duas_entradas` | Freio: IN1 e IN2 em nível alto | — | Aprovado |
+| `test_corredor_saindo_fora_do_centro_nunca_encosta` | Simulação: saindo a ±10 e ±15 mm do centro, volta ao centro sem encostar e para | 3 | Aprovado |
+| `test_corredor_saindo_torto_nunca_encosta` | Simulação: saindo torto (±3°), centralizado e a 12 mm do centro, sem encostar | 3 | Aprovado |
+| `test_corredor_com_ruido_e_parametros_diferentes_nunca_encosta` | Simulação: ruído de ±6 mm, 3 velocidades e 3 bitolas, sem encostar | 3 | Aprovado |
+| `test_parede_lateral_que_termina_no_meio_do_corredor` | Simulação: a parede da esquerda acaba após uma célula; segue pela direita | 3 | Aprovado |
+
+#### Simulação do corredor (critério 3, antes da bancada)
+
+Os quatro últimos casos simulam o robô num corredor reto de 3 células com parede frontal. O modelo usa tração diferencial, o LiDAR no centro do robô lendo a 10 Hz e o movimento integrado a cada 10 ms. Cada caso confere que o robô para, que o chassi nunca fica a menos de 3 mm de uma parede lateral, que para a mais de 20 mm da parede da frente e que termina a menos de 6 mm do centro. Os valores provisórios são 0,3 mm/s por unidade de potência e 100 mm entre as rodas.
+
+| Cenário | Menor folga lateral | Folga frontal ao parar | Deslocamento final |
+| :--- | ---: | ---: | ---: |
+| Saindo 10 mm fora do centro (cada lado) | 12,9 mm | 28,9 mm | 0,4 mm |
+| Saindo 15 mm fora do centro (cada lado; folga inicial de 9 mm) | 7,4 mm | 29,3 mm | 0,5 mm |
+| Centralizado, torto 3° (cada lado) | 19,7 mm | 29,4 mm | 1,0 mm |
+| 12 mm fora do centro e torto 3° | 9,4 mm | 29,8 a 30,1 mm | 0,7 mm |
+| 15 mm fora, torto 3°, ruído de ±6 mm, velocidades de 0,2 a 0,45 mm/s por unidade e bitolas de 80 a 120 mm (9 combinações) | 6,1 mm | 26,5 a 33,5 mm | 1,5 mm |
+| Parede da esquerda termina depois da primeira célula (8 mm fora, ruído de ±3 mm) | 15,0 mm | 34,2 mm | 0,5 mm |
+
+A simulação não substitui o teste de bancada: ela não modela patinação das rodas, atraso dos motores nem o tempo de resposta real do LiDAR. Serve para escolher os ganhos e para conferir que a lógica não leva o robô à parede.
+
+#### Verificação de detecção de falhas e cobertura
+
+Para conferir que os testes detectam erros, o código foi alterado de propósito, uma mudança por vez, e restaurado em seguida (compilado com g++ 13.3 e Unity 2.6.1):
+
+| Alteração no código | Casos que falharam |
+| :--- | ---: |
+| Sinal da correção invertido nas rodas | 7 |
+| Sem a parte derivativa | 5 |
+| Sem o limite da correção pela potência base | 1 |
+| Parada com `<` em vez de `<=` | 2 |
+| Sem o fail-safe de falta de leitura | 1 |
+| Erro com só a parede direita com o sinal trocado | 2 |
+
+Cobertura de linhas medida com `gcov` na mesma suíte: `ControladorCentralizacao.cpp` 100% (39 de 39), `PerfilParadaFrontal.cpp` 100% (12 de 12) e `ControleMovimento.cpp` 97,5% (39 de 40). A suíte completa do firmware, com o código da #191, tem 200 casos, todos aprovados.
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Compilação e geração do `firmware.bin`, com o `MotoresDrv8833` | **Sucesso** |
+| Uso de RAM | 4,4% (14 532 de 327 680 bytes) |
+| Uso de Flash | 19,9% (260 362 de 1 310 720 bytes) |
+
+```text
+RAM:   [          ]   4.4% (used 14532 bytes from 327680 bytes)
+Flash: [==        ]  19.9% (used 260362 bytes from 1310720 bytes)
+Building .pio/build/esp32c3/firmware.bin
+Successfully created esp32c3 image.
+============================== [SUCCESS] Took 123.91 seconds ==============================
+```
+
+---
+
+#### Saída do PlatformIO
+
+```text
+Processing test_controle_movimento in native environment
+-------------------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_controle_movimento/test_controle_movimento.cpp:456: test_centralizado_nao_corrige[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:457: test_deslocado_para_a_direita_vira_para_a_esquerda	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:458: test_deslocado_para_a_esquerda_vira_para_a_direita	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:459: test_so_parede_esquerda_usa_a_distancia_alvo	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:460: test_so_parede_direita_usa_a_distancia_alvo	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:461: test_sem_parede_lateral_nao_corrige	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:462: test_limiar_de_parede_lateral[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:463: test_derivada_amortece_a_aproximacao_e_o_retorno	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:464: test_troca_de_modo_zera_a_derivada	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:465: test_dt_zero_nao_atualiza_a_derivada	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:466: test_correcao_limitada	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:467: test_caminho_livre_usa_a_potencia_de_cruzeiro	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:468: test_rampa_reduz_a_potencia_ate_a_minima	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:469: test_para_na_distancia_de_parada	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:470: test_configuracao_sem_rampa	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:471: test_movimento_combina_base_e_correcao	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:472: test_correcao_limitada_pela_potencia_base	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:473: test_parada_trava_ate_reiniciar	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:474: test_sem_leitura_segue_reto_e_depois_para	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:475: test_leitura_valida_zera_o_tempo_sem_leitura	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:476: test_atualizar_le_o_lidar_e_comanda_os_motores	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:477: test_potencia_limitada_a_faixa_permitida	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:478: test_drv8833_potencia_positiva_avanca	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:479: test_drv8833_potencia_negativa_recua	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:480: test_drv8833_potencia_zero_deixa_a_roda_livre	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:481: test_drv8833_motor_invertido_troca_o_sentido	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:482: test_drv8833_potencia_limitada_a_100_por_cento	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:483: test_drv8833_freio_liga_as_duas_entradas	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:484: test_corredor_saindo_fora_do_centro_nunca_encosta	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:485: test_corredor_saindo_torto_nunca_encosta	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:486: test_corredor_com_ruido_e_parametros_diferentes_nunca_encosta	[PASSED]
+test/test_controle_movimento/test_controle_movimento.cpp:487: test_parede_lateral_que_termina_no_meio_do_corredor	[PASSED]
+---------------- native:test_controle_movimento [PASSED] Took 1.51 seconds ----------------
+
+========================================= SUMMARY =========================================
+Environment    Test                     Status    Duration
+-------------  -----------------------  --------  ------------
+native         test_controle_movimento  PASSED    00:00:01.515
+======================= 32 test cases: 32 succeeded in 00:00:01.515 =======================
+```
+
+#### Pendências desta etapa
+
+- **Critério 3 na bancada:** percorrer o labirinto de testes 4×4 sem contato do chassi com as paredes. Depende do chassi montado com motores e LiDAR e da pista. O roteiro está no PR [#359](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/359): sentido dos motores, zona morta, corredor reto saindo 1 e 1,5 cm do centro, medida da parada e vídeo.
+- **Confirmar na bancada os valores provisórios:** `potenciaMinima`, `potenciaCruzeiro`, os ganhos e a velocidade real por unidade de potência.
+- **Integração:** chamar `ControleMovimento::atualizar` na tarefa de navegação, junto com o LiDAR e a navegação ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)).
+
+---
+
+### Sprint 4 · Estrutura do frontend e layout do dashboard
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#230 Criar a estrutura do frontend (React + Vite) e o layout do dashboard](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230) |
+| História de usuário | HU-14 · Supervisionar a corrida pelo dashboard web ([#48](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/48)) |
+| Código testado | `src/frontend` (branch `feat/230-estrutura-frontend`, PR [#361](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/361)) |
+| Data da execução | 19/10/2026 |
+| Executado por | Eduardo Viana |
+| Documentação do código | [Software: implementação do frontend](../04-projeto-conceitual/software.md#implementacao-do-frontend) e [README do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/frontend) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Node.js e npm | Node.js instalado pelo nvm, npm 11.19.1 |
+| Ferramentas de build | Vite 6.4.4 e TypeScript 5 (`tsc --noEmit`) |
+| Bibliotecas | React 18.3, Recharts 2.15.4 e supabase-js 2 |
+| Banco | Projeto Supabase `pi1-micromouse`, lido com a chave `anon` |
+| Navegador | Navegador baseado em Chromium |
+| Sistema operacional | Linux (Ubuntu 24.04.5 LTS, kernel 7.0) |
+
+#### Instalação e build (critério 1)
+
+Comandos executados em `src/frontend`:
+
+```bash
+npm install
+cp .env.example .env.local   # preenchido com a URL e a chave anon do projeto
+npm run build
+npm run dev
+```
+
+- `npm install`: 118 pacotes, **0 vulnerabilidades**. O npm avisa que a linha 2.x do Recharts não recebe mais atualizações (veja as pendências).
+- `npm run build`: a checagem de tipos passou sem erros e o Vite gerou a pasta `dist/` sem avisos. O gráfico (Recharts) fica num arquivo à parte, carregado sob demanda, e nenhum arquivo passa de 500 kB.
+- `npm run dev`: servidor em `http://localhost:5173`, página carregada sem erros no console do navegador.
+
+```text
+> micromouse-dashboard@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v6.4.4 building for production...
+✓ 716 modules transformed.
+dist/index.html                              0.60 kB │ gzip:   0.37 kB
+dist/assets/index-D1oFPzN7.css               7.50 kB │ gzip:   2.18 kB
+dist/assets/index-CbxUmf35.js              390.33 kB │ gzip: 112.57 kB
+dist/assets/GraficoVelocidade-DlvwY1UI.js  395.18 kB │ gzip: 108.76 kB
+✓ built in 4.91s
+```
+
+#### Verificação das telas (critérios 2 a 7)
+
+Cada caso foi feito na página servida pelo `npm run dev`, clicando na interface e conferindo o texto e os elementos exibidos.
+
+| # | Caso | Critério | Esperado | Obtido | Resultado |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | Abrir a página só com `VITE_SUPABASE_URL` no `.env.local`, sem a chave | 2 | As telas funcionam com os dados de exemplo e o rodapé avisa que o Supabase não está configurado | Rodapé: "Supabase não configurado (crie o .env.local a partir do .env.example)" | **Aprovado** |
+| 2 | Abrir a página com as duas variáveis preenchidas | 2 | O app lê a tabela `labirintos` e o rodapé confirma | Rodapé: "Supabase conectado: labirintos lidos do banco"; seletor com Labirinto 1 · 4x4, Labirinto 2 · 8x4 e Labirinto 3 · 12x4 | **Aprovado** |
+| 3 | `git status` em `src/frontend` depois de criar o `.env.local` | 2 | O `.env.local` não aparece (está no `.gitignore`) | Só o `package-lock.json` aparece como novo | **Aprovado** |
+| 4 | Clicar nas abas do cabeçalho | 3 | Alternar entre "Telemetria ao Vivo" e "Histórico de Consultas"; o seletor e o badge só aparecem na tela ao vivo | Alterna; seletor e badge somem no histórico | **Aprovado** |
+| 5 | Abrir a tela ao vivo antes da largada (Frame 01) | 4 | Robô na largada, 100 %, 8.4V · 0 mA, 0.00 m/s, 00:00.000, "Tentativa 1 de 3 · Limite: 10:00", badge cinza `NÃO` e botão `INICIAR CORRIDA` | Como esperado | **Aprovado** |
+| 6 | Clicar em `INICIAR CORRIDA` (Frame 02) | 4 | Badge vermelho `NÃO (EM ANDAMENTO)`, botão `CORRIDA EM ANDAMENTO` travado, seletor travado, trajeto e paredes aparecendo, cards e gráfico atualizando | Como esperado; aos 17,6 s no 8x4: 97 %, 8.3V · 600 mA, média 0.12 m/s, pico 0.36 m/s | **Aprovado** |
+| 7 | Esperar a chegada ao objetivo (Frame 03) | 4 | Badge verde `SIM`, robô no objetivo, cronômetro congelado e nota da tentativa | 8x4: 00:38.220, "Concluído na Tentativa 1 · Nota 10", 96 %; 4x4: 00:09.731, "Nota 10" | **Aprovado** |
+| 8 | Clicar em `RESETAR / NOVA TENTATIVA` | 4 | Volta ao Frame 01, na tentativa seguinte | "Tentativa 2 de 3 · Limite: 10:00", 00:00.000, badge `NÃO` e botão `INICIAR CORRIDA` | **Aprovado** |
+| 9 | Trocar o labirinto no seletor | 4 | A malha muda de tamanho e a tentativa volta a 1 | Malha 4×4 desenhada; "Tentativa 1 de 3" ao voltar para o 8x4 | **Aprovado** |
+| 10 | Abrir o histórico (Frame 04) | 5 | Tabela com as colunas do protótipo, da corrida mais recente para a mais antiga | 5 corridas, de 16/10/2026 15:20 a 16/10/2026 14:02; tentativas com nota ("2ª Tentativa (Nota 7.5)") ou "Não concluída" | **Aprovado** |
+| 11 | Usar os filtros (M1, M2 e M3) | 5 | Só as corridas do labirinto escolhido | Todos: 5; 4×4: 2; 8×4: 1; 12×4: 2 | **Aprovado** |
+| 12 | Conferir o gráfico durante e depois da corrida | 6 | Gráfico do Recharts com a velocidade ao longo do tempo | Linha desenhada; eixo Y de 0.0 a 0.5 m/s, marcado de 0.1 em 0.1; título "Velocidade (m/s) × tempo (s)" | **Aprovado** |
+| 13 | Conferir o README | 7 | `src/frontend/README.md` com como rodar, variáveis, estrutura e telas | Presente | **Aprovado** |
+| 14 | Abrir a página numa janela estreita (cerca de 630 px) | - | Os cards descem para baixo do mapa e a tabela rola na horizontal | Como esperado | **Aprovado** |
+| 15 | Conferir os arquivos baixados pelo navegador antes e depois de `INICIAR CORRIDA` | 6 | O Recharts só é baixado quando o gráfico aparece | Antes do clique: nenhum arquivo do gráfico; depois: `GraficoVelocidade.tsx` e `recharts.js` | **Aprovado** |
+
+**15 de 15 casos aprovados.**
+
+#### Prints
+
+<figure markdown>
+
+![Tela ao vivo antes da largada, no labirinto 8x4](../figs/frontend-01-aguardando.png){ width="800" }
+
+<figcaption>
+
+**Figura.** Frame 01 · aguardando largada (labirinto 8x4). No rodapé, a confirmação da leitura no Supabase.
+
+</figcaption>
+
+</figure>
+
+<figure markdown>
+
+![Tela ao vivo com a corrida em andamento, no labirinto 8x4](../figs/frontend-02-em-execucao.png){ width="800" }
+
+<figcaption>
+
+**Figura.** Frame 02 · corrida em andamento (labirinto 8x4): trajeto, paredes já mapeadas, robô com a orientação, badge vermelho e botão travado.
+
+</figcaption>
+
+</figure>
+
+<figure markdown>
+
+![Tela ao vivo com o desafio concluído, no labirinto 8x4](../figs/frontend-03-concluido.png){ width="800" }
+
+<figcaption>
+
+**Figura.** Frame 03 · desafio concluído (labirinto 8x4): robô no objetivo, cronômetro congelado, nota da tentativa e badge verde.
+
+</figcaption>
+
+</figure>
+
+<figure markdown>
+
+![Tela de histórico com todas as corridas](../figs/frontend-04-historico.png){ width="800" }
+
+<figcaption>
+
+**Figura.** Frame 04 · histórico de consultas com o filtro "Todos os Labirintos".
+
+</figcaption>
+
+</figure>
+
+#### Pendências desta etapa
+
+- **Testes automatizados no frontend:** ainda não há testes unitários nem E2E. Os candidatos são Vitest para `lib/labirinto.ts` e `lib/formatacao.ts`, e Playwright para os casos 4 a 12 acima. Eles devem entrar junto com os dados reais (HUs 08, 10 e 15).
+- **Unidade de `corridas.consumo_bateria`:** precisa ser fechada na HU-09. Hoje o histórico assume % consumida.
+- **Percentual da bateria:** hoje é linear entre 6,6 V e 8,4 V. Pode passar a usar a tabela de SoC da [#139](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/139) na HU-08.
+- **Recharts:** migrar da 2.15 para a 3.x, já que a linha 2.x não recebe mais atualizações.
+
+---
+
+### Sprint 4 · Edge Function de corridas e RLS do banco
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefas | [#233 Registro e encerramento de corridas no banco](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233) e, nas verificações de RLS, [#228 Configurar o Supabase e criar o esquema do banco](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228) |
+| Histórias de usuário | HU-15 · Gestão de corridas ([#225](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/225)) e HU-09 · Persistência de dados e corridas ([#47](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/47)) |
+| Código testado | `src/backend` (branch `feat/233-edge-function-corridas`, PR [#334](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/334)) |
+| Data da execução | 18/10/2026 |
+| Executado por | Cláudio Henrique (testes automatizados) e Eduardo Viana (publicação e teste ponta a ponta) |
+| Documentação do código | [Software: escrita mediada por Edge Function](../04-projeto-conceitual/software.md#escrita-mediada-por-edge-function-corridas) e [README do backend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/backend) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Testes automatizados | Node 22.18 ou superior (`node --test`) e PGlite 0.5.10 (PostgreSQL em WebAssembly) |
+| Projeto Supabase | `pi1-micromouse`, o projeto da equipe, no plano gratuito |
+| Supabase CLI | 2.121.0 |
+| Cliente HTTP | curl 8.5.0 |
+| Sistema operacional | Linux (Ubuntu 24.04.5 LTS, kernel 7.0) |
+
+#### Testes automatizados (Node, sem Supabase)
+
+Comandos executados em `src/backend`:
+
+```bash
+npm install
+npm test
+```
+
+A suíte tem **42 casos, 42 aprovados**: validação dos corpos, comparação do token, roteamento da função com um banco falso, e as funções SQL e o RLS num PostgreSQL de verdade (PGlite), com os papéis `anon`, `authenticated` e `service_role` imitando os do Supabase. Esses testes não rodam o `index.ts`, que só liga o roteador ao servidor HTTP do Deno; por isso o teste ponta a ponta abaixo é feito no projeto Supabase de teste.
+
+#### Publicação no projeto de teste
+
+Comandos executados em `src/backend`, depois do `supabase login`. O valor do `DEVICE_TOKEN` não aparece aqui: ele foi gerado com `openssl rand -hex 24` e guardado fora do repositório.
+
+```bash
+supabase link --project-ref <ID-DO-PROJETO>
+supabase migration repair --status applied 20261014180000 20261014180500
+supabase db push
+supabase secrets set DEVICE_TOKEN=<valor guardado fora do Git>   # feito pelo painel, por um dono da organização
+supabase functions deploy corridas
+```
+
+- **Migrações:** as tabelas da [#228](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228) tinham sido criadas pelo SQL Editor, então o histórico de migrações do projeto estava vazio. As duas primeiras migrações foram marcadas como aplicadas com `supabase migration repair --status applied 20261014180000 20261014180500`, e o `supabase db push` aplicou só a `20261016120000_funcoes_corridas.sql`.
+- **Segredo:** o `DEVICE_TOKEN` foi cadastrado por um dono da organização no painel (*Edge Functions › Secrets*), porque o papel *Developer* não pode definir segredos.
+- **Publicação:** o `supabase functions deploy corridas` enviou os quatro arquivos da função (`index.ts`, `logica.ts`, `roteador.ts` e `_shared/autenticacao.ts`) sem precisar do Docker. O `index.ts` rodou no Deno do Supabase sem nenhuma correção: a importação do `supabase-js` e o caminho da rota funcionaram como no roteador testado.
+
+#### Teste ponta a ponta (curl)
+
+Cada caso é uma chamada real à função publicada ou à API REST do projeto de teste. Os casos 1 a 10 cobrem criação, encerramento e erros; os casos 11 a 14 cobrem a autenticação em duas camadas (gateway e `x-device-token`); e os casos 15 a 20 conferem, com a chave `anon`, a leitura liberada e a escrita bloqueada pelo RLS (#228).
+
+Executado com o script `teste-e2e-corridas.sh`, que faz cada chamada com `curl` e confere o status HTTP e o corpo da resposta. As chaves são lidas do terminal e não aparecem no relatório.
+
+| # | Caso | Esperado | Obtido | Detalhe | Resultado |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | Criar corrida no labirinto 4x4 | `201` | `201` | id 1, `numero_tentativa` 1, status `em_andamento` | **Aprovado** |
+| 2 | Criar corrida no labirinto 8x4 | `201` | `201` | id 2, `numero_tentativa` 1, status `em_andamento` | **Aprovado** |
+| 3 | Criar corrida no labirinto 12x4 | `201` | `201` | id 3, `numero_tentativa` 1, status `em_andamento` | **Aprovado** |
+| 4 | Segunda corrida no 4x4 recebe a próxima tentativa | `201` | `201` | `numero_tentativa` 2 (a anterior era 1) | **Aprovado** |
+| 5 | Encerrar a corrida 1 como `concluida` | `200` | `200` | status `concluida`, `data_hora_fim` 2026-10-19T01:59:35.001922+00:00, `tempo_final` 61.5 | **Aprovado** |
+| 6 | Encerrar a corrida 2 como `nao_concluida`, sem `tempo_final` | `200` | `200` | status `nao_concluida`, `data_hora_fim` 2026-10-19T01:59:35.558052+00:00, `tempo_final` calculado pelo banco: 2.459853 | **Aprovado** |
+| 7 | Repetir o encerramento da 1 com o mesmo status | `200` | `200` | mesma `data_hora_fim` do primeiro encerramento: sim | **Aprovado** |
+| 8 | Encerrar a 1 de novo com outro status | `409` | `409` | erro `corrida_ja_encerrada` | **Aprovado** |
+| 9 | Encerrar uma corrida que não existe | `404` | `404` | erro `corrida_inexistente` | **Aprovado** |
+| 10 | Criar corrida com labirinto inválido (`5x5`) | `400` | `400` | erro `corpo_invalido` | **Aprovado** |
+| 11 | Chamar sem chave e sem token | `401` | `401` | recusado pelo gateway (verificação de JWT) | **Aprovado** |
+| 12 | Chamar só com a chave anon, sem `x-device-token` | `401` | `401` | erro `nao_autorizado` (recusado pela função) | **Aprovado** |
+| 13 | Chamar com `x-device-token` errado | `401` | `401` | erro `nao_autorizado` | **Aprovado** |
+| 14 | Chamar só com o `x-device-token`, sem JWT | `401` | `401` | recusado pelo gateway: a verificação de JWT continua ativa | **Aprovado** |
+| 15 | Ler a corrida 1 pela API REST com a chave anon | `200` | `200` | status `concluida`, `data_hora_fim` 2026-10-19T01:59:35.001922+00:00 | **Aprovado** |
+| 16 | RLS: ler os labirintos com a chave anon | `200` | `200` | labirintos: 4x4, 8x4, 12x4 | **Aprovado** |
+| 17 | RLS: inserir corrida direto com a chave anon | `401` ou `403` | `401` | bloqueado: new row violates row-level security policy for table "corridas" | **Aprovado** |
+| 18 | RLS: inserir telemetria direto com a chave anon | `401` ou `403` | `401` | bloqueado: new row violates row-level security policy for table "telemetria" | **Aprovado** |
+| 19 | RLS: alterar corrida direto com a chave anon | sem efeito | `204` | status da 1 depois da tentativa: `concluida` (continua `concluida`: sim) | **Aprovado** |
+| 20 | Chamar a função SQL `criar_corrida` direto com a chave anon | `401`, `403` ou `404` | `401` | bloqueado: permission denied for function criar_corrida | **Aprovado** |
+
+**20 de 20 casos aprovados.**
+
+O caso 19 devolve `204` porque o PostgREST aceita o `PATCH`, mas o RLS não deixa nenhuma linha ser alterada; por isso o teste confere o status da corrida depois da tentativa.
+
+O teste criou 4 corridas no banco (ids 1 e 4 no 4×4, 2 no 8×4 e 3 no 12×4). As corridas 3 e 4 foram encerradas como `nao_concluida` no fim do script.
+
+??? note "Respostas completas da função e da API REST"
+
+    **1. Criar corrida no labirinto 4x4** · HTTP 201
+
+    ```json
+    {"id":1,"labirinto_id":1,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:31.291173+00:00","data_hora_fim":null,"tempo_final":null,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"em_andamento"}
+    ```
+
+    **2. Criar corrida no labirinto 8x4** · HTTP 201
+
+    ```json
+    {"id":2,"labirinto_id":2,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:33.098199+00:00","data_hora_fim":null,"tempo_final":null,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"em_andamento"}
+    ```
+
+    **3. Criar corrida no labirinto 12x4** · HTTP 201
+
+    ```json
+    {"id":3,"labirinto_id":3,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:33.933299+00:00","data_hora_fim":null,"tempo_final":null,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"em_andamento"}
+    ```
+
+    **4. Segunda corrida no 4x4 recebe a próxima tentativa** · HTTP 201
+
+    ```json
+    {"id":4,"labirinto_id":1,"numero_tentativa":2,"data_hora_inicio":"2026-10-19T01:59:34.497627+00:00","data_hora_fim":null,"tempo_final":null,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"em_andamento"}
+    ```
+
+    **5. Encerrar a corrida 1 como `concluida`** · HTTP 200
+
+    ```json
+    {"id":1,"labirinto_id":1,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:31.291173+00:00","data_hora_fim":"2026-10-19T01:59:35.001922+00:00","tempo_final":61.5,"velocidade_media":0.32,"velocidade_pico":null,"consumo_bateria":null,"status":"concluida"}
+    ```
+
+    **6. Encerrar a corrida 2 como `nao_concluida`, sem `tempo_final`** · HTTP 200
+
+    ```json
+    {"id":2,"labirinto_id":2,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:33.098199+00:00","data_hora_fim":"2026-10-19T01:59:35.558052+00:00","tempo_final":2.459853,"velocidade_media":null,"velocidade_pico":null,"consumo_bateria":null,"status":"nao_concluida"}
+    ```
+
+    **7. Repetir o encerramento da 1 com o mesmo status** · HTTP 200
+
+    ```json
+    {"id":1,"labirinto_id":1,"numero_tentativa":1,"data_hora_inicio":"2026-10-19T01:59:31.291173+00:00","data_hora_fim":"2026-10-19T01:59:35.001922+00:00","tempo_final":61.5,"velocidade_media":0.32,"velocidade_pico":null,"consumo_bateria":null,"status":"concluida"}
+    ```
+
+    **8. Encerrar a 1 de novo com outro status** · HTTP 409
+
+    ```json
+    {"erro":"corrida_ja_encerrada","mensagem":"a corrida já foi encerrada com outro status"}
+    ```
+
+    **9. Encerrar uma corrida que não existe** · HTTP 404
+
+    ```json
+    {"erro":"corrida_inexistente","mensagem":"corrida não encontrada"}
+    ```
+
+    **10. Criar corrida com labirinto inválido (`5x5`)** · HTTP 400
+
+    ```json
+    {"erro":"corpo_invalido","mensagem":"labirinto inválido; use um de: 4x4, 8x4, 12x4"}
+    ```
+
+    **11. Chamar sem chave e sem token** · HTTP 401
+
+    ```json
+    {"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"Missing authorization header"}
+    ```
+
+    **12. Chamar só com a chave anon, sem `x-device-token`** · HTTP 401
+
+    ```json
+    {"erro":"nao_autorizado","mensagem":"token de dispositivo ausente ou inválido"}
+    ```
+
+    **13. Chamar com `x-device-token` errado** · HTTP 401
+
+    ```json
+    {"erro":"nao_autorizado","mensagem":"token de dispositivo ausente ou inválido"}
+    ```
+
+    **14. Chamar só com o `x-device-token`, sem JWT** · HTTP 401
+
+    ```json
+    {"code":"UNAUTHORIZED_NO_AUTH_HEADER","message":"Missing authorization header"}
+    ```
+
+    **15. Ler a corrida 1 pela API REST com a chave anon** · HTTP 200
+
+    ```json
+    [{"id":1,"status":"concluida","data_hora_fim":"2026-10-19T01:59:35.001922+00:00","numero_tentativa":1}]
+    ```
+
+    **16. RLS: ler os labirintos com a chave anon** · HTTP 200
+
+    ```json
+    [{"tipo":"4x4","linhas":4,"colunas":4}, 
+     {"tipo":"8x4","linhas":4,"colunas":8}, 
+     {"tipo":"12x4","linhas":4,"colunas":12}]
+    ```
+
+    **17. RLS: inserir corrida direto com a chave anon** · HTTP 401
+
+    ```json
+    {"code":"42501","details":null,"hint":null,"message":"new row violates row-level security policy for table \"corridas\""}
+    ```
+
+    **18. RLS: inserir telemetria direto com a chave anon** · HTTP 401
+
+    ```json
+    {"code":"42501","details":null,"hint":null,"message":"new row violates row-level security policy for table \"telemetria\""}
+    ```
+
+    **19. RLS: alterar corrida direto com a chave anon** · HTTP 204
+
+    ```json
+    (sem corpo)
+    ```
+
+    **20. Chamar a função SQL `criar_corrida` direto com a chave anon** · HTTP 401
+
+    ```json
+    {"code":"42501","details":null,"hint":null,"message":"permission denied for function criar_corrida"}
+    ```
+
+
+#### Pendências desta etapa
+
+- Apagar as 4 corridas de teste antes das corridas reais (`DELETE FROM corridas WHERE id IN (1, 2, 3, 4);` no SQL Editor, por um dono do projeto). Enquanto elas existirem, a próxima corrida do 4×4 será a tentativa 3.
+- Caminho do dashboard para criar corridas (decisão da #233): aceitar o JWT de um operador logado como alternativa ao `x-device-token` e responder ao CORS do navegador, junto com o login de operador da HU-15.
+- Ingestão de telemetria e do mapa (`telemetria` e `mapa_celulas`) por Edge Function, com o mesmo token de dispositivo, em issue separada.
