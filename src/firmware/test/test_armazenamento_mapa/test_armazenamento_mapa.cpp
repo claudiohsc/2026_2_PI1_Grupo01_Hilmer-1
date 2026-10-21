@@ -222,8 +222,58 @@ void test_nova_corrida_pode_trocar_o_tamanho() {
 }
 
 void test_armazenamento_ocupa_pouca_memoria() {
-  // O mapa (195 bytes) mais o indicador de corrida: bem abaixo dos 320 KB de RAM do ESP32-C3.
-  TEST_ASSERT_LESS_OR_EQUAL_UINT32(256, sizeof(ArmazenamentoMapa));
+  // Dois mapas (195 bytes cada) mais os indicadores: bem abaixo dos 320 KB de RAM do ESP32-C3.
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(512, sizeof(ArmazenamentoMapa));
+}
+
+/// Valida o ciclo de vida do congelamento do mapa (Issue #180, HU-04):
+/// 1. Não permite congelar se a corrida ainda não foi iniciada;
+/// 2. mapaFinal() retorna nullptr enquanto o mapa não estiver congelado;
+/// 3. Congela com sucesso após a corrida iniciar e paredes serem mapeadas;
+/// 4. Impede congelamento duplicado (idempotência/recusa de re-congelamento);
+/// 5. mapaFinal() retorna o ponteiro para o mapa e preserva as paredes mapeadas;
+/// 6. Modificações posteriores no mapa da corrida não alteram o mapa congelado;
+/// 7. Iniciar uma nova corrida reseta o estado de congelamento.
+void test_congelamento_do_mapa() {
+  ArmazenamentoMapa armazenamento;
+
+  // Pré-condição: sem corrida iniciada, mapa não está congelado e congelarMapa() falha
+  TEST_ASSERT_FALSE(armazenamento.mapaCongelado());
+  TEST_ASSERT_FALSE(armazenamento.congelarMapa());
+  TEST_ASSERT_NULL(armazenamento.mapaFinal());
+
+  // Inicia a corrida: estado inicial é não congelado
+  armazenamento.iniciarCorrida(DimensaoMapa::Labirinto4x4);
+  TEST_ASSERT_FALSE(armazenamento.mapaCongelado());
+  TEST_ASSERT_NULL(armazenamento.mapaFinal());
+
+  // Simula exploração registrando uma parede
+  armazenamento.mapa().registrarParede(pos(0, 0), Direcao::Norte, EstadoParede::Parede);
+
+  // Congela o mapa pela primeira vez (sucesso)
+  TEST_ASSERT_TRUE(armazenamento.congelarMapa());
+  TEST_ASSERT_TRUE(armazenamento.mapaCongelado());
+
+  // Nova tentativa de congelar deve falhar
+  TEST_ASSERT_FALSE(armazenamento.congelarMapa());
+
+  // mapaFinal() agora é válido e devolve o mapa congelado
+  const Mapa* final = armazenamento.mapaFinal();
+  TEST_ASSERT_NOT_NULL(final);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EstadoParede::Parede),
+                          static_cast<uint8_t>(final->obterParede(pos(0, 0), Direcao::Norte)));
+
+  // Escrita posterior no mapa da corrida não deve afetar o mapa congelado
+  armazenamento.mapa().registrarParede(pos(1, 1), Direcao::Leste, EstadoParede::Parede);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EstadoParede::Parede),
+                          static_cast<uint8_t>(armazenamento.mapa().obterParede(pos(1, 1), Direcao::Leste)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(EstadoParede::Desconhecido),
+                          static_cast<uint8_t>(final->obterParede(pos(1, 1), Direcao::Leste)));
+
+  // Iniciar nova corrida deve destravar o congelamento
+  armazenamento.iniciarCorrida(DimensaoMapa::Labirinto4x4);
+  TEST_ASSERT_FALSE(armazenamento.mapaCongelado());
+  TEST_ASSERT_NULL(armazenamento.mapaFinal());
 }
 
 int main(int, char**) {
@@ -237,5 +287,6 @@ int main(int, char**) {
   RUN_TEST(test_nova_corrida_zera_o_mapa);
   RUN_TEST(test_nova_corrida_pode_trocar_o_tamanho);
   RUN_TEST(test_armazenamento_ocupa_pouca_memoria);
+  RUN_TEST(test_congelamento_do_mapa);
   return UNITY_END();
 }
