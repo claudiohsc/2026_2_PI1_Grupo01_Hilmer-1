@@ -8,9 +8,11 @@ A documentação detalhada do código (camadas, tipos, pinagem, interface do LiD
 
 ```
 src/firmware/
-├── platformio.ini     # ambientes esp32c3 (placa), native (testes no computador) e native_cobertura (testes com cobertura, usado no CI)
+├── platformio.ini     # ambientes esp32c3 (placa), native (testes no computador), native_cobertura (testes com cobertura, usado no CI) e bancada_tof (firmware de bancada dos VL53L0X)
 ├── src/main.cpp       # ponto de entrada: cria as tarefas FreeRTOS (navegação e telemetria)
+├── src/bancada/       # programas de bancada, fora do firmware do robô
 ├── lib/               # uma biblioteca por camada
+├── scripts/           # ferramentas de bancada no computador (Python)
 └── test/              # testes unitários e de integração (Unity)
 ```
 
@@ -19,6 +21,7 @@ src/firmware/
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
 | `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar`, `IEncoder` e, nos próximos épicos, motores) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` a partir das distâncias do LiDAR |
+| `tof` | Sensoriamento | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros provisórios (`ConfiguracaoTof.h`), sem Arduino |
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula), atualização a partir das leituras classificadas e armazenamento em memória |
@@ -26,7 +29,7 @@ src/firmware/
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
 | `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, e `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, sem hardware |
-| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (LiDAR por UART, encoders, DRV8833, WiFi) |
+| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X pelo I²C, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
 
@@ -189,6 +192,55 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
 | `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
 
+## Sensores de distância (VL53L0X)
+
+Na Rev 2.0 do hardware, o LiDAR deu lugar a 3 VL53L0X no I²C (esquerdo, frontal e direito). O `TofVl53l0x` (`lib/drivers_esp32`) implementa o `ILidar`, então mapa, percepção e navegação não mudaram ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)). A regra de validade fica no `CombinadorTof` (`lib/tof`), testado no `native`; a biblioteca `pololu/VL53L0X` só entra no `esp32c3`.
+
+```cpp
+Wire.begin(pinos::I2C_SDA, pinos::I2C_SCL);   // barramento compartilhado com o MPU6050
+TofVl53l0x tof(Wire, {pinos::XSHUT_FRONTAL, pinos::ENDERECO_TOF_FRONTAL},
+               {pinos::XSHUT_ESQ, pinos::ENDERECO_TOF_ESQ},
+               {pinos::XSHUT_DIR, pinos::ENDERECO_TOF_DIR});
+tof.iniciar();                                // XSHUT um por vez e endereços 0x31, 0x30, 0x32
+
+DistanciasLaterais d;
+if (tof.lerDistanciasLaterais(d)) { /* os 3 sensores com medida válida e recente */ }
+tof.amostra(Lado::Frente);                    // medida bruta, estado e instante, mesmo com a leitura recusada
+```
+
+| Regra | Comportamento |
+|---|---|
+| Inicialização | Os 3 XSHUT em nível baixo; cada sensor é solto, inicializado e recebe o endereço antes do próximo. Sensor que não responde fica em reset (`sensorIniciado(lado)` diz quais iniciaram) |
+| Leitura | Nunca espera medida: só lê os sensores que já têm medida pronta. A leitura vale com os 3 entre 30 e 1200 mm e a amostra mais antiga com até 100 ms |
+| Recusa | `false` com algum sensor em `Falha`, `AbaixoDoMinimo`, `ForaDeAlcance` (inclui os 8190 mm "sem alvo") ou parado há mais de 100 ms |
+| Idade | `idadeUltimaLeituraMs()`: idade do sensor mais atrasado, para a navegação não repetir dado antigo |
+| Referência | Distância a partir da face de cada sensor; a geometria do robô e os limiares ficam na percepção ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) |
+
+Os parâmetros estão em `lib/tof/src/ConfiguracaoTof.h` e são **provisórios** até a bancada ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)). A telemetria serial do `main.cpp` traz os campos `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`, `tof_valida` e `tof_idade_ms`.
+
+### Bancada dos VL53L0X
+
+Para conferir o driver no hardware montado, junto com a eletrônica, use o menu de bancada (precisa de `pip install pyserial`):
+
+```bash
+./scripts/bancada_tof.py                   # escolhe a porta; ou --porta /dev/ttyACM0 (COM5 no Windows)
+```
+
+1. **Opção 1:** grava o firmware de bancada (`pio run -e bancada_tof -t upload`). Ele mantém os motores freados o tempo todo.
+2. **Opção 3:** roteiro completo, com APROVADO, REPROVADO ou OBSERVADO em cada verificação, e um relatório em Markdown no fim, para registrar em `docs/07-testes/software.md`.
+3. Ao terminar, grave de volta o firmware do robô: `pio run -e esp32c3 -t upload`.
+
+| Etapa | O que verifica |
+|---|---|
+| 1. Fiação | Cada XSHUT liga só o seu sensor, que aparece sozinho no 0x29 |
+| 2. Inicialização | Os 3 sensores iniciam em 0x30, 0x31 e 0x32, e o 0x29 fica livre |
+| 3. Taxa e tempo | 20 a 40 Hz por sensor, leitura em até 5 ms e ≥ 95% de leituras válidas |
+| 4. Régua | Média, erro e desvio contra distâncias medidas (tolerância de ±10 mm ou ±5%) |
+| 5. Fora da faixa | Sensor sem alvo e sensor encostado: leitura recusada, com o motivo na amostra |
+| 6. Sensor ausente | Um sensor desconectado (com a placa desligada) não impede os outros |
+
+Os critérios ficam no topo do script e são provisórios. O firmware de bancada também funciona direto no monitor serial: `pio device monitor -e bancada_tof` e o comando `AJUDA` listam `SCAN`, `ISOLAR`, `INIT`, `LER`, `FLUXO` e `ESTAT`; cada resposta é uma linha JSON.
+
 ## Instalação
 
 Instale o PlatformIO por uma das opções:
@@ -204,6 +256,7 @@ Execute os comandos dentro de `src/firmware`:
 |---|---|
 | Compilar para o ESP32-C3 | `pio run -e esp32c3` |
 | Gravar na placa | `pio run -e esp32c3 -t upload` |
+| Gravar o firmware de bancada dos VL53L0X | `pio run -e bancada_tof -t upload` (ou pelo `scripts/bancada_tof.py`) |
 | Abrir o monitor serial | `pio device monitor` |
 | Rodar os testes no computador | `pio test -e native` |
 | Rodar um teste específico | `pio test -e native -f test_nucleo` |
@@ -214,7 +267,7 @@ Execute os comandos dentro de `src/firmware`:
 |---|---|---|---|
 | Unitário | Computador (`native`) | Unity | Lógica pura: tipos, classificação, mapa, serialização |
 | Integração | Computador (`native`) | Unity, com falsos de `simulacao` no lugar do hardware | Percepção → mapa em labirinto simulado |
-| Bancada | Placa com o hardware real | Monitor serial e checklist do teste | LiDAR real, encoders, motores |
+| Bancada | Placa com o hardware real | Monitor serial, checklist do teste e os scripts de `scripts/` | Sensores VL53L0X (`bancada_tof.py`), encoders, motores |
 
 Para criar um teste:
 

@@ -64,6 +64,8 @@ A lógica do robô (direções, mapa, classificação de paredes) não usa nada 
 | Comando | `pio run -e esp32c3` | `pio test -e native` |
 | Resultado | `firmware.bin` e o uso de RAM e Flash | Relatório dos testes (aprovados ou com falha) |
 
+Há ainda o ambiente **`bancada_tof`**, que herda o `esp32c3` mas compila só `src/bancada/bancada_tof.cpp`: um firmware de teste dos sensores de distância, usado na bancada com a eletrônica (veja [Bancada dos VL53L0X](#bancada-dos-vl53l0x)). O `esp32c3` exclui a pasta `src/bancada/` (`build_src_filter`), então o firmware do robô não muda.
+
 ## Estrutura de pastas
 
 | Caminho | Conteúdo |
@@ -72,6 +74,7 @@ A lógica do robô (direções, mapa, classificação de paredes) não usa nada 
 | `src/main.cpp` | Ponto de entrada: inicializa o log e cria as tarefas de navegação e telemetria |
 | `lib/nucleo` | Tipos compartilhados, constantes do desafio e pinagem |
 | `lib/hal` | Interfaces de hardware (`ILidar` e `IEncoder`; motores no Épico 02) |
+| `lib/tof` | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros (`ConfiguracaoTof.h`), sem Arduino ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) |
 | `lib/encoders` | Decodificação em quadratura dos encoders, conversão de pulsos em mm e distância por roda ([#186](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/186)) |
 | `lib/percepcao` | Classificação `parede`/`livre` (tarefa [#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174)) |
 | `lib/mapeamento` | Mapa do labirinto, atualização, armazenamento em memória e mapa final ([#176](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/176), [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177), [#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179), [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) |
@@ -79,7 +82,9 @@ A lógica do robô (direções, mapa, classificação de paredes) não usa nada 
 | `lib/atuacao` | Controle dos motores e correção de trajetória (Épico 02) |
 | `lib/comunicacao` | Telemetria, serialização do mapa em JSON ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)) e *buffer* de reenvio (Épico 03) |
 | `lib/simulacao` | `LidarSimulado` e `LabirintoSimulado` ([#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224)) |
-| `lib/drivers_esp32` | Drivers que dependem do Arduino: LiDAR por UART, encoders, DRV8833, Wi-Fi |
+| `lib/drivers_esp32` | Drivers que dependem do Arduino: 3 VL53L0X pelo I²C (`TofVl53l0x`), encoders, DRV8833, Wi-Fi |
+| `src/bancada/` | Programas de bancada, fora do firmware do robô: `bancada_tof.cpp` testa os VL53L0X no hardware ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) |
+| `scripts/` | Ferramentas de bancada no computador: `bancada_tof.py` (menu dos VL53L0X) e `calibrar_deslocamento_18cm.py` (encoders) |
 | `test/` | Testes Unity, uma pasta `test_<modulo>` por módulo |
 
 As pastas ainda vazias têm um arquivo `.gitkeep` para existirem no repositório.
@@ -149,6 +154,7 @@ classDiagram
     class ILidar {
         <<interface>>
         +lerDistanciasLaterais(saida) bool
+        +idadeUltimaLeituraMs() uint32_t
     }
     class LidarSimulado {
         +CAPACIDADE_FILA = 16
@@ -159,17 +165,27 @@ classDiagram
         +simularFalha(falha)
         +lerDistanciasLaterais(saida) bool
     }
-    class DriverLidarUart {
-        <<a criar em drivers_esp32>>
+    class TofVl53l0x {
+        <<drivers_esp32, Rev 2.0>>
+        +iniciar() bool
+        +lerDistanciasLaterais(saida) bool
+        +idadeUltimaLeituraMs() uint32_t
+        +amostra(lado) AmostraTof
+    }
+    class LidarUart {
+        <<lidar, sem uso desde a Rev 2.0>>
         +lerDistanciasLaterais(saida) bool
     }
     ILidar <|.. LidarSimulado
-    ILidar <|.. DriverLidarUart
+    ILidar <|.. TofVl53l0x
+    ILidar <|.. LidarUart
 ```
 
-**Figura 3.** Interface `ILidar` e suas implementações: o `LidarSimulado`, usado nos testes, e o driver real por UART.
+**Figura 3.** Interface `ILidar` e suas implementações: o `LidarSimulado`, usado nos testes, o `TofVl53l0x`, driver dos 3 VL53L0X da Rev 2.0, e o `LidarUart`, do LiDAR da primeira versão do hardware, que fica no código sem uso até depois da ED1. O nome `ILidar` foi mantido para que mapa, percepção e navegação não mudassem com a troca do sensor.
 
 **Contrato de `ILidar::lerDistanciasLaterais`:** retorna `true` e preenche `saida` (em mm) quando há leitura válida das três direções; retorna `false` quando o sensor não responde ou a leitura é inválida. Nesse caso, o conteúdo de `saida` não deve ser usado.
+
+**Contrato de `ILidar::idadeUltimaLeituraMs`:** idade, em ms, da amostra mais antiga que compõe a última leitura, medida no momento da chamada. Serve para a navegação não reagir duas vezes ao mesmo dado. A implementação padrão devolve 0 (leitura sempre nova), o que vale para o `LidarSimulado`.
 
 **`LidarSimulado`** devolve o que o teste configurar. A cada leitura, segue esta ordem:
 
@@ -187,6 +203,89 @@ lidar.definirLeituraFixa({500, 500, 500});  // corredor livre
 lidar.enfileirarLeitura({90, 90, 270});     // depois, parede à frente e à esquerda
 ILidar& sensor = lidar;                     // a lógica recebe só a interface
 ```
+
+## Sensores de distância: 3 VL53L0X (`TofVl53l0x`)
+
+Na Rev 2.0 do hardware (21/10/2026), o LiDAR por UART deu lugar a **3 sensores VL53L0X** pelo I²C: um à esquerda, um à frente e um à direita. O `TofVl53l0x` (`lib/drivers_esp32`) implementa o `ILidar`, então o resto do firmware não mudou ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344), [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36)). A regra que decide se uma leitura vale fica no `CombinadorTof` (`lib/tof`), sem Arduino, e é testada no computador; o driver só conversa com os sensores pela biblioteca `pololu/VL53L0X` (1.3.1), que entra apenas no ambiente `esp32c3`.
+
+```mermaid
+flowchart LR
+    s1["VL53L0X frente<br/>0x31"] --> drv
+    s2["VL53L0X esquerda<br/>0x30"] --> drv
+    s3["VL53L0X direita<br/>0x32"] --> drv
+    drv["TofVl53l0x<br/>I²C, XSHUT, modo contínuo"] -- "medida bruta,<br/>falha e instante" --> comb["CombinadorTof<br/>faixa válida e idade"]
+    comb -- "DistanciasLaterais<br/>ou false" --> ilidar["ILidar<br/>percepção, navegação, controle"]
+    comb -- "amostra(lado)" --> perc["Percepção (#379)<br/>trata 'sem alvo'"]
+```
+
+**Figura 4.** Caminho de uma leitura: o driver lê cada sensor que tem medida pronta, o `CombinadorTof` classifica a medida e monta a leitura das três direções, e quem precisar do motivo de uma recusa consulta a amostra bruta do sensor.
+
+### Ligação e endereços
+
+Os três sensores dividem o barramento I²C com o MPU6050. Todos saem do reset no endereço de fábrica, 0x29, por isso cada um tem o seu pino XSHUT. Os valores ficam em `Pinos.h`, e o driver os recebe por parâmetro.
+
+| Sensor | XSHUT | Endereço I²C |
+|---|:-:|:-:|
+| Esquerdo (J3) | GPIO0 | 0x30 |
+| Frontal (J4) | GPIO1 | 0x31 |
+| Direito (J5) | GPIO2 | 0x32 |
+| Barramento | SDA GPIO9, SCL GPIO8 | MPU6050 em 0x68 |
+
+Um `static_assert` em `Pinos.h` reprova a compilação se dois endereços coincidirem ou se algum deles for o 0x29 ou o 0x68.
+
+### Regras de Negócio e Algoritmo
+
+* **Inicialização (`iniciar()`):** os três XSHUT vão a nível baixo (sensores em reset); depois, um sensor por vez é solto, inicializado e recebe o seu endereço, e só então o próximo é solto. Cada sensor fica em modo contínuo com o tempo de medição configurado. Um sensor que não responde volta para o reset, para não ocupar o 0x29 e atrapalhar os seguintes; `sensorIniciado(lado)` diz quais iniciaram.
+* **Leitura sem espera:** a cada `lerDistanciasLaterais()`, o driver consulta o registrador de medida pronta de cada sensor e só lê os que têm medida nova. Nunca espera o sensor terminar, então a tarefa de navegação (10 ms) não trava.
+* **Classificação de cada medida** (`CombinadorTof::classificar`):
+
+| Estado | Quando |
+|---|---|
+| `Valida` | Entre 30 e 1200 mm |
+| `AbaixoDoMinimo` | Abaixo de 30 mm, onde o VL53L0X perde a precisão |
+| `ForaDeAlcance` | Acima de 1200 mm, incluindo os 8190/8191 mm que o sensor devolve sem alvo |
+| `Falha` | Sem resposta no I²C ou tempo de espera estourado |
+| `SemAmostra` | O sensor ainda não entregou nenhuma medida |
+
+* **Leitura válida:** `lerDistanciasLaterais()` devolve `true` só com os três sensores em `Valida` e com a amostra mais antiga dentro de 100 ms. Um sensor que para de medir faz a leitura falhar pela idade.
+* **Amostra bruta exposta:** `amostra(lado)` devolve a última medida de cada sensor, com o estado e o instante. A percepção ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) pode tratar `ForaDeAlcance` como lado livre sem mudar o driver.
+* **Referência das distâncias:** as medidas partem da face de cada sensor, não do centro do robô. A conversão para a geometria do robô e os limiares de parede são da [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379); a compensação do desvio de cada sensor, da calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)).
+
+**Parâmetros** (`ConfiguracaoTof.h`, todos **provisórios**, a validar na bancada da [#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)):
+
+| Parâmetro | Valor | Origem |
+|---|---|---|
+| Tempo de medição (*timing budget*) | 33 ms | Padrão do VL53L0X: cerca de 30 medidas por segundo, precisão razoável até 1,2 m |
+| Período no modo contínuo | 0 (uma medida emendada na outra) | Biblioteca `pololu/VL53L0X` |
+| Faixa válida | 30 a 1200 mm | Datasheet do VL53L0X, modo padrão em ambiente interno |
+| Idade máxima da leitura | 100 ms | Cerca de 3 medidas perdidas |
+| Tempo limite no I²C | 50 ms | Estimativa |
+| Espera depois de soltar o XSHUT | 10 ms | O datasheet dá até 1,2 ms; a folga cobre o regulador do módulo |
+
+### Interface da Classe
+
+* **`TofVl53l0x(TwoWire&, frente, esquerda, direita, config)`:** recebe o barramento já iniciado (`Wire.begin(SDA, SCL)`) e a `ConexaoTof` (pino XSHUT e endereço) de cada sensor.
+* **`bool iniciar()`:** sequência de XSHUT e endereços; `true` se os três iniciaram. Pode ser chamado de novo para reiniciar os sensores.
+* **`bool lerDistanciasLaterais(DistanciasLaterais&)`** e **`uint32_t idadeUltimaLeituraMs() const`:** o contrato do `ILidar`; a idade é `CombinadorTof::IDADE_DESCONHECIDA` enquanto algum sensor não entregou amostra.
+* **`const AmostraTof& amostra(Lado) const`:** distância bruta, `EstadoAmostraTof` e instante da última medida do sensor.
+* **`CombinadorTof`:** `classificar(distancia, falhou)`, `registrar(lado, distancia, falhou, agoraMs)`, `distancias(agoraMs, saida)`, `idadeMs(agoraMs)` e `reiniciar()`.
+
+**No `main.cpp`.** O `setup()` inicia o barramento e chama `iniciar()`; se algum sensor falhar, o log diz qual. A tarefa de navegação lê os sensores a cada 10 ms e guarda uma cópia, protegida por seção crítica, que a telemetria envia nos campos `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`, `tof_valida` e `tof_idade_ms`.
+
+### Bancada dos VL53L0X
+
+Para a equipe de software e a eletrônica validarem o driver no hardware montado, há um firmware de bancada (`src/bancada/bancada_tof.cpp`, ambiente `bancada_tof`) e um menu no computador (`scripts/bancada_tof.py`). O firmware mantém os motores freados e responde a comandos pela serial; o menu grava esse firmware e conduz o roteiro, com resultado APROVADO, REPROVADO ou OBSERVADO em cada verificação e um relatório em Markdown no fim.
+
+| Etapa | O que verifica | Critério provisório |
+|---|---|---|
+| 1. Fiação | Com os outros em reset, cada XSHUT liga só o seu sensor, que aparece no 0x29 | O sensor aparece sozinho; com todos em reset, ninguém no 0x29 |
+| 2. Inicialização | `iniciar()` e varredura do barramento | 0x30, 0x31 e 0x32 presentes e 0x29 livre |
+| 3. Taxa e tempo | Estatística de 5 s com obstáculo diante dos três | 20 a 40 Hz por sensor, leitura em até 5 ms, ≥ 95% de leituras válidas |
+| 4. Régua | Média, erro e desvio contra distâncias medidas | Erro até ±10 mm ou ±5% |
+| 5. Fora da faixa | Sensor sem alvo e sensor encostado | `ForaDeAlcance` e `AbaixoDoMinimo`; outro comportamento fica registrado como OBSERVADO para a [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) |
+| 6. Sensor ausente (opcional) | Um sensor desconectado com a placa desligada | Os outros dois iniciam e a leitura falha |
+
+O passo a passo de uso está no [README do firmware](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/main/src/firmware/README.md#bancada-dos-vl53l0x).
 
 ## Labirinto simulado: `LabirintoSimulado`
 
@@ -206,7 +305,7 @@ O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes con
 +---+---+---+---+
 ```
 
-**Figura 4.** Labirinto 4×4 de exemplo (`LABIRINTO_4X4`), com a partida (0, 0) no canto inferior esquerdo.
+**Figura 5.** Labirinto 4×4 de exemplo (`LABIRINTO_4X4`), com a partida (0, 0) no canto inferior esquerdo.
 
 Cada parede aparece uma única vez no texto, entre as duas células que ela separa. Por isso, o lado leste de uma célula e o lado oeste da vizinha nunca discordam. Ao carregar o texto, o `LabirintoSimulado` recusa:
 
@@ -287,7 +386,7 @@ stateDiagram-v2
     Congelado --> Explorando: iniciarCorrida() (nova corrida)
 ```
 
-**Figura 5.** Ciclo de vida do mapa final no `ArmazenamentoMapa`: o congelamento só acontece uma vez por corrida e só uma nova corrida o destrava.
+**Figura 6.** Ciclo de vida do mapa final no `ArmazenamentoMapa`: o congelamento só acontece uma vez por corrida e só uma nova corrida o destrava.
 
 ### Regras de Negócio e Algoritmo
 
@@ -320,7 +419,7 @@ O módulo de comunicação (`lib/comunicacao`) implementa a classe `MapaJson`, r
 }
 ```
 
-**Figura 6.** JSON de um mapa 4×4 recém-criado (só o perímetro conhecido), formatado aqui para leitura: a saída real não tem espaços nem quebras de linha.
+**Figura 7.** JSON de um mapa 4×4 recém-criado (só o perímetro conhecido), formatado aqui para leitura: a saída real não tem espaços nem quebras de linha.
 
 | Campo | Valor |
 |---|---|
@@ -359,7 +458,7 @@ flowchart LR
     H --> C
 ```
 
-**Figura 7.** Da contagem dos encoders à pose: a diferença entre as rodas gira a direção, e a média das rodas avança o robô na direção atual.
+**Figura 8.** Da contagem dos encoders à pose: a diferença entre as rodas gira a direção, e a média das rodas avança o robô na direção atual.
 
 ### Regras de Negócio e Algoritmo
 
@@ -413,7 +512,7 @@ flowchart LR
     motores -. implementa .-> sim["MotoresSimulados<br/>testes"]
 ```
 
-**Figura 8.** Fluxo do controle de movimento: a cada leitura do LiDAR, a distância frontal define a potência base, as distâncias laterais definem a correção, e o resultado vai para os motores pela interface `IMotores`.
+**Figura 9.** Fluxo do controle de movimento: a cada leitura do LiDAR, a distância frontal define a potência base, as distâncias laterais definem a correção, e o resultado vai para os motores pela interface `IMotores`.
 
 ### Geometria considerada
 
@@ -536,6 +635,21 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | | `test_posicao_acima_de_255_celulas_e_invalida_e_satura` | Acima de 255 a posição é inválida e a célula satura |
 | | `test_contagem_muito_grande_nao_estoura` | Contagens extremas não estouram |
 | `test_nucleo/test_direcao.cpp` | `test_letra_da_direcao_segue_o_banco_de_dados` | `N`, `L`, `S` e `O` como na coluna `orientacao` |
+| `test_tof/test_tof.cpp` | `test_sem_amostras_a_leitura_falha` | Sem amostras, a leitura falha e a idade é desconhecida |
+| | `test_tres_amostras_validas_montam_a_leitura_por_lado` | Cada sensor vai para o seu campo de `DistanciasLaterais` |
+| | `test_classificacao_nos_limites_da_faixa` | 29 e 30 mm, 1200 e 1201 mm, e 8190, 8191 e 65535 mm |
+| | `test_falha_tem_prioridade_sobre_a_distancia` | Sensor sem resposta é `Falha`, qualquer que seja a distância |
+| | `test_sensor_com_falha_invalida_a_leitura` | Um sensor em falha invalida a leitura |
+| | `test_fora_de_alcance_invalida_a_leitura_mas_fica_exposto_por_sensor` | "Sem alvo" invalida a leitura, e a amostra bruta continua disponível |
+| | `test_abaixo_do_minimo_invalida_a_leitura` | Medida abaixo de 30 mm invalida a leitura |
+| | `test_sensor_que_nunca_mediu_invalida_a_leitura` | Faltando um sensor, a leitura falha |
+| | `test_a_idade_e_a_da_amostra_mais_antiga` | A idade da leitura é a do sensor mais atrasado |
+| | `test_leitura_velha_falha_e_volta_quando_chega_amostra_nova` | Limite exato de 100 ms; um sensor parado segura a leitura até voltar |
+| | `test_leitura_volta_depois_de_uma_falha` | Depois de uma falha, a próxima medida válida restaura a leitura |
+| | `test_idade_correta_quando_o_relogio_da_a_volta` | A idade continua certa quando o contador de ms volta a zero |
+| | `test_reiniciar_esquece_as_amostras` | `reiniciar()` volta todos os sensores a `SemAmostra` |
+| | `test_configuracao_altera_faixa_e_idade` | Faixa e idade vêm da `ConfiguracaoTof` |
+| `test_pinos/test_pinos.cpp` | `test_enderecos_dos_vl53l0x_conferem_com_a_issue_344` | Endereços 0x30, 0x31 e 0x32, distintos do 0x29 e do 0x68 |
 
 Para rodar, dentro de `src/firmware`:
 
@@ -578,6 +692,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/comunicacao` (`MapaJson`) | [#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178) Formato JSON do mapa | [HU-03](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/37) (RF03) |
 | `ArmazenamentoMapa::congelarMapa`, `mapaFinal`, `MapaJson::serializarFinal` | [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180) Mapa final serializado | [HU-04](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/38) (RF04) |
 | `lib/navegacao` (`Odometria`) | [#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187) Orientação e posição na malha | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
+| `lib/tof` (`CombinadorTof`), `TofVl53l0x`, `ILidar::idadeUltimaLeituraMs`, endereços em `Pinos.h`, firmware e menu de bancada | [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344) Driver dos 3 sensores VL53L0X | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
 
 ## Próximos passos
 
@@ -588,3 +703,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 - **Formato JSON do mapa** ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)): o formato foi validado com as outras equipes. O dashboard ([#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239)) aceitou o JSON e vai tratar `null` como área não explorada, e a tabela `mapa_celulas` passou a aceitar `null` nas colunas `parede_*` ([#228](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228), PR [#328](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/328)). Falta o envio de fato da lista de células ao banco, que entra com a telemetria (Épico 03).
 - **Mapa final serializado** ([#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180), PR [#330](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/330)), concluído: o mapa é congelado e serializado ao alcançar o objetivo e testado no labirinto simulado. Falta a navegação chamar `congelarMapa()` quando detectar o objetivo (Épico 02) e o envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), no Épico 03.
 - **Odometria** ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)): a lógica, os testes no computador e a ligação no `main.cpp` estão prontos. Falta a bancada: medir os pulsos de diferença entre as rodas num giro de 90° (hoje 625, provisório), testar giros de 90° e 180° e um percurso de 3 células, e registrar o erro.
+- **Sensores VL53L0X** ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): o driver, a regra de validade com testes no computador e a ligação no `main.cpp` estão prontos, e o build da placa compila. Falta rodar o roteiro da [bancada](#bancada-dos-vl53l0x) com o hardware montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)) e trocar os valores provisórios de `ConfiguracaoTof.h` pelos medidos. Dependem desta tarefa a percepção para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), a calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), o boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e a recuperação de falhas do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
