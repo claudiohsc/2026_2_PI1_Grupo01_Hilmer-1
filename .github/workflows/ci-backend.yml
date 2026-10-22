@@ -1,0 +1,75 @@
+name: CI Backend
+
+# Sem filtro de caminhos: o check precisa reportar em todo PR para a main, senão a proteção de branch trava PRs que não mexem no backend.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+    working-directory: src/backend
+
+jobs:
+  testes:
+    name: Testes do backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # O package.json exige Node 22.18 ou superior; a linha 22 do setup-node usa a versão mais recente dela.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/backend/package-lock.json
+      - run: npm ci
+      # Testes com cobertura de linhas mínima de 80% (Node 22.8 ou superior). Só entram os arquivos
+      # carregados pelos testes; o index.ts da Edge Function é conferido pelo deno check, abaixo.
+      - name: Rodar os testes com cobertura
+        run: |
+          set -o pipefail
+          npm run test:cobertura -- --test-reporter=spec 2>&1 | tee "$RUNNER_TEMP/testes-backend.txt"
+      - name: Resumo dos testes
+        if: always()
+        run: |
+          {
+            echo '### Testes do backend'
+            echo '```'
+            grep -E '^ℹ (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)' "$RUNNER_TEMP/testes-backend.txt" || echo 'Os testes não chegaram ao fim; veja o log do passo anterior.'
+            echo '```'
+            if grep -q 'start of coverage report' "$RUNNER_TEMP/testes-backend.txt"; then
+              echo '#### Cobertura dos testes (mínimo de 80% das linhas)'
+              echo '```'
+              sed -n '/start of coverage report/,/end of coverage report/p' "$RUNNER_TEMP/testes-backend.txt" | sed -E 's/^ℹ //'
+              echo '```'
+            fi
+            if grep -q '✖ failing tests:' "$RUNNER_TEMP/testes-backend.txt"; then
+              echo '#### Testes que falharam'
+              echo '```'
+              sed -n '/✖ failing tests:/,$p' "$RUNNER_TEMP/testes-backend.txt" | head -n 80
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      # O index.ts é o único arquivo da Edge Function que os testes do Node não executam (usa Deno.serve).
+      - uses: denoland/setup-deno@v2
+        if: ${{ !cancelled() }}
+        with:
+          # Versão fixa, como o PlatformIO e o gcovr no CI do firmware. Para atualizar, troque aqui e confira o deno check.
+          deno-version: 2.9.8
+      # Há um package.json em src/backend (só para os testes do Node), então o Deno 2 entra no modo
+      # "manual" e procura o npm:@supabase/supabase-js na pasta node_modules. No Supabase não existe
+      # node_modules: o pacote vem do cache do Deno. `--node-modules-dir=none` reproduz isso.
+      - name: Checar os tipos da Edge Function
+        if: ${{ !cancelled() }}
+        run: deno check --node-modules-dir=none supabase/functions/corridas/index.ts
