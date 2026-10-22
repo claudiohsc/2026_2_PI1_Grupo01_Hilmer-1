@@ -746,6 +746,66 @@ conferem o token do robô no cabeçalho `x-device-token`.
 `supabase_realtime`: o dashboard assina as duas pelo `supabase-js` e recebe cada linha
 nova sem precisar consultar o banco de novo (HU-08, RNF05).
 
+#### Escrita mediada por Edge Function: corridas
+
+Como a chave pública não grava, criar e encerrar uma corrida passa pela Edge Function
+`corridas` (`src/backend/supabase/functions/corridas`, tarefa
+[#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233), PR
+[#334](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/334), HU-15). A função
+só autentica, valida o corpo e traduz erros; a regra de negócio fica em duas funções SQL
+(`20261016120000_funcoes_corridas.sql`), que só a `service_role` pode executar.
+
+```mermaid
+sequenceDiagram
+    participant R as Robô (ESP32-C3)
+    participant G as Gateway do Supabase
+    participant F as Edge Function corridas
+    participant B as PostgreSQL
+    R->>G: POST /functions/v1/corridas<br/>Authorization (JWT anon) + x-device-token
+    G->>G: verifica o JWT
+    G->>F: repassa a requisição
+    F->>F: compara x-device-token com o segredo DEVICE_TOKEN
+    F->>B: criar_corrida('8x4') com a service_role
+    B-->>F: corrida em andamento, numero_tentativa por labirinto
+    F-->>R: 201 com a corrida
+```
+
+**Figura.** Criação de uma corrida pelo robô: o gateway confere o JWT, a função confere o
+token do dispositivo e só então o banco é chamado com a chave de serviço.
+
+| Requisição | Corpo | Resposta |
+|---|---|---|
+| `POST /functions/v1/corridas` | `{"labirinto": "4x4"}`, `"8x4"` ou `"12x4"` | `201` com a corrida `em_andamento` e o `numero_tentativa` contado por labirinto |
+| `POST /functions/v1/corridas/{id}/encerrar` | `{"status": "concluida"}` ou `"nao_concluida"`, mais `tempo_final`, `velocidade_media`, `velocidade_pico` e `consumo_bateria` (opcionais, números não negativos) | `200` com a corrida encerrada e `data_hora_fim` preenchida |
+
+**Regras.**
+
+- **Tentativa por labirinto:** a primeira corrida de cada labirinto é a tentativa 1. Um
+  *advisory lock* no banco serializa as criações do mesmo labirinto, e a restrição única
+  (`labirinto_id`, `numero_tentativa`) é a segunda barreira contra números repetidos.
+- **Encerramento idempotente:** repetir o encerramento com o mesmo status (por exemplo,
+  quando o robô reenvia o pedido depois de uma queda de Wi-Fi) devolve a corrida como
+  está; com outro status, a resposta é `409`. Sem `tempo_final`, o banco usa o tempo
+  desde `data_hora_inicio`.
+- **Erros:** `400` (corpo, status ou id inválidos), `401` (JWT ou token do dispositivo),
+  `404` (labirinto ou corrida inexistente), `405` (método), `409` (já encerrada com outro
+  status) e `500` (falha do banco, sem expor a mensagem).
+
+**Autenticação em duas camadas.** O gateway do Supabase exige um JWT válido no
+`Authorization` (a chave `anon`), e a função exige também o cabeçalho `x-device-token`,
+comparado em tempo constante com o segredo `DEVICE_TOKEN`. Sem o segredo configurado,
+ninguém é autorizado. O `DEVICE_TOKEN` é definido com `supabase secrets set` e guardado
+fora do Git; a `service_role` nunca sai do servidor.
+
+**Decisão sobre quem cria a corrida.** Ficou decidido que **tanto o robô quanto o
+dashboard podem criar a corrida**, e que a **verificação de JWT do gateway continua
+ativa** (a função não é publicada com `--no-verify-jwt`). Hoje a função aceita só o
+`x-device-token`, o caminho do robô. O caminho do dashboard fica para a HU-15 e depende do
+login de operador: o dashboard vai enviar o JWT do operador autenticado, e a função
+precisará aceitá-lo como alternativa ao token do dispositivo e responder ao CORS do
+navegador. O `DEVICE_TOKEN` não deve ir para o frontend, porque qualquer pessoa poderia
+lê-lo no navegador.
+
 #### Visões 4+1
 
 1. **Lógica:** módulos do firmware (Navegação, Percepção via LiDAR e *encoders*,
@@ -763,6 +823,84 @@ nova sem precisar consultar o banco de novo (HU-08, RNF05).
    o frontend hospedado como site estático (Vercel ou Netlify) consumindo o Supabase
    diretamente via `supabase-js`.
 5. **Dados:** modelo relacional descrito no MER e no DER acima.
+
+#### Implementação do frontend
+
+O dashboard fica em `src/frontend` (tarefa
+[#230](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230), PR
+[#361](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/361), HU-14). É um
+projeto **React 18 + Vite + TypeScript**, com **Recharts** para os gráficos, **supabase-js**
+para ler o banco e CSS simples, sem *framework* de estilos. Nesta etapa as telas seguem o
+[protótipo navegável](#prototipo-navegavel) com **dados de exemplo** no formato das
+tabelas do banco; a única leitura real é a tabela `labirintos`, que confirma a conexão. Como
+rodar está no [README do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/frontend).
+
+**Variáveis de ambiente.** O cliente do Supabase (`src/lib/supabase.ts`) é criado a partir
+de `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`. O `.env.example` traz só os nomes, e o
+`.env.local` com os valores reais está no `.gitignore`. Toda variável com prefixo `VITE_` é
+embutida no código que roda no navegador, então ali entra **só a chave `anon`**, que pelo
+RLS apenas lê. A `service_role` e o `DEVICE_TOKEN` nunca vão para o frontend.
+
+**Telas e estados.** Cada estado do protótipo virou um estado da tela ao vivo, e o
+histórico segue o Frame 04:
+
+| Tela / estado | Frame | O que mostra | HUs |
+|---|---|---|---|
+| Ao vivo · aguardando largada | `01_Idle` | Malha vazia com o robô na largada, cards zerados (100 %, 8.4 V, 00:00.000) e `INICIAR CORRIDA` | HU-14 |
+| Ao vivo · em execução | `02_Running` | Trajeto laranja, paredes já mapeadas, robô com a orientação, cards e gráfico atualizando, badge vermelho `NÃO (EM ANDAMENTO)` e botão travado | HU-06, HU-08, HU-14 |
+| Ao vivo · desafio concluído | `03_Completed` | Robô no objetivo, cronômetro congelado, nota da tentativa, badge verde `SIM` e `RESETAR / NOVA TENTATIVA` | HU-07, HU-14 |
+| Histórico de consultas | `04_History_View`, `M1` a `M3` | Tabela de corridas (data/hora, labirinto, tentativa e nota, tempo final, velocidade, bateria e status) e filtro por labirinto | HU-10, HU-15 |
+
+```mermaid
+flowchart LR
+    App["App<br/>aba, labirinto e tentativa"] --> Cab["Cabecalho<br/>abas, seletor e badge"]
+    App --> Vivo["TelaAoVivo"]
+    App --> Hist["TelaHistorico"]
+    Vivo --> Grade["GradeLabirinto<br/>malha SVG"]
+    Vivo --> Cards["CartaoMetrica × 3"]
+    Vivo --> Graf["GraficoVelocidade<br/>Recharts"]
+    Hist --> Filtro["FiltroLabirinto"]
+    Hist --> Tab["TabelaHistorico"]
+    App -. useLabirintos .-> SB[("Supabase<br/>tabela labirintos")]
+    App -. useReproducaoCorrida .-> Ex["Dados de exemplo<br/>telemetria e corridas"]
+```
+
+**Figura.** Componentes do dashboard. As linhas tracejadas são as fontes de dados: hoje só
+`labirintos` vem do banco; telemetria e corridas são de exemplo.
+
+O `GraficoVelocidade` é importado sob demanda (`React.lazy`): o Recharts, a maior
+dependência, fica num arquivo à parte e só é baixado quando a corrida começa e o gráfico
+aparece. Assim a primeira carga da página leva só o React, o supabase-js e o código das telas.
+
+**Malha do labirinto.** O `GradeLabirinto` desenha a malha em SVG com as mesmas convenções
+do firmware: a célula (0, 0) é a largada, no canto inferior esquerdo; Norte aumenta a
+linha e Leste aumenta a coluna; o objetivo é a célula (linhas − 1, colunas − 1). As paredes
+vêm no formato de `mapa_celulas` e do JSON do mapa
+([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)): `true` é
+desenhada, `false` e `null` (não explorada) não. A malha usa os tamanhos reais dos
+labirintos (4×4, 8×4 e 12×4), e não a grade 16×16 do protótipo.
+
+**Dados de exemplo e troca pelos dados reais.** Os tipos de `src/tipos.ts` repetem os nomes
+das colunas da migração, então a troca não muda os componentes:
+
+| Hoje (exemplo) | Depois (real) | Quando |
+|---|---|---|
+| Labirintos de `LabirintosExemplo.h` do firmware, com trajeto gerado respeitando as paredes | Linhas novas de `telemetria` e `mapa_celulas` pelo Supabase Realtime | HU-08, HU-16 e HU-06 (Sprints 6–7) |
+| `useReproducaoCorrida` reproduz a corrida 4× mais rápido e termina pelo evento `objetivo_alcancado` | O mesmo estado, alimentado pelas leituras recebidas | HU-08 |
+| Botões só controlam a reprodução | `INICIAR CORRIDA` cria a corrida pela Edge Function `corridas` | HU-15 |
+| Lista fixa de corridas | Consulta à tabela `corridas`, com filtro por `labirinto_id` | HU-10 e HU-15 (Sprints 4–5) |
+
+**Regras de exibição.**
+
+- **Nota:** desafio cumprido na 1ª tentativa vale 10, na 2ª vale 7,5 e na 3ª vale 5, como no
+  tema do PI1.
+- **Bateria:** o percentual é estimado de forma linear pela tensão, entre 6,6 V (corte) e
+  8,4 V (carga plena) da LiPo 2S. É provisório, porque a curva real não é linear; na HU-08
+  ele pode passar a usar a [tabela de SoC × tensão](energia/curva-descarga-lipo.md#4-tabela-de-correlacao-estado-de-carga-soc-vs-tensao-de-terminal)
+  da [#139](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/139).
+- **Consumo no histórico:** a coluna `corridas.consumo_bateria` ainda admite "mAh ou %
+  consumida". A tela assume % consumida e mostra a carga restante (`100 − consumo`), como no
+  Frame 04. A unidade precisa ser fechada na HU-09.
 
 #### Consulta ao histórico de corridas no Supabase (HU-10)
 
@@ -975,4 +1113,6 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 0.7 | 28/09/2026 | Adiciona o roteiro de testes de software | Eduardo Viana | Bruno Duarte |
 | 0.8 | 07/10/2026 | Adiciona o histórico de versões | Ana Carolina Fialho | Cláudio Henrique |
 | 0.9 | 16/10/2026 | Documenta a implementação do banco no Supabase: migrações, restrições, *seed*, RLS e Realtime (#228) | Eduardo Viana | Cláudio Henrique |
+| 1.0 | 18/10/2026 | Documenta a escrita de corridas mediada por Edge Function e a decisão sobre quem cria a corrida ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)) | Eduardo Viana | Cláudio Henrique |
+| 1.1 | 19/10/2026 | Documenta a implementação do frontend: estrutura, variáveis de ambiente, telas, componentes e dados de exemplo ([#230](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230)) | Eduardo Viana | Ana Carolina Fialho |
 | 1.2 | 19/10/2026 | Documenta a consulta do histórico de corridas no Supabase: hook useCorridas, ordenação e estado vazio ([#235](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235)) | Rafael Lima | Ana Carolina Fialho |
