@@ -1319,3 +1319,82 @@ O teste criou 4 corridas no banco (ids 1 e 4 no 4×4, 2 no 8×4 e 3 no 12×4). A
 - Apagar as 4 corridas de teste antes das corridas reais (`DELETE FROM corridas WHERE id IN (1, 2, 3, 4);` no SQL Editor, por um dono do projeto). Enquanto elas existirem, a próxima corrida do 4×4 será a tentativa 3.
 - Caminho do dashboard para criar corridas (decisão da #233): aceitar o JWT de um operador logado como alternativa ao `x-device-token` e responder ao CORS do navegador, junto com o login de operador da HU-15.
 - Ingestão de telemetria e do mapa (`telemetria` e `mapa_celulas`) por Edge Function, com o mesmo token de dispositivo, em issue separada.
+
+---
+
+### Sprint 4 · Histórico de corridas com dados reais (Supabase)
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#235 Tela de histórico com dados reais](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235) |
+| História de usuário | HU-10 · Consultar histórico de corridas ([#44](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/44)), RF10 |
+| Código testado | `src/frontend` (branch `feat/235-tela-historico-dados-reais`) |
+| Data da execução | 19/10/2026 |
+| Executado por | Rafael Lima |
+| Documentação do código | [Software: consulta ao histórico no Supabase](../04-projeto-conceitual/software.md#consulta-ao-historico-de-corridas-no-supabase-hu-10) e [README do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/frontend) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Node.js e npm | Node.js v20+, npm 10+ |
+| Ferramentas de build | Vite 6.4.4 e TypeScript 5 (`tsc --noEmit`) |
+| Bibliotecas | React 18.3, Recharts 2.13.3 e supabase-js 2.45.4 |
+| Banco | Projeto Supabase (PostgreSQL gerenciado com RLS), lido com a chave pública `anon` |
+| Navegador | Navegador baseado em Chromium (Google Chrome / Brave) |
+| Sistema operacional | Linux (kernel 6.x / Ubuntu) |
+
+#### Compilação e tipagem (build)
+
+> [!NOTE]
+> Para reproduzir localmente antes da integração com a `main`, garanta que esteja na branch `feat/235-tela-historico-dados-reais` (ou na branch `main` após a conclusão do *merge* do PR), pois as branches de documentação não contêm os arquivos fonte da aplicação.
+
+Comandos para reprodução:
+
+```bash
+# Acessar a branch com o código-fonte (ou main após o merge)
+git checkout feat/235-tela-historico-dados-reais
+
+# Entrar no diretório do frontend e instalar as dependências
+cd src/frontend
+npm install
+
+# Executar a verificação de tipos e o build
+npm run build
+```
+
+Saída da compilação:
+
+```text
+> micromouse-dashboard@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v6.4.4 building for production...
+transforming (1) src/main.tsx...
+✓ 717 modules transformed.
+rendering chunks (1)...
+dist/index.html                              0.60 kB │ gzip:   0.37 kB
+dist/assets/index-BkxvmZS-.css               8.65 kB │ gzip:   2.36 kB
+dist/assets/index-B4HLetex.js              391.67 kB │ gzip: 112.79 kB
+dist/assets/GraficoVelocidade--n061iNo.js  395.18 kB │ gzip: 108.76 kB
+✓ built in 1.43s
+```
+
+Verificação estática de tipos via `tsc --noEmit` concluída sem nenhum erro ou advertência de tipagem TypeScript.
+
+#### Casos de teste e validação dos critérios
+
+Os testes verificaram os critérios de aceitação definidos na issue #235 e na HU-10:
+
+| Caso | Critério avaliado | Procedimento | Resultado esperado | Situação |
+|---|---|---|---|:---:|
+| CT-HIST-01 | Listagem das 7 colunas | Acessar aba Histórico com corridas retornadas pelo Supabase | Tabela lista Data/Hora, Labirinto, Tentativa (com nota), Tempo Final, Velocidade média, Carga restante de bateria e Badge de Status | **Aprovado** |
+| CT-HIST-02 | Ordenação decrescente | Inserir corridas em instantes diferentes e consultar o histórico | Corridas ordenadas da mais recente para a mais antiga (`data_hora_inicio` decrescente) | **Aprovado** |
+| CT-HIST-03 | Estado vazio sem registros | Consultar histórico quando a tabela `corridas` está vazia | Exibe `"Nenhuma corrida registrada."` na área central da tabela | **Aprovado** |
+| CT-HIST-04 | Filtro por tipo de labirinto | Selecionar filtro (4×4, 8×4, 12×4) com e sem corridas correspondentes | Exibe apenas corridas do labirinto selecionado; caso não haja, exibe `"Nenhuma corrida registrada para este filtro."` | **Aprovado** |
+| CT-HIST-05 | Atualização sob demanda | Clicar no botão "Atualizar" no cabeçalho da tela de histórico | Dispara nova requisição GET ao Supabase e reflete dados atualizados | **Aprovado** |
+| CT-HIST-06 | Feedback de carregamento e erro | Simular latência e falha de conexão na requisição do Supabase | Exibe mensagem de carregamento e, em falha, alerta de erro com botão de tentativa | **Aprovado** |
+| CT-HIST-07 | Modo de contingência (fallback) | Executar a aplicação sem o arquivo `.env.local` (`supabase` nulo) | Dashboard utiliza `CORRIDAS_EXEMPLO` sem interromper a navegação da aplicação | **Aprovado** |
+
+**Resultado consolidado:** 7 de 7 casos aprovados.
+
