@@ -97,6 +97,13 @@ void test_sensores_i2c_e_encoders_nao_dividem_pino() {
   }
 }
 
+void test_enderecos_dos_vl53l0x_conferem_com_a_issue_344() {
+  TEST_ASSERT_EQUAL_HEX8(0x30, pinos::ENDERECO_TOF_ESQ);
+  TEST_ASSERT_EQUAL_HEX8(0x31, pinos::ENDERECO_TOF_FRONTAL);
+  TEST_ASSERT_EQUAL_HEX8(0x32, pinos::ENDERECO_TOF_DIR);
+  TEST_ASSERT_TRUE(pinos::enderecosTofDistintos());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_pinagem_confere_com_o_esquematico_rev2);
@@ -106,5 +113,6 @@ int main(int, char**) {
   RUN_TEST(test_usb_nativa_fica_reservada_para_o_log);
   RUN_TEST(test_uart0_so_alimenta_o_driver_dos_motores);
   RUN_TEST(test_sensores_i2c_e_encoders_nao_dividem_pino);
+  RUN_TEST(test_enderecos_dos_vl53l0x_conferem_com_a_issue_344);
   return UNITY_END();
 }

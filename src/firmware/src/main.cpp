@@ -4,9 +4,10 @@
 /// Navegação e telemetria rodam em tarefas separadas e concorrentes, como no
 /// diagrama de atividades. Os encoders físicos de quadratura são decodificados por
 /// interrupção de hardware no ESP32-C3, alimentam a odometria (pose na malha) e são reportados na
-/// telemetria.
+/// telemetria. Os 3 sensores de distância VL53L0X são lidos pelo I²C na tarefa de navegação.
 
 #include <Arduino.h>
+#include <Wire.h>
 
 // O log (`Serial`) tem que sair pela USB nativa: GPIO20/21, a UART0, são entradas do driver dos
 // motores. Se esta opção faltar no `platformio.ini`, o log iria para os pinos do motor direito.
@@ -22,6 +23,7 @@
 #include "Odometria.h"
 #include "Pinos.h"
 #include "MotoresDrv8833.h"
+#include "TofVl53l0x.h"
 
 /// Dono do mapa da corrida. Fica fora das tarefas para sobreviver ao reinício delas (HU-04).
 /// A navegação recebe `armazenamentoMapa.mapa()` para registrar paredes; a telemetria, a versão
@@ -45,6 +47,22 @@ static micromouse::MedidorDeslocamento medidorDeslocamento(encoderEsq, encoderDi
 static micromouse::Odometria odometria;
 static portMUX_TYPE travaOdometria = portMUX_INITIALIZER_UNLOCKED;
 
+/// Sensores de distância VL53L0X (#344). Só a tarefa de navegação fala com eles pelo I²C; a
+/// telemetria lê a cópia `ultimaLeituraTof`, protegida pela seção crítica `travaTof`.
+static micromouse::TofVl53l0x tof(Wire,
+                                  {micromouse::pinos::XSHUT_FRONTAL, micromouse::pinos::ENDERECO_TOF_FRONTAL},
+                                  {micromouse::pinos::XSHUT_ESQ, micromouse::pinos::ENDERECO_TOF_ESQ},
+                                  {micromouse::pinos::XSHUT_DIR, micromouse::pinos::ENDERECO_TOF_DIR});
+
+/// Última leitura dos sensores de distância, copiada pela navegação para a telemetria.
+struct LeituraTofTelemetria {
+  micromouse::DistanciasLaterais distancias = {0, 0, 0};
+  bool valida = false;
+  uint32_t idadeMs = 0;
+};
+static LeituraTofTelemetria ultimaLeituraTof;
+static portMUX_TYPE travaTof = portMUX_INITIALIZER_UNLOCKED;
+
 /// Tarefa de navegação: ciclo percepção → decisão → atuação, a cada 10 ms.
 ///
 /// Prioridade 2 (maior que a da telemetria), para que o envio de dados nunca
@@ -55,6 +73,14 @@ static void tarefaNavegacao(void*) {
     portENTER_CRITICAL(&travaOdometria);
     odometria.atualizar(encoderEsq, encoderDir);
     portEXIT_CRITICAL(&travaOdometria);
+
+    // Sensores de distância: a leitura não espera medida nova, só junta as últimas amostras.
+    LeituraTofTelemetria leituraTof;
+    leituraTof.valida = tof.lerDistanciasLaterais(leituraTof.distancias);
+    leituraTof.idadeMs = tof.idadeUltimaLeituraMs();
+    portENTER_CRITICAL(&travaTof);
+    ultimaLeituraTof = leituraTof;
+    portEXIT_CRITICAL(&travaTof);
 
     // Ciclo percepção, decisão e atuação: percepção, mapeamento, navegação e atuação entram aqui.
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -80,8 +106,14 @@ static void tarefaTelemetria(void*) {
     const bool poseValida = odometria.posicaoValida();
     portEXIT_CRITICAL(&travaOdometria);
 
+    portENTER_CRITICAL(&travaTof);
+    const LeituraTofTelemetria leituraTof = ultimaLeituraTof;
+    portEXIT_CRITICAL(&travaTof);
+
     Serial.printf("{\"esq_pulsos\":%ld,\"dir_pulsos\":%ld,\"esq_mm\":%ld,\"dir_mm\":%ld,\"medio_mm\":%ld,"
-                  "\"linha\":%u,\"coluna\":%u,\"orientacao\":\"%c\",\"pose_valida\":%s}\n",
+                  "\"linha\":%u,\"coluna\":%u,\"orientacao\":\"%c\",\"pose_valida\":%s,"
+                  "\"tof_frente_mm\":%u,\"tof_esq_mm\":%u,\"tof_dir_mm\":%u,\"tof_valida\":%s,"
+                  "\"tof_idade_ms\":%lu}\n",
                   static_cast<long>(pulsosEsq),
                   static_cast<long>(pulsosDir),
                   static_cast<long>(d.esquerdaMm),
@@ -90,7 +122,12 @@ static void tarefaTelemetria(void*) {
                   static_cast<unsigned>(pose.celula.linha),
                   static_cast<unsigned>(pose.celula.coluna),
                   micromouse::letraDaDirecao(pose.direcao),
-                  poseValida ? "true" : "false");
+                  poseValida ? "true" : "false",
+                  static_cast<unsigned>(leituraTof.distancias.frenteMm),
+                  static_cast<unsigned>(leituraTof.distancias.esquerdaMm),
+                  static_cast<unsigned>(leituraTof.distancias.direitaMm),
+                  leituraTof.valida ? "true" : "false",
+                  static_cast<unsigned long>(leituraTof.idadeMs));
 
     // Comando serial para zerar medição (usado na bancada)
     while (Serial.available()) {
@@ -120,7 +157,8 @@ static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
                                           false,
                                           true);
 
-/// Inicializa o log serial pela USB nativa, os encoders e cria as duas tarefas.
+/// Inicializa o log serial pela USB nativa, os encoders, os sensores de distância e cria as duas
+/// tarefas.
 void setup() {
   Serial.begin(115200);
   // Sem um computador conectado, a escrita na USB CDC esperaria o tempo limite a cada chamada e
@@ -131,6 +169,15 @@ void setup() {
   motores.iniciar();  // começa freado
   encoderEsq.iniciar();
   encoderDir.iniciar();
+
+  // O barramento I²C é dos 3 VL53L0X e do MPU6050; o driver dos ToF recebe ele já iniciado.
+  Wire.begin(micromouse::pinos::I2C_SDA, micromouse::pinos::I2C_SCL);
+  if (!tof.iniciar()) {
+    Serial.printf("micromouse: falha nos sensores de distancia (frente %s, esquerda %s, direita %s)\n",
+                  tof.sensorIniciado(micromouse::Lado::Frente) ? "ok" : "falhou",
+                  tof.sensorIniciado(micromouse::Lado::Esquerda) ? "ok" : "falhou",
+                  tof.sensorIniciado(micromouse::Lado::Direita) ? "ok" : "falhou");
+  }
 
   xTaskCreate(tarefaNavegacao, "navegacao", 4096, nullptr, 2, nullptr);
   xTaskCreate(tarefaTelemetria, "telemetria", 4096, nullptr, 1, nullptr);
