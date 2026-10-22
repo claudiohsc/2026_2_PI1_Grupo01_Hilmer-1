@@ -138,6 +138,22 @@ Execute os comandos dentro de `src/firmware`:
 | Rodar os testes no computador | `pio test -e native` |
 | Rodar um teste específico | `pio test -e native -f test_nucleo` |
 
+## Pinagem e log serial (Rev 2.0)
+
+A placa é a **ESP32-C3 Super Mini** (esquemático Rev 2.0 de 21/10/2026). Todos os 15 GPIOs do ESP32-C3 estão em uso:
+
+| Função | GPIO |
+|---|---|
+| I²C: SDA / SCL (3 VL53L0X e MPU6050) | 9 / 8 |
+| XSHUT dos VL53L0X: esquerdo / frontal / direito | 0 / 1 / 2 |
+| Motor esquerdo no DRV8833: IN1 / IN2 | 10 / 3 |
+| Motor direito no DRV8833: IN3 / IN4 | 20 / 21 |
+| Encoder esquerdo: A / B (reservado, ainda não instalado) | 4 / 5 |
+| Encoder direito: A / B (reservado, ainda não instalado) | 6 / 7 |
+| USB nativa: D− / D+ (log e gravação) | 18 / 19 |
+
+O **log serial sai pela USB nativa** (`ARDUINO_USB_MODE=1` e `ARDUINO_USB_CDC_ON_BOOT=1` no `platformio.ini`), porque GPIO20/21, a UART0, são as entradas do driver dos motores. O `main.cpp` não compila sem essas opções. Ao ligar, a ROM do ESP32-C3 ainda escreve no GPIO21 durante o reset: a montagem precisa manter o driver desabilitado no boot (validação da eletrônica na bancada). A porta serial aparece no computador como um dispositivo USB (`pio device monitor` a encontra sozinho); sem um computador conectado, o log é descartado.
+
 ## Padrão de testes
 
 | Nível | Onde roda | Ferramenta | Quando usar |
@@ -172,7 +188,7 @@ Nomeie as funções de teste pelo comportamento esperado (`test_classifica_como_
 - Código dentro do namespace `micromouse`.
 - Um arquivo `.h` por tipo ou conceito, com `#pragma once`.
 - Cada tarefa do épico adiciona seus arquivos na pasta da própria camada e seus testes em `test/test_<modulo>/`.
-- A pinagem está em `lib/nucleo/src/Pinos.h` e segue os [diagramas de hardware](../../docs/04-projeto-conceitual/hardware-diagramas.md).
+- A pinagem está em `lib/nucleo/src/Pinos.h` e segue o esquemático Rev 2.0 (ver [hardware](../../docs/04-projeto-conceitual/hardware.md)). Ela é o único lugar com número de GPIO; o teste `test_pinos` reprova repetição e GPIO inexistente.
 
 ## CI
 

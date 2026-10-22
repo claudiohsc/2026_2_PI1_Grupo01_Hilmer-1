@@ -14,9 +14,9 @@ namespace micromouse {
 
 /// Lê bytes de uma UART do ESP32, sem bloquear.
 ///
-/// ATENÇÃO aos pinos: `Pinos.h` prevê o LiDAR em GPIO20/GPIO21, que são os pinos da UART0
-/// usada pelo `Serial` (log e gravação). Se o `Serial` estiver em uso nesses pinos, o log e os
-/// dados do sensor se misturam. Por isso os pinos são parâmetros de `iniciar()`.
+/// Os pinos são parâmetros de `iniciar()`. Na Rev 2.0 do esquemático (#377) não há UART de
+/// sensor: o LiDAR saiu e GPIO20/GPIO21, a UART0, são as entradas IN3/IN4 do driver dos motores.
+/// O log sai pela USB nativa. Este adaptador fica para uma fonte de bytes por UART futura.
 class FonteBytesSerial : public IFonteBytes {
  public:
   /// @param serial UART a usar, por exemplo `Serial1`.
