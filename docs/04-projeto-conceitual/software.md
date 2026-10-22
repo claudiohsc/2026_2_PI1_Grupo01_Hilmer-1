@@ -902,6 +902,43 @@ das colunas da migração, então a troca não muda os componentes:
   consumida". A tela assume % consumida e mostra a carga restante (`100 − consumo`), como no
   Frame 04. A unidade precisa ser fechada na HU-09.
 
+#### Consulta ao histórico de corridas no Supabase (HU-10)
+
+O histórico de corridas do dashboard (`src/frontend/src/paginas/TelaHistorico.tsx`) foi
+integrado à tabela `corridas` do Supabase (tarefa
+[#235](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235), HU-10, RF10),
+substituindo os dados estáticos de exemplo pela consulta real via `supabase-js`.
+
+**Segurança e RLS.** A leitura é realizada com a chave pública `anon`
+(`VITE_SUPABASE_ANON_KEY`), autorizada pela política RLS `"Leitura pública de corridas"`
+(definida na migração `20261014180500_seguranca_rls.sql`). A política concede exclusivamente
+permissão de `SELECT` para as roles `anon` e `authenticated`. Operações de escrita continuam
+bloqueadas no frontend e são mediadas exclusivamente pelas Edge Functions do backend (#233).
+
+**Hook `useCorridas`.** Criado em `src/frontend/src/hooks/useCorridas.ts`, o hook encapsula
+o ciclo de vida da requisição e expõe os estados `{ corridas, carregando, erro, recarregar }`:
+
+- **Consulta:** executa `supabase.from('corridas').select('*').order('data_hora_inicio', { ascending: false })`,
+  garantindo que as tentativas mais recentes apareçam no topo da tabela.
+- **Disparo sob demanda:** a função `recarregar` permite reexecutar a busca quando o usuário
+  aciona o botão "Atualizar" no cabeçalho do histórico.
+- **Tratamento de fallback:** quando `supabase` for `null` (ausência de `.env.local`), o hook
+  carrega os dados simulados de `CORRIDAS_EXEMPLO`, permitindo que desenvolvedores de outras
+  áreas executem a interface localmente sem dependência externa.
+
+**Componentes e Regras de Interface.**
+
+- **`TelaHistorico`:** dispara a busca no banco ao montar quando o usuário navega para a aba
+  Histórico. Gerencia o filtro por tipo de labirinto (Todos, 4×4, 8×4, 12×4), exibe o contador
+  de corridas visíveis, botão de atualização manual com indicador de carregamento e mensagem
+  de erro caso ocorra falha de rede.
+- **`TabelaHistorico`:** renderiza as 7 colunas previstas na especificação (Data/Hora, Labirinto,
+  Tentativa com nota, Tempo final formatado em mm:ss.sss, Velocidade média em m/s, Carga
+  restante estimada da bateria em percentual e o Badge de status).
+- **Tratamento de estado vazio:** caso o banco de dados ainda não possua registros de corridas,
+  a interface exibe `"Nenhuma corrida registrada."`. Caso o usuário aplique um filtro que não
+  tenha correspondências, a mensagem passa a ser `"Nenhuma corrida registrada para este filtro."`.
+
 > - **Roteiro de testes funcionais:**
 >   - Código do caso de teste;
 >   - Nome do caso de teste;
@@ -1078,3 +1115,4 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 0.9 | 16/10/2026 | Documenta a implementação do banco no Supabase: migrações, restrições, *seed*, RLS e Realtime (#228) | Eduardo Viana | Cláudio Henrique |
 | 1.0 | 18/10/2026 | Documenta a escrita de corridas mediada por Edge Function e a decisão sobre quem cria a corrida ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)) | Eduardo Viana | Cláudio Henrique |
 | 1.1 | 19/10/2026 | Documenta a implementação do frontend: estrutura, variáveis de ambiente, telas, componentes e dados de exemplo ([#230](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230)) | Eduardo Viana | Ana Carolina Fialho |
+| 1.2 | 19/10/2026 | Documenta a consulta do histórico de corridas no Supabase: hook useCorridas, ordenação e estado vazio ([#235](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235)) | Rafael Lima | Ana Carolina Fialho |
