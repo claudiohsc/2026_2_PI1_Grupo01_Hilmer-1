@@ -34,10 +34,12 @@ jobs:
           cache: npm
           cache-dependency-path: src/backend/package-lock.json
       - run: npm ci
-      - name: Rodar os testes
+      # Testes com cobertura de linhas mínima de 80% (Node 22.8 ou superior). Só entram os arquivos
+      # carregados pelos testes; o index.ts da Edge Function é conferido pelo deno check, abaixo.
+      - name: Rodar os testes com cobertura
         run: |
           set -o pipefail
-          npm test -- --test-reporter=spec 2>&1 | tee "$RUNNER_TEMP/testes-backend.txt"
+          npm run test:cobertura -- --test-reporter=spec 2>&1 | tee "$RUNNER_TEMP/testes-backend.txt"
       - name: Resumo dos testes
         if: always()
         run: |
@@ -46,6 +48,12 @@ jobs:
             echo '```'
             grep -E '^ℹ (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)' "$RUNNER_TEMP/testes-backend.txt" || echo 'Os testes não chegaram ao fim; veja o log do passo anterior.'
             echo '```'
+            if grep -q 'start of coverage report' "$RUNNER_TEMP/testes-backend.txt"; then
+              echo '#### Cobertura dos testes (mínimo de 80% das linhas)'
+              echo '```'
+              sed -n '/start of coverage report/,/end of coverage report/p' "$RUNNER_TEMP/testes-backend.txt" | sed -E 's/^ℹ //'
+              echo '```'
+            fi
             if grep -q '✖ failing tests:' "$RUNNER_TEMP/testes-backend.txt"; then
               echo '#### Testes que falharam'
               echo '```'
@@ -57,7 +65,8 @@ jobs:
       - uses: denoland/setup-deno@v2
         if: ${{ !cancelled() }}
         with:
-          deno-version: v2.x
+          # Versão fixa, como o PlatformIO e o gcovr no CI do firmware. Para atualizar, troque aqui e confira o deno check.
+          deno-version: 2.9.8
       # Há um package.json em src/backend (só para os testes do Node), então o Deno 2 entra no modo
       # "manual" e procura o npm:@supabase/supabase-js na pasta node_modules. No Supabase não existe
       # node_modules: o pacote vem do cache do Deno. `--node-modules-dir=none` reproduz isso.
