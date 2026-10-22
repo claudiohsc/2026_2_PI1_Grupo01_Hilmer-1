@@ -18,6 +18,12 @@ class IMotores;
 ///
 /// O labirinto inicia na célula (0, 0) no canto inferior esquerdo. O objetivo
 /// situa-se sempre no canto diametralmente oposto: (linhas - 1, colunas - 1).
+///
+/// @note Arquitetura e simplificação: a classe provê sobrecargas por conveniência
+/// (PosicaoCelula, DimensaoMapa e linhas/colunas). Atualmente existe uma instância
+/// em `Navegacao` (para consultas do algoritmo de busca) e outra provisória em `main.cpp`
+/// para o ciclo do firmware. Esta interface e duplicidade serão unificadas e simplificadas
+/// assim que o ciclo de navegação assumir o controle da tarefa principal.
 class DetectorObjetivo {
  public:
   /// Calcula a célula objetivo diametralmente oposta a partir das dimensões do labirinto.
@@ -91,12 +97,21 @@ class DetectorObjetivo {
   /// Retorna se o objetivo já foi alcançado e processado.
   bool objetivoAlcancado() const { return alcancado_; }
 
-  /// Reseta o estado de conclusão (ex.: para nova corrida ou reinício de tentativa).
-  void resetar() { alcancado_ = false; }
+  /// Retorna `true` se houver evento pontual de chegada pendente para a telemetria, limpando-o em seguida.
+  /// Permite transmitir o evento `"objetivo_alcancado"` em um único pacote de telemetria pontual (HU-07 / #189).
+  /// Deve ser chamado com sincronização entre tarefas (ex.: seção crítica com `travaOdometria`).
+  bool consumirEventoChegada();
+
+  /// Reseta o estado de conclusão e o evento pendente (ex.: para nova corrida ou reinício de tentativa).
+  void resetar() {
+    alcancado_ = false;
+    eventoChegadaPendente_ = false;
+  }
 
  private:
   PosicaoCelula objetivo_{0, 0};
   bool alcancado_ = false;
+  bool eventoChegadaPendente_ = false;
 };
 
 }  // namespace micromouse

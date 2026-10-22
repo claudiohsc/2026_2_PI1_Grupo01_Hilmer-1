@@ -45,6 +45,14 @@ static micromouse::MedidorDeslocamento medidorDeslocamento(encoderEsq, encoderDi
 /// Pose (célula e direção) estimada pela odometria diferencial. A tarefa de navegação a atualiza a
 /// cada 10 ms e a telemetria a lê, então todo acesso passa pela seção crítica `travaOdometria`.
 static micromouse::Odometria odometria;
+
+/// Detector de chegada à célula objetivo.
+/// NOTA PROVISÓRIA (#189): Inicializado provisoriamente em DimensaoMapa::Labirinto4x4 para validação
+/// em bancada. Em labirintos 8x4 ou 12x4, a chegada não seria detectada com essa dimensão fixa.
+/// A dimensão deverá ser configurada dinamicamente via comando/configuração de corrida quando a seleção
+/// de tamanho for recebida pelo robô.
+/// Além disso, esta instância estática coexiste temporariamente com Navegacao::detector_ e será unificada
+/// assim que o ciclo de navegação assumir o controle do laço de percepção/decisão.
 static micromouse::DetectorObjetivo detectorObjetivo(micromouse::DimensaoMapa::Labirinto4x4);
 static portMUX_TYPE travaOdometria = portMUX_INITIALIZER_UNLOCKED;
 
@@ -65,19 +73,21 @@ static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
 /// atrase o controle do robô.
 static void tarefaNavegacao(void*) {
   for (;;) {
-    // Odometria: o intervalo curto (10 ms) mantém cada atualização com giro ou avanço, não os dois.
+    bool alcancou = false;
+    // Odometria e detecção de chegada executam na seção crítica travaOdometria para sincronizar com tarefaTelemetria.
     portENTER_CRITICAL(&travaOdometria);
     odometria.atualizar(encoderEsq, encoderDir);
     const micromouse::Pose pose = odometria.pose();
     const bool poseValida = odometria.posicaoValida();
-    portEXIT_CRITICAL(&travaOdometria);
-
     if (poseValida) {
       // Chegada detectada pela posição na malha: para os motores imediatamente e congela o mapa final (HU-07 / #189)
-      detectorObjetivo.processarChegada(pose, motores, &armazenamentoMapa);
+      alcancou = detectorObjetivo.processarChegada(pose, motores, &armazenamentoMapa);
+    } else {
+      alcancou = detectorObjetivo.objetivoAlcancado();
     }
+    portEXIT_CRITICAL(&travaOdometria);
 
-    if (detectorObjetivo.objetivoAlcancado()) {
+    if (alcancou) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
@@ -92,6 +102,8 @@ static void tarefaNavegacao(void*) {
 /// Prioridade 1. Transmite as leituras dos encoders, pose da odometria e eventos pontuais em formato JSON
 /// estruturado e aceita o comando 'Z' para zerar os encoders e voltar a odometria à pose atual.
 static void tarefaTelemetria(void*) {
+  static uint32_t sequencia = 0;
+
   for (;;) {
     // Leitura dos encoders
     const micromouse::DeslocamentoRodas d = medidorDeslocamento.medir();
@@ -99,15 +111,15 @@ static void tarefaTelemetria(void*) {
     const int32_t pulsosEsq = encoderEsq.lerContagem();
     const int32_t pulsosDir = encoderDir.lerContagem();
 
-    // Pose da odometria: uma cópia feita na seção crítica, para a linha e a coluna serem da mesma
-    // atualização.
+    // Pose da odometria e evento pontual consumidos de forma atômica na seção crítica
     portENTER_CRITICAL(&travaOdometria);
     const micromouse::Pose pose = odometria.pose();
     const bool poseValida = odometria.posicaoValida();
-    const bool objetivoAlcancado = detectorObjetivo.objetivoAlcancado();
+    const bool dispararEvento = detectorObjetivo.consumirEventoChegada();
     portEXIT_CRITICAL(&travaOdometria);
 
     micromouse::PacoteTelemetria pacote;
+    pacote.numeroSequencia = ++sequencia;
     pacote.pulsosEsq = pulsosEsq;
     pacote.pulsosDir = pulsosDir;
     pacote.esqMm = d.esquerdaMm;
@@ -115,7 +127,9 @@ static void tarefaTelemetria(void*) {
     pacote.medioMm = medio;
     pacote.pose = pose;
     pacote.poseValida = poseValida;
-    pacote.evento = objetivoAlcancado ? "objetivo_alcancado" : nullptr;
+    pacote.velocidade = 0.0f;     // Provisório até inclusão de cálculo de velocidade instantânea
+    pacote.tensaoBateria = 0.0f;  // Provisório até integração de leitura analógica da bateria
+    pacote.evento = dispararEvento ? "objetivo_alcancado" : nullptr;
 
     char buffer[256];
     if (micromouse::TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)) > 0) {
@@ -148,6 +162,8 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   Serial.println("micromouse: iniciando");
 
+  // Configuração provisória para bancada (#189): fixa Labirinto4x4.
+  // Em 8x4 e 12x4 a corrida deve receber a dimensão por comando antes de iniciar.
   armazenamentoMapa.iniciarCorrida(micromouse::DimensaoMapa::Labirinto4x4);
   motores.iniciar();  // começa freado
   encoderEsq.iniciar();

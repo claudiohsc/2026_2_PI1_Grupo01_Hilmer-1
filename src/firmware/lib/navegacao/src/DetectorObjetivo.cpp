@@ -46,10 +46,19 @@ bool DetectorObjetivo::processarChegada(const Pose& pose, IMotores& motores, Arm
   }
   if (alcancouObjetivo(pose)) {
     alcancado_ = true;
+    eventoChegadaPendente_ = true;
     motores.parar();
     if (armazenamento != nullptr) {
       armazenamento->congelarMapa();
     }
+    return true;
+  }
+  return false;
+}
+
+bool DetectorObjetivo::consumirEventoChegada() {
+  if (eventoChegadaPendente_) {
+    eventoChegadaPendente_ = false;
     return true;
   }
   return false;

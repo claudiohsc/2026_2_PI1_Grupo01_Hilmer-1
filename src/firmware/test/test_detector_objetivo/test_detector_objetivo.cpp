@@ -189,6 +189,30 @@ void test_resetar_detector_objetivo() {
 
   detector.resetar();
   TEST_ASSERT_FALSE(detector.objetivoAlcancado());
+  TEST_ASSERT_FALSE(detector.consumirEventoChegada());
+}
+
+void test_consumir_evento_chegada_apenas_uma_vez() {
+  DetectorObjetivo detector(DimensaoMapa::Labirinto4x4);
+  MotoresSimulados motores;
+
+  // Antes de chegar: nenhum evento pendente
+  TEST_ASSERT_FALSE(detector.consumirEventoChegada());
+
+  // Robô chega ao objetivo
+  detector.processarChegada(Pose{{3, 3}, Direcao::Norte}, motores);
+  TEST_ASSERT_TRUE(detector.objetivoAlcancado());
+
+  // Primeira consulta: consome o evento pontual e retorna true
+  TEST_ASSERT_TRUE(detector.consumirEventoChegada());
+
+  // Consultas seguintes (ciclos de telemetria posteriores): evento já limpo, retorna false
+  TEST_ASSERT_FALSE(detector.consumirEventoChegada());
+  TEST_ASSERT_FALSE(detector.consumirEventoChegada());
+
+  // Chegada idempotente repetida: não reativa o evento pontual já consumido
+  detector.processarChegada(Pose{{3, 3}, Direcao::Norte}, motores);
+  TEST_ASSERT_FALSE(detector.consumirEventoChegada());
 }
 
 void test_processar_chegada_sem_armazenamento_opcional() {
@@ -212,6 +236,7 @@ int main(int, char**) {
   RUN_TEST(test_processar_chegada_para_motores_imediatamente_e_congela_mapa);
   RUN_TEST(test_processar_chegada_idempotente_mantem_parado);
   RUN_TEST(test_resetar_detector_objetivo);
+  RUN_TEST(test_consumir_evento_chegada_apenas_uma_vez);
   RUN_TEST(test_processar_chegada_sem_armazenamento_opcional);
   return UNITY_END();
 }

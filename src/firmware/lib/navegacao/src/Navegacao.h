@@ -119,6 +119,11 @@ class Navegacao {
   const Mapa& mapa_;
   PosicaoCelula posicao_atual_ = {0, 0};
   Direcao direcao_atual_ = Direcao::Norte;
+
+  /// Detector de objetivo interno usado pelo Flood Fill para saber a célula de destino.
+  /// @note Duplicidade temporária: coexiste com o `detectorObjetivo` de `main.cpp`
+  /// até que a `Navegacao` seja integrada no laço da tarefa FreeRTOS e os detectores
+  /// sejam unificados e simplificados (#189 / revisão PR #351).
   DetectorObjetivo detector_;
 
   bool passo_pendente_ = false;

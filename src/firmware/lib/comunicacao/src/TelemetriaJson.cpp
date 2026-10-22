@@ -11,23 +11,29 @@ size_t TelemetriaJson::serializar(const PacoteTelemetria& pacote, char* saida, s
   saida[0] = '\0';
 
   JsonDocument doc;
-  doc["esq_pulsos"] = pacote.pulsosEsq;
-  doc["dir_pulsos"] = pacote.pulsosDir;
-  doc["esq_mm"] = pacote.esqMm;
-  doc["dir_mm"] = pacote.dirMm;
-  doc["medio_mm"] = pacote.medioMm;
-  doc["linha"] = pacote.pose.celula.linha;
-  doc["coluna"] = pacote.pose.celula.coluna;
+  // Campos mapeados 1:1 com a tabela `telemetria` do Supabase:
+  doc["numero_sequencia"] = pacote.numeroSequencia;
+  doc["posicao_linha"] = pacote.pose.celula.linha;
+  doc["posicao_coluna"] = pacote.pose.celula.coluna;
 
   const char orientacaoChar[2] = {letraDaDirecao(pacote.pose.direcao), '\0'};
   doc["orientacao"] = orientacaoChar;
-  doc["pose_valida"] = pacote.poseValida;
+  doc["velocidade"] = pacote.velocidade;
+  doc["tensao_bateria"] = pacote.tensaoBateria;
 
   if (pacote.evento != nullptr) {
     doc["evento"] = pacote.evento;
   } else {
     doc["evento"] = nullptr;
   }
+
+  // Campos diagnósticos de encoders e calibração de bancada:
+  doc["esq_pulsos"] = pacote.pulsosEsq;
+  doc["dir_pulsos"] = pacote.pulsosDir;
+  doc["esq_mm"] = pacote.esqMm;
+  doc["dir_mm"] = pacote.dirMm;
+  doc["medio_mm"] = pacote.medioMm;
+  doc["pose_valida"] = pacote.poseValida;
 
   if (measureJson(doc) >= capacidade) {
     return 0;
