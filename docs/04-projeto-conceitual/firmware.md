@@ -390,38 +390,43 @@ flowchart LR
 
 ## Navegação: detecção do objetivo e evento na telemetria
 
-O módulo de navegação (`lib/navegacao`) implementa a classe `DetectorObjetivo`, responsável por identificar o instante em que o robô alcança a célula de destino (canto diametralmente oposto à partida), acionar a parada imediata dos motores, disparar o congelamento do mapa final e notificar a camada de comunicação ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), HU-07 / RF-07).
+O módulo de navegação (`lib/navegacao`) implementa a classe `DetectorObjetivo`, responsável por identificar o instante em que o robô alcança a célula de destino (canto diametralmente oposto à partida), acionar a parada imediata dos motores, disparar o congelamento do mapa final e sinalizar o evento pontual correspondente ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), HU-07 / RF-07).
 
-Em conjunto, a camada de comunicação (`lib/comunicacao`) provê a classe `TelemetriaJson`, que encapsula os dados de telemetria periódica e insere o evento pontual `"objetivo_alcancado"` no payload JSON transmitido via serial/Wi-Fi e armazenado no banco de dados Supabase para acompanhamento no dashboard web (HU-14).
+Em conjunto, a camada de comunicação (`lib/comunicacao`) provê a classe `TelemetriaJson`, que encapsula os dados de telemetria periódica e insere o evento pontual `"objetivo_alcancado"` em um único payload JSON transmitido via serial (USB nativa CDC), formatado com estrutura compatível com a tabela `telemetria` do Supabase para futura ingestão na nuvem ([#236](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/236)) e acompanhamento no dashboard web (HU-14).
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant T as tarefaNavegacao (10 ms)
+    participant N as tarefaNavegacao (10 ms)
     participant O as Odometria
     participant D as DetectorObjetivo
     participant M as IMotores (DRV8833)
     participant A as ArmazenamentoMapa
-    participant C as TelemetriaJson
-    participant S as Serial / Supabase
+    participant T as tarefaTelemetria (100 ms)
+    participant J as TelemetriaJson
+    participant S as Serial (USB nativa CDC)
 
-    T->>O: pose()
-    O-->>T: Pose (linha, coluna, direcao)
-    T->>D: processarChegada(pose, motores, &armazenamentoMapa)
+    Note over N,A: Seção crítica com travaOdometria
+    N->>O: atualizar(encoderEsq, encoderDir)
+    N->>O: pose()
+    O-->>N: Pose (linha, coluna, direcao)
+    N->>D: processarChegada(pose, motores, &armazenamentoMapa)
     alt Chegou à célula objetivo
         D->>M: parar() [freio elétrico imediato]
         D->>A: congelarMapa() [mapa final imutável]
-        D-->>T: true (objetivo alcançado)
+        D-->>N: true (alcancado_ = true, eventoChegadaPendente_ = true)
     else Em trânsito
-        D-->>T: false
+        D-->>N: false
     end
-    Note over T,S: Ciclo periódico de telemetria (1000 ms)
-    T->>C: serializar(PacoteTelemetria {..., evento: "objetivo_alcancado"})
-    C-->>T: JSON formatado
-    T->>S: Transmissão Serial / Nuvem
+    Note over T,S: Ciclo periódico de telemetria (100 ms)
+    T->>D: consumirEventoChegada() [dentro da travaOdometria]
+    D-->>T: true no 1º pacote após chegada / false nos seguintes
+    T->>J: serializar(PacoteTelemetria {..., evento: "objetivo_alcancado" ou null})
+    J-->>T: JSON formatado
+    T->>S: Serial.println(buffer)
 ```
 
-**Figura 8.** Fluxo de detecção da célula objetivo: ao confirmar que a célula da pose coincide com o destino, o robô freia imediatamente, congela o mapa explorado e envia o evento pela telemetria.
+**Figura 8.** Fluxo de detecção da célula objetivo: ao confirmar que a célula da pose coincide com o destino sob a seção crítica `travaOdometria`, o robô freia imediatamente, congela o mapa explorado e envia o evento pontual único pela telemetria serial.
 
 ### Regras de Negócio e Algoritmo
 
@@ -433,16 +438,16 @@ sequenceDiagram
   * Dimensões genéricas ou customizadas são calculadas por `DetectorObjetivo::calcularObjetivo(linhas, colunas)`. Caso alguma dimensão seja zero, retorna de forma segura `(0, 0)` (*fail-safe*).
 * **Critério de detecção na malha:**
   A verificação de chegada (`alcancouObjetivo`) compara as coordenadas discretas `(linha, coluna)` da célula atual com a célula objetivo configurada. A detecção é **invariante à orientação**: o robô é considerado no objetivo independentemente de estar virado para Norte, Leste, Sul ou Oeste.
-* **Parada imediata dos motores:**
-  Ao detectar que o robô adentrou a célula objetivo, o método `processarChegada` invoca imediatamente `motores.parar()`. No driver de hardware (`MotoresDrv8833`), a parada atua via freio elétrico (entradas IN1 e IN2 em nível alto simultaneamente no DRV8833), eliminando a inércia mecânica e prevenindo ultrapassagens (*overshoot*).
-* **Idempotência e congelamento de movimento:**
-  Após a primeira detecção de chegada, o `DetectorObjetivo` comuta seu estado interno para `alcancado_ = true`. Em todos os ciclos subsequentes de 10 ms da `tarefaNavegacao`, qualquer invocação repetida de `processarChegada` mantém os motores travados em parada (`motores.parar()`), garantindo idempotência e impedindo acelerações acidentais.
+* **Parada imediata dos motores e congelamento do mapa:**
+  Ao detectar que o robô adentrou a célula objetivo, o método `processarChegada` invoca imediatamente `motores.parar()`, aciona `armazenamento->congelarMapa()` e atualiza a flag interna `alcancado_ = true`. No driver de hardware (`MotoresDrv8833`), a parada atua via freio elétrico (entradas IN1 e IN2 em nível alto simultaneamente no DRV8833), eliminando a inércia mecânica e prevenindo ultrapassagens (*overshoot*).
+* **Idempotência do freio:**
+  Após a primeira detecção de chegada, o `DetectorObjetivo` comuta seu estado interno para `alcancado_ = true`. Em todos os ciclos subsequentes de 10 ms da `tarefaNavegacao`, qualquer invocação repetida de `processarChegada` mantém os motores travados em parada (`motores.parar()`), garantindo idempotência e prevenindo qualquer reacionamento de motores.
 * **Congelamento do mapa final:**
   Caso seja fornecido o ponteiro para `ArmazenamentoMapa`, a chegada ao objetivo aciona automaticamente `armazenamento->congelarMapa()`. Isso cria uma cópia imutável das paredes exploradas até o momento da vitória ([#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180), HU-04), disponibilizando-a para serialização via `MapaJson::serializarFinal`.
-* **Emissão de evento na telemetria:**
-  A estrutura `PacoteTelemetria` transporta as medições dos encoders e a pose estimada. O campo ponteiro `const char* evento` é preenchido com `"objetivo_alcancado"` quando `detectorObjetivo.objetivoAlcancado()` for verdadeiro. Em ciclos normais sem evento, o campo permanece `nullptr` e é serializado como `null` no JSON.
+* **Emissão pontual de evento na telemetria:**
+  A estrutura `PacoteTelemetria` transporta as medições e os campos alinhados com a tabela `telemetria`. Para garantir que o evento de chegada seja estritamente **pontual** (uma única linha na telemetria), a `tarefaTelemetria` invoca `detectorObjetivo.consumirEventoChegada()` dentro da seção crítica `travaOdometria`. O campo `const char* evento` recebe `"objetivo_alcancado"` em apenas um único pacote imediatamente após a chegada; nos pacotes seguintes, o método retorna `false` e o campo permanece `nullptr`, sendo serializado como `null` no JSON. O comando serial de zeramento `'Z'` também limpa o evento pendente via `resetar()`.
 * **Reinício de corrida:**
-  O método `resetar()` restaura o indicador de objetivo alcançado para `false`, permitindo que novas corridas ou tentativas sejam iniciadas na mesma sessão sem necessidade de reiniciar o microcontrolador.
+  O método `resetar()` restaura o indicador `alcancado_` e limpa qualquer evento pendente (`eventoChegadaPendente_ = false`), permitindo que novas corridas ou tentativas sejam iniciadas na mesma sessão sem necessidade de reiniciar o microcontrolador.
 
 ### Interface das Classes
 
@@ -455,17 +460,31 @@ sequenceDiagram
 * **`explicit DetectorObjetivo(PosicaoCelula objetivo)`** e **`DetectorObjetivo(uint8_t linhas, uint8_t colunas)`:** construtores alternativos para célula ou dimensões arbitrárias.
 * **`bool alcancouObjetivo(const PosicaoCelula& atual) const`** e **`alcancouObjetivo(const Pose& pose) const`:** verifica se a célula/pose informada atingiu o objetivo configurado.
 * **`bool processarChegada(const Pose& pose, IMotores& motores, ArmazenamentoMapa* armazenamento = nullptr)`:** verifica a pose, freia os motores imediatamente caso atingido e congela o mapa em `ArmazenamentoMapa` se fornecido. Devolve `true` se o objetivo foi alcançado.
+* **`bool consumirEventoChegada()`:** consulta e consome a flag de evento pontual de chegada. Retorna `true` no primeiro consumo e `false` nos seguintes.
 * **`PosicaoCelula celulaObjetivo() const`** e **`void definirObjetivo(...)`:** consulta e atualização dinâmica da célula alvo.
 * **`bool objetivoAlcancado() const`:** consulta o status do objetivo.
-* **`void resetar()`:** zera o flag de objetivo alcançado.
+* **`void resetar()`:** zera o flag de objetivo alcançado e limpa eventos pendentes.
 
 #### `TelemetriaJson` (`lib/comunicacao`)
 
-* **`struct PacoteTelemetria`:** estrutura com contagens de pulsos (`pulsosEsq`, `pulsosDir`), distâncias lineares (`esqMm`, `dirMm`, `medioMm`), `Pose` atual, flag `poseValida` e ponteiro opcional para string `evento`.
+* **`struct PacoteTelemetria`:** estrutura com campos alinhados à tabela `telemetria` do Supabase (`numeroSequencia`, `pose`, `velocidade`, `tensaoBateria`, `evento`) e diagnósticos de baixo nível (`pulsosEsq`, `pulsosDir`, `esqMm`, `dirMm`, `medioMm`, `poseValida`).
 * **`static size_t serializar(const PacoteTelemetria& pacote, char* saida, size_t capacidade)`:** serializa o pacote para formato JSON compacto. Devolve o total de bytes gravados (sem o `\0`) ou `0` caso o buffer seja insuficiente, nulo ou com capacidade zero (*fail-safe*).
 
+| Campo no JSON | Coluna na tabela `telemetria` | Descrição |
+|---|---|---|
+| `numero_sequencia` | `numero_sequencia` (INT) | Sequencial monotônico incremental por corrida |
+| `posicao_linha` | `posicao_linha` (INT) | Coordenada atual da linha na malha (0 a N-1) |
+| `posicao_coluna` | `posicao_coluna` (INT) | Coordenada atual da coluna na malha (0 a M-1) |
+| `orientacao` | `orientacao` (VARCHAR(2)) | Letra da direção: "N", "S", "L", "O" |
+| `velocidade` | `velocidade` (FLOAT) | Velocidade linear instantânea em m/s |
+| `tensao_bateria` | `tensao_bateria` (FLOAT) | Tensão instantânea da bateria em Volts |
+| `evento` | `evento` (VARCHAR(30)) | Evento pontual (`"objetivo_alcancado"`, `"colisao"` ou `null`) |
+
 **No `main.cpp`:**
-Na `tarefaNavegacao`, após a atualização da pose da `Odometria` a cada 10 ms sob seção crítica, o robô invoca `detectorObjetivo.processarChegada(pose, motores, &armazenamentoMapa)`. Caso o objetivo seja alcançado, o loop aguarda os próximos ciclos mantendo os motores freados. Na `tarefaTelemetria` (1000 ms), o pacote é montado incluindo o evento `"objetivo_alcancado"` caso a chegada tenha sido sinalizada, transmitindo a linha JSON via serial/Wi-Fi. O comando serial `'Z'` (utilizado nos testes de bancada) reinicia a medição de deslocamento e invoca `detectorObjetivo.resetar()`.
+Na `tarefaNavegacao`, a atualização da pose e a chamada `detectorObjetivo.processarChegada(pose, motores, &armazenamentoMapa)` executam sob a seção crítica `travaOdometria`. Caso o objetivo seja alcançado, o loop mantém os motores freados. Na `tarefaTelemetria` (100 ms), o evento pontual é consumido de forma atômica (`detectorObjetivo.consumirEventoChegada()`) também sob `travaOdometria`, garantindo que apenas um pacote envie `"evento": "objetivo_alcancado"` pela Serial (USB CDC) e os pacotes seguintes recebam `null`. O comando serial `'Z'` reinicia a medição de deslocamento e zera o detector via `resetar()`.
+
+> [!NOTE]
+> A inicialização com `Labirinto4x4` no `main.cpp` é **provisória** para validação de bancada. Em labirintos 8x4 ou 12x4, o tamanho deve ser recebido por comando dinâmico antes de iniciar a corrida. A duplicidade entre a instância de `DetectorObjetivo` em `main.cpp` e o `detector_` interno de `Navegacao` será unificada quando a classe `Navegacao` assumir o controle do laço de controle.
 
 ## Tarefas do FreeRTOS
 

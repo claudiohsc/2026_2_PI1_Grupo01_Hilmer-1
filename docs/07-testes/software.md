@@ -1000,19 +1000,19 @@ native         test_controle_movimento  PASSED    00:00:01.515
 | Critério | Como foi atendido | Casos de teste |
 | :--- | :--- | :--- |
 | Chegada detectada pela posição na malha | `DetectorObjetivo::calcularObjetivo` determina a célula oposta (`linhas - 1, colunas - 1`) para 4×4 (`(3, 3)`), 8×4 (`(3, 7)`), 12×4 (`(3, 11)`) ou dimensões customizadas; `alcancouObjetivo` compara com a pose estimada pela odometria em qualquer orientação | `test_calcular_objetivo_por_dimensao`, `test_calcular_objetivo_por_linhas_e_colunas`, `test_alcancou_objetivo_estatico`, `test_construtores_e_definicao_objetivo`, `test_alcancou_objetivo_por_pose_em_qualquer_orientacao` |
-| Motores parados imediatamente | Ao alcançar a célula alvo, `processarChegada` comanda `motores.parar()` (freio elétrico instantâneo via DRV8833), congela o estado de navegação e aciona `ArmazenamentoMapa::congelarMapa()` | `test_processar_chegada_para_motores_imediatamente_e_congela_mapa`, `test_processar_chegada_idempotente_mantem_parado`, `test_resetar_detector_objetivo`, `test_processar_chegada_sem_armazenamento_opcional` |
-| Evento `objetivo alcançado` enviado na telemetria | `TelemetriaJson::serializar` inclui `"evento": "objetivo_alcancado"` no payload JSON reportado na telemetria periódica e persistido no Supabase | `test_serializa_telemetria_padrao_sem_evento`, `test_serializa_telemetria_com_evento_objetivo_alcancado`, `test_buffer_insuficiente_retorna_zero`, `test_buffer_nulo_ou_capacidade_zero` |
+| Motores parados imediatamente | Ao alcançar a célula alvo, `processarChegada` comanda `motores.parar()` (freio elétrico instantâneo via DRV8833), aciona `ArmazenamentoMapa::congelarMapa()` e atualiza a flag interna `alcancado_ = true` com idempotência | `test_processar_chegada_para_motores_imediatamente_e_congela_mapa`, `test_processar_chegada_idempotente_mantem_parado`, `test_resetar_detector_objetivo`, `test_processar_chegada_sem_armazenamento_opcional` |
+| Evento `objetivo alcançado` enviado na telemetria | Consumo pontual único via `DetectorObjetivo::consumirEventoChegada()` sob `travaOdometria`; `TelemetriaJson::serializar` inclui `"evento": "objetivo_alcancado"` em apenas um pacote serializado transmitido pela Serial (USB nativa CDC), formatado com as colunas da tabela `telemetria` do Supabase para ingestão futura (#236) | `test_consumir_evento_chegada_apenas_uma_vez`, `test_serializa_telemetria_padrao_sem_evento`, `test_serializa_telemetria_com_evento_objetivo_alcancado`, `test_buffer_insuficiente_retorna_zero`, `test_buffer_nulo_ou_capacidade_zero` |
 
 #### O que mudou no código
 
 | Arquivo | Mudança |
 | :--- | :--- |
-| `lib/navegacao/src/DetectorObjetivo.h/.cpp` | Classe `DetectorObjetivo`: cálculo estático/dinâmico da célula objetivo por dimensões ou coordenadas, detecção de chegada invariante à orientação, parada imediata dos motores (`IMotores::parar()`), congelamento do mapa final (`ArmazenamentoMapa::congelarMapa()`) e controle de idempotência (`6be37b9`) |
-| `lib/comunicacao/src/TelemetriaJson.h/.cpp` | Estrutura `PacoteTelemetria` e classe `TelemetriaJson`: serialização JSON compacta com pulsos, distâncias lineares em mm, pose da malha e inclusão condicional do campo de evento pontual (`"evento": "objetivo_alcancado"`) |
-| `lib/navegacao/src/Navegacao.h/.cpp` | Adição de `alcancouObjetivo()` e bloqueio de novos passos em `darPasso()` quando o robô já se encontra na célula objetivo |
-| `src/main.cpp` | Integração de `DetectorObjetivo` e `TelemetriaJson` nas tarefas FreeRTOS (`tarefaNavegacao` e `tarefaTelemetria`), parada e congelamento em tempo real e reset por comando serial `'Z'` |
-| `test/test_detector_objetivo/test_detector_objetivo.cpp` | Suíte unitária com 9 casos cobrindo cálculo de dimensão, invariância de orientação, parada de motores, idempotência e tratamento sem armazenamento |
-| `test/test_telemetria_json/test_telemetria_json.cpp` | Suíte unitária com 4 casos cobrindo serialização padrão sem evento, serialização com evento de vitória, estouro e proteção de buffer |
+| `lib/navegacao/src/DetectorObjetivo.h/.cpp` | Classe `DetectorObjetivo`: cálculo estático/dinâmico da célula objetivo por dimensões ou coordenadas, detecção de chegada invariante à orientação, parada imediata dos motores (`IMotores::parar()`), congelamento do mapa final (`ArmazenamentoMapa::congelarMapa()`), controle de idempotência e consumo pontual único via `consumirEventoChegada()` |
+| `lib/comunicacao/src/TelemetriaJson.h/.cpp` | Estrutura `PacoteTelemetria` e classe `TelemetriaJson`: serialização JSON compacta com colunas da tabela Supabase `telemetria` (`numero_sequencia`, `posicao_linha`, `posicao_coluna`, `orientacao`, `velocidade`, `tensao_bateria`), diagnósticos de pulsos/mm e inclusão condicional do evento pontual único (`"evento": "objetivo_alcancado"`) |
+| `lib/navegacao/src/Navegacao.h/.cpp` | Adição de `alcancouObjetivo()`, bloqueio de novos passos em `darPasso()` quando o robô já se encontra na célula objetivo e documentação da duplicidade temporária com o detector estático de `main.cpp` |
+| `src/main.cpp` | Integração de `DetectorObjetivo` e `TelemetriaJson` nas tarefas FreeRTOS (`tarefaNavegacao` e `tarefaTelemetria`) com sincronização atômica em seção crítica (`travaOdometria`), parada e congelamento em tempo real, consumo único do evento de chegada e reset por comando serial `'Z'` |
+| `test/test_detector_objetivo/test_detector_objetivo.cpp` | Suíte unitária com 10 casos cobrindo cálculo de dimensão, invariância de orientação, parada de motores, idempotência, consumo pontual único do evento de chegada e tratamento sem armazenamento |
+| `test/test_telemetria_json/test_telemetria_json.cpp` | Suíte unitária com 4 casos cobrindo serialização com campos alinhados à tabela `telemetria` do Supabase, inclusão do evento de vitória, estouro e proteção de buffer |
 
 #### Testes unitários e de integração (ambiente native)
 
@@ -1025,9 +1025,9 @@ pio test -e native -f test_telemetria_json
 
 | Suíte | Casos | Resultado | Duração |
 | :--- | :--- | :--- | :--- |
-| `test_detector_objetivo` | 9 | **9 aprovados** | 0,38 s |
-| `test_telemetria_json` | 4 | **4 aprovados** | 0,35 s |
-| **Total** | **13** | **13 aprovados** | **0,73 s** |
+| `test_detector_objetivo` | 10 | **10 aprovados** | 0,43 s |
+| `test_telemetria_json` | 4 | **4 aprovados** | 0,43 s |
+| **Total** | **14** | **14 aprovados** | **0,86 s** |
 
 ---
 
@@ -1044,10 +1044,11 @@ A coluna "Critério" se refere aos critérios de aceite da HU-07 / [#189](https:
 | `test_alcancou_objetivo_por_pose_em_qualquer_orientacao` | Reconhece chegada em (3, 3) em qualquer das 4 orientações cardeais (N, L, S, O); rejeita células anteriores | 1 | Aprovado |
 | `test_processar_chegada_para_motores_imediatamente_e_congela_mapa` | Em trânsito mantém motores ligados e mapa destravado; ao atingir (3, 3), aciona `motores.parar()` (freio elétrico instantâneo), congela o mapa em `ArmazenamentoMapa` e sinaliza vitória | 2 | Aprovado |
 | `test_processar_chegada_idempotente_mantem_parado` | Ciclos periódicos subsequentes mantêm motores com freio acionado sem reacionamento | 2 | Aprovado |
-| `test_resetar_detector_objetivo` | `resetar()` retorna `alcancado_` para `false` permitindo reinício de corridas ou novas tentativas | 2 | Aprovado |
+| `test_resetar_detector_objetivo` | `resetar()` retorna `alcancado_` para `false` e limpa eventos pendentes, permitindo reinício de corridas ou novas tentativas | 2 | Aprovado |
+| `test_consumir_evento_chegada_apenas_uma_vez` | Primeira consulta após chegada consome o evento pontual (`true`), consultas posteriores retornam `false` e chamadas idempotentes não reativam o evento | 3 | Aprovado |
 | `test_processar_chegada_sem_armazenamento_opcional` | `processarChegada` com ponteiro nulo de armazenamento freia os motores sem falha de segmentação | 2 | Aprovado |
-| `test_serializa_telemetria_padrao_sem_evento` | Pacote periódico sem evento serializa pulsos, mm, pose e campo `"evento": null` | 3 | Aprovado |
-| `test_serializa_telemetria_com_evento_objetivo_alcancado` | Pacote ao atingir meta serializa `"evento": "objetivo_alcancado"` em conformidade com o schema | 3 | Aprovado |
+| `test_serializa_telemetria_padrao_sem_evento` | Pacote periódico sem evento serializa `numero_sequencia`, `posicao_linha`, `posicao_coluna`, `orientacao`, `velocidade`, `tensao_bateria`, pulsos, mm, pose e `"evento": null` | 3 | Aprovado |
+| `test_serializa_telemetria_com_evento_objetivo_alcancado` | Pacote ao atingir meta serializa `"evento": "objetivo_alcancado"` em conformidade com as colunas da tabela `telemetria` do Supabase | 3 | Aprovado |
 | `test_buffer_insuficiente_retorna_zero` | Buffer menor que o necessário devolve `0` e mantém string vazia segura | 3 | Aprovado |
 | `test_buffer_nulo_ou_capacidade_zero` | Passagem de buffer nulo ou capacidade 0 não causa overflow nem travamento | 3 | Aprovado |
 
@@ -1056,37 +1057,38 @@ A coluna "Critério" se refere aos critérios de aceite da HU-07 / [#189](https:
 #### Saída da execução do PlatformIO
 
 ```text
-Processing test_detector_objetivo in native environment
--------------------------------------------------------------------------------------------
-Building...
-Testing...
-test/test_detector_objetivo/test_detector_objetivo.cpp:142: test_calcular_objetivo_por_dimensao	[PASSED]
-test/test_detector_objetivo/test_detector_objetivo.cpp:143: test_calcular_objetivo_por_linhas_e_colunas	[PASSED]
-test/test_detector_objetivo/test_detector_objetivo.cpp:144: test_alcancou_objetivo_estatico	[PASSED]
-test/test_detector_objetivo/test_detector_objetivo.cpp:145: test_construtores_e_definicao_objetivo	[PASSED]
-test/test_detector_objetivo/test_detector_objetivo.cpp:146: test_alcancou_objetivo_por_pose_em_qualquer_orientacao	[PASSED]
-test/test_detector_objetivo/test_detector_objetivo.cpp:147: test_processar_chegada_para_motores_imediatamente_e_congela_mapa	[PASSED]
-test/test_detector_objetivo/test_detector_objetivo.cpp:148: test_processar_chegada_idempotente_mantem_parado	[PASSED]
-test/test_detector_objetivo/test_detector_objetivo.cpp:149: test_resetar_detector_objetivo	[PASSED]
-test/test_detector_objetivo/test_detector_objetivo.cpp:150: test_processar_chegada_sem_armazenamento_opcional	[PASSED]
----------------- native:test_detector_objetivo [PASSED] Took 0.38 seconds ----------------
-
 Processing test_telemetria_json in native environment
 -------------------------------------------------------------------------------------------
 Building...
 Testing...
-test/test_telemetria_json/test_telemetria_json.cpp:98: test_serializa_telemetria_padrao_sem_evento	[PASSED]
-test/test_telemetria_json/test_telemetria_json.cpp:99: test_serializa_telemetria_com_evento_objetivo_alcancado	[PASSED]
-test/test_telemetria_json/test_telemetria_json.cpp:100: test_buffer_insuficiente_retorna_zero	[PASSED]
-test/test_telemetria_json/test_telemetria_json.cpp:101: test_buffer_nulo_ou_capacidade_zero	[PASSED]
----------------- native:test_telemetria_json [PASSED] Took 0.35 seconds ----------------
+test/test_telemetria_json/test_telemetria_json.cpp:113: test_serializa_telemetria_padrao_sem_evento	[PASSED]
+test/test_telemetria_json/test_telemetria_json.cpp:114: test_serializa_telemetria_com_evento_objetivo_alcancado	[PASSED]
+test/test_telemetria_json/test_telemetria_json.cpp:115: test_buffer_insuficiente_retorna_zero	[PASSED]
+test/test_telemetria_json/test_telemetria_json.cpp:116: test_buffer_nulo_ou_capacidade_zero	[PASSED]
+---------------- native:test_telemetria_json [PASSED] Took 0.43 seconds ----------------
+
+Processing test_detector_objetivo in native environment
+-------------------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_detector_objetivo/test_detector_objetivo.cpp:231: test_calcular_objetivo_por_dimensao	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:232: test_calcular_objetivo_por_linhas_e_colunas	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:233: test_alcancou_objetivo_estatico	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:234: test_construtores_e_definicao_objetivo	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:235: test_alcancou_objetivo_por_pose_em_qualquer_orientacao	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:236: test_processar_chegada_para_motores_imediatamente_e_congela_mapa	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:237: test_processar_chegada_idempotente_mantem_parado	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:238: test_resetar_detector_objetivo	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:239: test_consumir_evento_chegada_apenas_uma_vez	[PASSED]
+test/test_detector_objetivo/test_detector_objetivo.cpp:240: test_processar_chegada_sem_armazenamento_opcional	[PASSED]
+---------------- native:test_detector_objetivo [PASSED] Took 0.43 seconds ----------------
 
 ========================================= SUMMARY =========================================
 Environment    Test                    Status    Duration
 -------------  ----------------------  --------  ------------
-native         test_detector_objetivo  PASSED    00:00:00.384
-native         test_telemetria_json    PASSED    00:00:00.351
-======================= 13 test cases: 13 succeeded in 00:00:00.735 =======================
+native         test_telemetria_json    PASSED    00:00:00.434
+native         test_detector_objetivo  PASSED    00:00:00.427
+======================= 14 test cases: 14 succeeded in 00:00:00.862 =======================
 ```
 
 #### Verificação de detecção de falhas (testes negativos)
@@ -1097,6 +1099,7 @@ Para validar a sensibilidade da suíte na detecção de defeitos:
 2. **Sem parada de motores:** ao remover a chamada `motores.parar()` dentro de `processarChegada`, o teste `test_processar_chegada_para_motores_imediatamente_e_congela_mapa` falhou com `Expected TRUE Was FALSE` na asserção `TEST_ASSERT_TRUE(motores.freados())`.
 3. **Sem congelamento do mapa:** ao comentar a invocação `armazenamento->congelarMapa()`, a asserção `TEST_ASSERT_TRUE(armazenamento.mapaCongelado())` falhou imediatamente.
 4. **Omissão do evento na telemetria:** ao não injetar o campo `evento` no documento JSON, o teste `test_serializa_telemetria_com_evento_objetivo_alcancado` falhou com `Expected FALSE Was TRUE` em `TEST_ASSERT_FALSE(doc["evento"].isNull())`.
+5. **Persistência indevida do evento:** ao não limpar a flag de evento em `consumirEventoChegada()`, a segunda asserção em `test_consumir_evento_chegada_apenas_uma_vez` falhou com `Expected FALSE Was TRUE`.
 
 #### Compilação para a placa ESP32-C3
 
