@@ -4,6 +4,13 @@
 	(generator_version "10.0")
 	(uuid "d4c1a1d4-591d-4f37-94f9-ab71d24cac6f")
 	(paper "A4")
+	(title_block
+		(title "Micromouse - Esquemático elétrico")
+		(date "2026-10-21")
+		(rev "2.0")
+		(company "Eduardo Gaspar")
+		(comment 1 "GPIOs lógicos; conferir terminais físicos dos módulos")
+	)
 	(lib_symbols
 		(symbol "Connector_Generic:Conn_01x02"
 			(pin_names
@@ -2606,7 +2613,7 @@
 				(pin input line
 					(at -15.24 -5.08 0)
 					(length 2.54)
-					(name "RX"
+					(name "IO20"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -2625,7 +2632,7 @@
 				(pin output line
 					(at -15.24 -7.62 0)
 					(length 2.54)
-					(name "TX"
+					(name "IO21"
 						(effects
 							(font
 								(size 1.27 1.27)
@@ -3277,14 +3284,6 @@
 		(uuid "1b568759-9d21-4607-8565-2206620ed031")
 	)
 	(no_connect
-		(at 142.24 102.87)
-		(uuid "1d83d270-e162-48ae-9f56-0a0b6503fd49")
-	)
-	(no_connect
-		(at 39.37 101.6)
-		(uuid "26370681-406c-4a84-b04d-8d7d0dd6b178")
-	)
-	(no_connect
 		(at 236.22 129.54)
 		(uuid "3437bbe3-54c0-418e-8507-798769bee901")
 	)
@@ -3297,20 +3296,8 @@
 		(uuid "58a5cedf-4a8c-4efc-a6d1-eaf76649f9a8")
 	)
 	(no_connect
-		(at 142.24 105.41)
-		(uuid "65ead0a8-dc66-467c-94cf-2fa17bf04d43")
-	)
-	(no_connect
-		(at 29.21 147.32)
-		(uuid "6a11b2b8-94cb-45f2-9026-3377a1ffadbc")
-	)
-	(no_connect
 		(at 29.21 149.86)
 		(uuid "6c35db2d-768f-45cb-a597-59307eee9285")
-	)
-	(no_connect
-		(at 142.24 120.65)
-		(uuid "727d8a17-4f3e-42cc-badd-9182480b6fbe")
 	)
 	(no_connect
 		(at 153.67 52.07)
@@ -3321,36 +3308,12 @@
 		(uuid "8126ae05-386a-4f3a-aa41-1ac0a20ca86a")
 	)
 	(no_connect
-		(at 142.24 123.19)
-		(uuid "81bbf165-65c8-448c-9ef1-4dd54ee24221")
-	)
-	(no_connect
-		(at 142.24 115.57)
-		(uuid "b9ef46b1-48a0-49a1-9bdb-2e2938e9a1e6")
-	)
-	(no_connect
 		(at 111.76 123.19)
 		(uuid "ba38cfc7-a71b-4c8a-82a6-8148a20ef869")
 	)
 	(no_connect
-		(at 111.76 115.57)
-		(uuid "d43c08fa-f2e4-465f-9014-92f206bbb64b")
-	)
-	(no_connect
-		(at 111.76 110.49)
-		(uuid "e04a7877-ba52-4429-8261-e9c70a374abd")
-	)
-	(no_connect
 		(at 41.91 101.6)
 		(uuid "e2aa9154-2d71-42fa-8e48-5d8e46c44504")
-	)
-	(no_connect
-		(at 80.01 146.05)
-		(uuid "e5969b66-b306-40fa-b25b-a6d913ec28f2")
-	)
-	(no_connect
-		(at 142.24 113.03)
-		(uuid "f4b3ac7e-10d7-4bc4-8f1c-20092b2bbd08")
 	)
 	(wire
 		(pts
@@ -3511,16 +3474,6 @@
 			(type default)
 		)
 		(uuid "3a464f18-7451-4389-81da-e11390be4d58")
-	)
-	(wire
-		(pts
-			(xy 71.12 36.83) (xy 71.12 107.95)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "3c5500b0-cb35-46a4-8979-d68867e310fd")
 	)
 	(wire
 		(pts
@@ -3694,16 +3647,6 @@
 	)
 	(wire
 		(pts
-			(xy 99.06 29.21) (xy 99.06 31.75)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "71948467-c48f-4a99-97b2-058b643b4664")
-	)
-	(wire
-		(pts
 			(xy 69.85 29.21) (xy 72.39 29.21)
 		)
 		(stroke
@@ -3861,16 +3804,6 @@
 			(type default)
 		)
 		(uuid "9e899702-821e-40fa-9f58-e3f7dc942726")
-	)
-	(wire
-		(pts
-			(xy 71.12 107.95) (xy 111.76 107.95)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "9ea002bf-10df-4766-b5cf-8943724e38b6")
 	)
 	(wire
 		(pts
@@ -4152,23 +4085,13 @@
 		)
 		(uuid "f94afcf6-7c1e-4393-be78-3d47fc2331e2")
 	)
-	(wire
-		(pts
-			(xy 71.12 36.83) (xy 83.82 36.83)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "ffccf5e2-f6fd-4ec0-b368-b2543a584415")
-	)
 	(global_label "GND"
 		(shape input)
 		(at 64.77 74.93 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify left)
 		)
@@ -4192,7 +4115,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify left)
 		)
@@ -4210,37 +4133,13 @@
 			)
 		)
 	)
-	(global_label "DRV8833 – IN2 (Motor Esquerdo)"
-		(shape input)
-		(at 111.76 105.41 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "079c2cf7-341c-4e5b-91b7-c59c2ffb944d")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 76.9647 105.41 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-	)
 	(global_label "GND"
 		(shape input)
 		(at 140.97 128.27 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify left)
 		)
@@ -4258,13 +4157,13 @@
 			)
 		)
 	)
-	(global_label "SDA - GPIO06"
+	(global_label "I2C_SDA"
 		(shape input)
 		(at 80.01 143.51 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4282,13 +4181,13 @@
 			)
 		)
 	)
-	(global_label "SCL - GPIO07"
+	(global_label "I2C_SCL"
 		(shape input)
 		(at 29.21 142.24 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4312,7 +4211,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4336,7 +4235,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4360,7 +4259,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4384,7 +4283,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4408,7 +4307,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4426,13 +4325,13 @@
 			)
 		)
 	)
-	(global_label "SCL - GPIO07"
+	(global_label "I2C_SCL"
 		(shape input)
 		(at 34.29 101.6 270)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4456,7 +4355,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4480,7 +4379,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify left)
 		)
@@ -4504,7 +4403,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4522,13 +4421,13 @@
 			)
 		)
 	)
-	(global_label "SDA - GPIO06"
+	(global_label "I2C_SDA"
 		(shape input)
 		(at 153.67 46.99 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4546,13 +4445,13 @@
 			)
 		)
 	)
-	(global_label "Driver DRV8833 – IN1 (Motor Esquerdo)"
+	(global_label "MOTOR_ESQ_IN1"
 		(shape input)
 		(at 209.55 124.46 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4576,7 +4475,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify left)
 		)
@@ -4594,61 +4493,13 @@
 			)
 		)
 	)
-	(global_label "SCL - GPIO07"
-		(shape input)
-		(at 142.24 110.49 0)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "67399a22-6bbf-44d6-b6c5-e6b85725a973")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 159.1347 110.49 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-	)
-	(global_label "SDA - GPIO06"
-		(shape input)
-		(at 142.24 107.95 0)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "79d5c625-9ff9-4dbf-ae85-e5f749a63d9b")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 159.1952 107.95 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-	)
-	(global_label "SCL - GPIO07"
+	(global_label "I2C_SCL"
 		(shape input)
 		(at 153.67 44.45 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4672,7 +4523,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4696,7 +4547,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4714,13 +4565,13 @@
 			)
 		)
 	)
-	(global_label "Driver DRV8833 – IN4 (Motor Direito)"
+	(global_label "MOTOR_DIR_IN3"
 		(shape input)
 		(at 209.55 107.95 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4738,13 +4589,13 @@
 			)
 		)
 	)
-	(global_label "SDA - GPIO06"
+	(global_label "I2C_SDA"
 		(shape input)
 		(at 36.83 101.6 270)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4762,85 +4613,13 @@
 			)
 		)
 	)
-	(global_label "Driver DRV8833 – IN1 (Motor Esquerdo)"
-		(shape input)
-		(at 111.76 102.87 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "993a66de-fd4c-4967-9115-8715ca749306")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 70.4937 102.87 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-	)
-	(global_label "Driver DRV8833 – IN3 (Motor Direito)"
-		(shape input)
-		(at 142.24 118.11 0)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "9ba78f51-7457-47b7-887e-99eac4494620")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 181.0875 118.11 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-	)
-	(global_label "Driver DRV8833 – IN4 (Motor Direito)"
-		(shape input)
-		(at 111.76 118.11 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "a4c8fbb7-2810-4655-bad9-01fbe452f472")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 72.9125 118.11 0)
-			(hide yes)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-			)
-		)
-	)
-	(global_label "SCL - GPIO07"
+	(global_label "I2C_SCL"
 		(shape input)
 		(at 80.01 140.97 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4864,7 +4643,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4882,13 +4661,13 @@
 			)
 		)
 	)
-	(global_label "DRV8833 – IN2 (Motor Esquerdo)"
+	(global_label "MOTOR_ESQ_IN2"
 		(shape input)
 		(at 209.55 129.54 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4906,13 +4685,13 @@
 			)
 		)
 	)
-	(global_label "Driver DRV8833 – IN3 (Motor Direito)"
+	(global_label "MOTOR_DIR_IN4"
 		(shape input)
 		(at 209.55 111.76 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4936,7 +4715,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4960,7 +4739,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -4984,7 +4763,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify left)
 		)
@@ -5008,7 +4787,7 @@
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -5026,13 +4805,13 @@
 			)
 		)
 	)
-	(global_label "SDA - GPIO06"
+	(global_label "I2C_SDA"
 		(shape input)
 		(at 29.21 144.78 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
-				(size 1.27 1.27)
+				(size 0.85 0.85)
 			)
 			(justify right)
 		)
@@ -5313,7 +5092,7 @@
 				)
 			)
 		)
-		(property "Value" "Fuse"
+		(property "Value" "MF-R185 1.85A"
 			(at 66.04 25.4 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5681,7 +5460,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "39 kΩ"
+		(property "Value" "33 kΩ"
 			(at 88.9 41.9099 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5929,7 +5708,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "ESP32-C3-DevKitM-1"
+		(property "Value" "ESP32-C3 Super Mini"
 			(at 129.1433 92.71 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5940,7 +5719,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "RF_Module:ESP32-C3-DevKitM-1"
+		(property "Footprint" ""
 			(at 127 135.89 0)
 			(hide yes)
 			(show_name no)
@@ -5962,7 +5741,7 @@
 				)
 			)
 		)
-		(property "Description" "Controlador principal do Micromouse: controle dos motores, leitura dos encoders e comunicação com o LiDAR"
+		(property "Description" "Interface lógica ESP32-C3 Super Mini; conferir pinout físico; encoders reservados e ADC pendente."
 			(at 127 138.43 0)
 			(hide yes)
 			(show_name no)
@@ -6484,7 +6263,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "9a494588-8789-48a4-8157-6c20e0c95108")
-		(property "Reference" "U4-DRV8833_Module1"
+		(property "Reference" "U6"
 			(at 222.885 104.14 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6576,7 +6355,7 @@
 		(instances
 			(project "Micromouse1"
 				(path "/d4c1a1d4-591d-4f37-94f9-ab71d24cac6f"
-					(reference "U4-DRV8833_Module1")
+					(reference "U6")
 					(unit 1)
 				)
 			)
@@ -7366,4 +7145,318 @@
 		)
 	)
 	(embedded_fonts no)
+	(global_label "XSHUT_ESQ"
+		(shape input)
+		(at 111.76 102.87 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "4c0a0800-56f6-4e3a-9027-578aa5f00044")
+	)
+	(global_label "XSHUT_FRONTAL"
+		(shape input)
+		(at 111.76 105.41 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "6cfbcea3-f243-4723-8b00-37bb8a7b7ab4")
+	)
+	(global_label "XSHUT_DIR"
+		(shape input)
+		(at 111.76 107.95 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "1feb7e4d-84e4-4125-ae21-b9fbc7eaa90e")
+	)
+	(global_label "MOTOR_ESQ_IN2"
+		(shape input)
+		(at 111.76 110.49 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "38775cc4-0ad8-4a27-bb28-c58ec1d6a55e")
+	)
+	(global_label "MOTOR_DIR_IN3"
+		(shape input)
+		(at 111.76 115.57 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "84774ab8-bb53-4522-9c01-aae71a528fa5")
+	)
+	(global_label "MOTOR_DIR_IN4"
+		(shape input)
+		(at 111.76 118.11 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "05491915-937d-49d9-a40d-619feaa48c46")
+	)
+	(global_label "ENC_ESQ_A"
+		(shape input)
+		(at 142.24 102.87 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "07d6d721-e45c-49bb-842b-c2e96a258990")
+	)
+	(global_label "ENC_ESQ_B"
+		(shape input)
+		(at 142.24 105.41 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "49e21aac-fbc6-482c-8bff-3d9b5f05e5a1")
+	)
+	(global_label "ENC_DIR_A"
+		(shape input)
+		(at 142.24 107.95 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "d092ebfd-d2e0-449d-9183-d74eadf0c438")
+	)
+	(global_label "ENC_DIR_B"
+		(shape input)
+		(at 142.24 110.49 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "7221ea74-4787-4ab7-82fb-f94854e06674")
+	)
+	(global_label "I2C_SCL"
+		(shape input)
+		(at 142.24 113.03 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "55439924-7256-4ff0-9a20-5342c88668a2")
+	)
+	(global_label "I2C_SDA"
+		(shape input)
+		(at 142.24 115.57 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "c74dc858-dbd1-4afe-b828-dbc1b4cc1226")
+	)
+	(global_label "MOTOR_ESQ_IN1"
+		(shape input)
+		(at 142.24 118.11 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "4db76f32-1e38-421a-85a1-41ec76f0848f")
+	)
+	(global_label "USB_DM"
+		(shape input)
+		(at 142.24 120.65 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "6615920d-50f1-45d3-8d6f-f7e10dcfd9f8")
+	)
+	(global_label "USB_DP"
+		(shape input)
+		(at 142.24 123.19 0)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "93482013-e0f2-4305-9fed-7d8c999a5c09")
+	)
+	(global_label "XSHUT_ESQ"
+		(shape input)
+		(at 39.37 101.6 270)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify left)
+		)
+		(uuid "9deb347f-dc39-4370-81d4-9bf266911d94")
+	)
+	(global_label "XSHUT_FRONTAL"
+		(shape input)
+		(at 80.01 146.05 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "06301b55-d314-4c76-8e6a-a414c9b4b9f5")
+	)
+	(global_label "XSHUT_DIR"
+		(shape input)
+		(at 29.21 147.32 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "db5f9157-e4e4-424a-91eb-d2a828c5311e")
+	)
+	(global_label "BAT_ADC_TEST"
+		(shape input)
+		(at 83.82 36.83 180)
+		(effects
+			(font
+				(size 0.85 0.85)
+			)
+			(justify right)
+		)
+		(uuid "67867631-08f1-4f2c-8ca0-f7941fd7064d")
+	)
+	(text "Rev 2.0 | 21/10/2026 | Eduardo Gaspar"
+		(at 148.5 162.0 0)
+		(effects
+			(font
+				(size 0.95 0.95)
+			)
+		)
+		(uuid "fd6da837-a2c0-4f03-940a-e38957ad24a6")
+	)
+	(text "I2C: SDA GPIO9 / SCL GPIO8 | XSHUT J3/J4/J5: GPIO0/1/2"
+		(at 148.5 166.5 0)
+		(effects
+			(font
+				(size 0.95 0.95)
+			)
+		)
+		(uuid "01e8b33d-547d-44d9-9d28-ac2e254c27a3")
+	)
+	(text "Motores IN1/2/3/4: GPIO10/3/20/21 | ADC pendente em BAT_ADC_TEST"
+		(at 148.5 171.0 0)
+		(effects
+			(font
+				(size 0.95 0.95)
+			)
+		)
+		(uuid "45372caf-6235-4ba8-a3c7-dd12163f2c8f")
+	)
+	(text "Encoders reservados: GPIO4/5 e GPIO6/7; não instalados | USB: GPIO18/19"
+		(at 148.5 175.5 0)
+		(effects
+			(font
+				(size 0.95 0.95)
+			)
+		)
+		(uuid "6b981b84-f76b-4680-8904-f8b03deb0b1e")
+	)
+	(text "GPIO21/UART0: validar inibição do driver no boot | GPIO2/8/9: validar strapping"
+		(at 148.5 180.0 0)
+		(effects
+			(font
+				(size 0.95 0.95)
+			)
+		)
+		(uuid "cad02a06-3684-4e15-9b35-71b0c6cf3f1c")
+	)
+	(text "J3 esquerdo / J4 frontal / J5 direito: pino 5 = XSHUT; conferir pinout físico"
+		(at 148.5 184.5 0)
+		(effects
+			(font
+				(size 0.95 0.95)
+			)
+		)
+		(uuid "a6954bfe-b1fa-4db4-8ceb-993a01e0b9dc")
+	)
+	(text "Motor sugerido: GA12-N20-S0310D-E, 6 V; fonte: docs/06-orcamento.md, item 9"
+		(at 148.5 189.0 0)
+		(effects
+			(font
+				(size 0.95 0.95)
+			)
+		)
+		(uuid "7f484c5e-b007-4dcf-aab9-e42729517dc0")
+	)
+	(text "Redução, corrente e identificação do fornecedor pendentes; J1/J2: potência apenas"
+		(at 148.5 193.5 0)
+		(effects
+			(font
+				(size 0.95 0.95)
+			)
+		)
+		(uuid "0bd2837c-f985-4cea-b845-a00d8b2cf571")
+	)
+	(wire
+		(pts
+			(xy 83.82 36.83)
+			(xy 95.25 36.83)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "dbf59c13-40a6-4969-a40c-a920c96b731a")
+	)
+	(wire
+		(pts
+			(xy 95.25 36.83)
+			(xy 95.25 31.75)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "963a0eac-49d9-41c5-a957-aafc3385b2c2")
+	)
+	(wire
+		(pts
+			(xy 95.25 31.75)
+			(xy 99.06 31.75)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1ecbcccb-0090-4d52-be96-db5812a4934b")
+	)
 )
