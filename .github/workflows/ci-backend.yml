@@ -1,0 +1,63 @@
+name: CI Backend
+
+# Sem filtro de caminhos: o check precisa reportar em todo PR para a main, senão a proteção de branch trava PRs que não mexem no backend.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+    working-directory: src/backend
+
+jobs:
+  testes:
+    name: Testes do backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # O package.json exige Node 22.18 ou superior; a linha 22 do setup-node usa a versão mais recente dela.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/backend/package-lock.json
+      - run: npm ci
+      - name: Rodar os testes
+        run: |
+          set -o pipefail
+          npm test -- --test-reporter=spec 2>&1 | tee "$RUNNER_TEMP/testes-backend.txt"
+      - name: Resumo dos testes
+        if: always()
+        run: |
+          {
+            echo '### Testes do backend'
+            echo '```'
+            grep -E '^ℹ (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)' "$RUNNER_TEMP/testes-backend.txt" || echo 'Os testes não chegaram ao fim; veja o log do passo anterior.'
+            echo '```'
+            if grep -q '✖ failing tests:' "$RUNNER_TEMP/testes-backend.txt"; then
+              echo '#### Testes que falharam'
+              echo '```'
+              sed -n '/✖ failing tests:/,$p' "$RUNNER_TEMP/testes-backend.txt" | head -n 80
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      # O index.ts é o único arquivo da Edge Function que os testes do Node não executam (usa Deno.serve).
+      - uses: denoland/setup-deno@v2
+        if: ${{ !cancelled() }}
+        with:
+          deno-version: v2.x
+      - name: Checar os tipos da Edge Function
+        if: ${{ !cancelled() }}
+        run: deno check supabase/functions/corridas/index.ts
