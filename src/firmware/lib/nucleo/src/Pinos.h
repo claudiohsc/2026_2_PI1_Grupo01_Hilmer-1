@@ -1,38 +1,106 @@
 #pragma once
 
 /// @file Pinos.h
-/// @brief Pinagem do ESP32-C3, conforme os diagramas de hardware
-/// (`docs/04-projeto-conceitual/hardware-diagramas.md`).
+/// @brief Pinagem do ESP32-C3 Super Mini, conforme o esquemático elétrico Rev 2.0 (21/10/2026).
 ///
-/// Qualquer mudança no esquemático elétrico deve ser refletida aqui.
+/// Fonte: esquemático e lista de componentes Rev 2.0 da frente de eletrônica
+/// (`hw/Micromouse.pdf`, `docs/04-projeto-conceitual/hardware.md`). Os números são GPIOs
+/// lógicos, não posições de terminal da placa: confira o pinout físico da Super Mini na montagem.
+///
+/// Qualquer mudança no esquemático elétrico deve ser refletida aqui, e só aqui: os drivers recebem
+/// os pinos por parâmetro, então nenhum outro arquivo guarda número de GPIO.
+///
+/// Mudanças em relação à versão anterior: o LiDAR por UART saiu (entraram 3 sensores VL53L0X
+/// por I²C), entrou o MPU6050 no mesmo barramento e todos os outros pinos mudaram de lugar.
+
+#include <stddef.h>
 
 namespace micromouse {
 namespace pinos {
 
-/// @name Driver de motores DRV8833 (ponte H dupla, sinais PWM)
+/// @name Barramento I²C (3 VL53L0X e o MPU6050 compartilham SDA e SCL)
+/// GPIO8 e GPIO9 são pinos de strapping: valide os níveis no reset com os módulos ligados.
 /// @{
-constexpr int MOTOR_A_IN1 = 4;  ///< GPIO4 → AIN1 (motor M1).
-constexpr int MOTOR_A_IN2 = 5;  ///< GPIO5 → AIN2 (motor M1).
-constexpr int MOTOR_B_IN1 = 6;  ///< GPIO6 → BIN1 (motor M2).
-constexpr int MOTOR_B_IN2 = 7;  ///< GPIO7 → BIN2 (motor M2).
+constexpr int I2C_SDA = 9;  ///< GPIO9 ↔ SDA. O botão BOOT da Super Mini também usa este pino.
+constexpr int I2C_SCL = 8;  ///< GPIO8 → SCL.
+/// @}
+
+/// @name XSHUT dos sensores VL53L0X (um por sensor, para atribuir endereços distintos no boot)
+/// @{
+constexpr int XSHUT_ESQ = 0;      ///< GPIO0 → XSHUT do sensor esquerdo (J3).
+constexpr int XSHUT_FRONTAL = 1;  ///< GPIO1 → XSHUT do sensor frontal (J4).
+constexpr int XSHUT_DIR = 2;      ///< GPIO2 → XSHUT do sensor direito (J5). GPIO2 é pino de strapping.
+/// @}
+
+/// @name Driver de motores DRV8833 (ponte H dupla, sinais PWM)
+/// Os nomes seguem os do esquemático: IN1/IN2 acionam o motor esquerdo (OUT1/OUT2, J1) e
+/// IN3/IN4 o direito (OUT3/OUT4, J2).
+/// GPIO20 e GPIO21 são a UART0 do ESP32-C3: o log não pode usá-la (ver `platformio.ini`), e a
+/// ROM ainda escreve no GPIO21 durante o reset, então o driver precisa ficar desabilitado no boot.
+/// @{
+constexpr int MOTOR_ESQ_IN1 = 10;  ///< GPIO10 → IN1 (motor esquerdo).
+constexpr int MOTOR_ESQ_IN2 = 3;   ///< GPIO3 → IN2 (motor esquerdo).
+constexpr int MOTOR_DIR_IN3 = 20;  ///< GPIO20 → IN3 (motor direito).
+constexpr int MOTOR_DIR_IN4 = 21;  ///< GPIO21 → IN4 (motor direito).
 /// @}
 
 /// @name Encoders de quadratura (canais A e B de cada roda)
+/// Reservados na Rev 2.0: os encoders ainda não estão instalados, mas os pinos já estão definidos
+/// para o `EncoderEsp32` entrar sem mexer na pinagem.
 /// @{
-constexpr int ENCODER_ESQ_A = 0;   ///< GPIO0 ← Enc_L_A (roda esquerda).
-constexpr int ENCODER_ESQ_B = 1;   ///< GPIO1 ← Enc_L_B (roda esquerda).
-constexpr int ENCODER_DIR_A = 3;   ///< GPIO3 ← Enc_R_A (roda direita).
-constexpr int ENCODER_DIR_B = 10;  ///< GPIO10 ← Enc_R_B (roda direita).
+constexpr int ENCODER_ESQ_A = 4;  ///< GPIO4 ← canal A da roda esquerda.
+constexpr int ENCODER_ESQ_B = 5;  ///< GPIO5 ← canal B da roda esquerda.
+constexpr int ENCODER_DIR_A = 6;  ///< GPIO6 ← canal A da roda direita.
+constexpr int ENCODER_DIR_B = 7;  ///< GPIO7 ← canal B da roda direita.
 /// @}
 
-/// @name LiDAR (UART)
-/// Atenção: GPIO20 e GPIO21 são os pinos padrão da UART0 do ESP32-C3, a mesma
-/// usada pelo `Serial` (log e gravação). Validar com a frente de hardware antes
-/// dos testes de bancada.
+/// @name USB nativa (log serial e gravação)
+/// Reservados: nenhum outro periférico pode usar esses pinos. O `Serial` sai por aqui (USB CDC).
 /// @{
-constexpr int LIDAR_UART_RX = 20;  ///< GPIO20 ← TX do LiDAR (recepção no ESP32).
-constexpr int LIDAR_UART_TX = 21;  ///< GPIO21 → RX do LiDAR (transmissão do ESP32).
+constexpr int USB_DM = 18;  ///< GPIO18 = D−.
+constexpr int USB_DP = 19;  ///< GPIO19 = D+.
 /// @}
+
+/// Todos os GPIOs em uso, para conferir repetição e faixa. Mantenha em sincronia com as constantes
+/// acima: o teste `test_pinos` e o `static_assert` abaixo reprovam a compilação se houver repetição.
+constexpr int TODOS_OS_PINOS[] = {
+    I2C_SDA,       I2C_SCL,       XSHUT_ESQ,     XSHUT_FRONTAL, XSHUT_DIR,
+    MOTOR_ESQ_IN1, MOTOR_ESQ_IN2, MOTOR_DIR_IN3, MOTOR_DIR_IN4, ENCODER_ESQ_A,
+    ENCODER_ESQ_B, ENCODER_DIR_A, ENCODER_DIR_B, USB_DM,        USB_DP,
+};
+constexpr size_t QUANTIDADE_DE_PINOS = sizeof(TODOS_OS_PINOS) / sizeof(TODOS_OS_PINOS[0]);
+
+/// `true` se nenhum valor aparece duas vezes em `pinos[0..quantidade)`.
+constexpr bool semRepeticao(const int* pinos, size_t quantidade) {
+  for (size_t i = 0; i < quantidade; i++) {
+    for (size_t j = i + 1; j < quantidade; j++) {
+      if (pinos[i] == pinos[j]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/// `true` se nenhum GPIO aparece duas vezes em `TODOS_OS_PINOS`.
+constexpr bool pinosSemRepeticao() {
+  return semRepeticao(TODOS_OS_PINOS, QUANTIDADE_DE_PINOS);
+}
+
+/// `true` se todo GPIO existe no ESP32-C3 (GPIO0 a GPIO10 e GPIO18 a GPIO21).
+constexpr bool pinosExistemNoEsp32C3() {
+  for (size_t i = 0; i < QUANTIDADE_DE_PINOS; i++) {
+    const int pino = TODOS_OS_PINOS[i];
+    const bool valido = (pino >= 0 && pino <= 10) || (pino >= 18 && pino <= 21);
+    if (!valido) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static_assert(pinosSemRepeticao(), "Pinos.h: ha GPIO repetido na pinagem");
+static_assert(pinosExistemNoEsp32C3(), "Pinos.h: ha GPIO que nao existe no ESP32-C3");
 
 }  // namespace pinos
 }  // namespace micromouse

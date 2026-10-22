@@ -33,7 +33,7 @@ namespace micromouse {
 /// @code
 /// FonteBytesSerial fonte(Serial1);
 /// DecodificadorLd06 decodificador;
-/// fonte.iniciar(DecodificadorLd06::BAUD_PADRAO, PINO_RX, PINO_TX);  // pinos de Pinos.h, após resolver o conflito com o Serial
+/// fonte.iniciar(DecodificadorLd06::BAUD_PADRAO, PINO_RX, PINO_TX);  // o LiDAR saiu da Rev 2.0: não há mais pinos dele em Pinos.h
 /// LidarUart lidar(fonte, decodificador, agoraMs);
 /// ILidar& sensor = lidar;
 /// @endcode
