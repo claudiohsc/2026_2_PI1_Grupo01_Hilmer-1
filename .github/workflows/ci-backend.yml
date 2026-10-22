@@ -58,6 +58,9 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           deno-version: v2.x
+      # Há um package.json em src/backend (só para os testes do Node), então o Deno 2 entra no modo
+      # "manual" e procura o npm:@supabase/supabase-js na pasta node_modules. No Supabase não existe
+      # node_modules: o pacote vem do cache do Deno. `--node-modules-dir=none` reproduz isso.
       - name: Checar os tipos da Edge Function
         if: ${{ !cancelled() }}
-        run: deno check supabase/functions/corridas/index.ts
+        run: deno check --node-modules-dir=none supabase/functions/corridas/index.ts
