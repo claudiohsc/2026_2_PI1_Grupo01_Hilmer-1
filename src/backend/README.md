@@ -121,17 +121,18 @@ O workflow `.github/workflows/ci-backend.yml` roda o check **Testes do backend**
 O que ele faz, em ordem:
 
 1. `npm ci` em `src/backend`, com Node 22 e cache do npm.
-2. `npm test`: validação, autenticação e roteamento da Edge Function, e as migrações, as funções SQL e o RLS num PostgreSQL em WebAssembly (PGlite).
-3. `deno check --node-modules-dir=none supabase/functions/corridas/index.ts`: checagem de tipos do `index.ts`, o único arquivo da Edge Function que os testes do Node não executam (ele usa `Deno.serve`). A opção `--node-modules-dir=none` é necessária porque o `package.json` desta pasta faria o Deno procurar o `@supabase/supabase-js` em `node_modules`, e no Supabase o pacote vem do cache do Deno.
+2. `npm run test:cobertura`: os mesmos testes do `npm test` (validação, autenticação e roteamento da Edge Function, e as migrações, as funções SQL e o RLS num PostgreSQL em WebAssembly, o PGlite), com a medição de cobertura. O CI exige no mínimo **80% das linhas** (`--test-coverage-lines=80`, Node 22.8 ou superior) e mostra a tabela de cobertura no resumo do workflow, que serve de evidência para o registro de testes. Só entram na medição os arquivos carregados pelos testes (`autenticacao.ts`, `logica.ts` e `roteador.ts`); o `index.ts` é coberto pelo passo seguinte.
+3. `deno check --node-modules-dir=none supabase/functions/corridas/index.ts` (Deno 2.9.8, versão fixa no workflow, como o PlatformIO e o gcovr no CI do firmware): checagem de tipos do `index.ts`, o único arquivo da Edge Function que os testes do Node não executam (ele usa `Deno.serve`). A opção `--node-modules-dir=none` é necessária porque o `package.json` desta pasta faria o Deno procurar o `@supabase/supabase-js` em `node_modules`, e no Supabase o pacote vem do cache do Deno.
 
-**Como ler o resultado.** Na página do PR, abra a aba *Checks* (ou clique em *Details* ao lado de "Testes do backend"). O resumo do workflow mostra as contagens (`tests`, `pass`, `fail`) e, se algum teste falhar, o nome dele e a mensagem. Qualquer falha, nos testes ou na checagem de tipos, reprova o PR.
+**Como ler o resultado.** Na página do PR, abra a aba *Checks* (ou clique em *Details* ao lado de "Testes do backend"). O resumo do workflow mostra as contagens (`tests`, `pass`, `fail`), a tabela de cobertura e, se algum teste falhar, o nome dele e a mensagem. Qualquer falha, nos testes ou na checagem de tipos, reprova o PR.
 
 **Antes de abrir o PR**, rode o mesmo que o CI:
 
 ```bash
 cd src/backend
-npm ci            # Node 22.18 ou superior
-npm test
+npm ci                  # Node 22.18 ou superior
+npm test                # rápido, sem cobertura
+npm run test:cobertura  # com cobertura e o mínimo de 80% das linhas, como no CI
 deno check --node-modules-dir=none supabase/functions/corridas/index.ts   # opcional localmente; precisa do Deno 2
 ```
 
