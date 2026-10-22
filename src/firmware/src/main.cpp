@@ -8,6 +8,12 @@
 
 #include <Arduino.h>
 
+// O log (`Serial`) tem que sair pela USB nativa: GPIO20/21, a UART0, são entradas do driver dos
+// motores. Se esta opção faltar no `platformio.ini`, o log iria para os pinos do motor direito.
+#if !defined(ARDUINO_USB_CDC_ON_BOOT) || !ARDUINO_USB_CDC_ON_BOOT
+#error "Serial pela USB nativa: defina ARDUINO_USB_MODE=1 e ARDUINO_USB_CDC_ON_BOOT=1 no platformio.ini (Pinos.h)"
+#endif
+
 #include "ArmazenamentoMapa.h"
 #include "Configuracao.h"
 #include "ConversorDeslocamento.h"
@@ -22,7 +28,8 @@
 /// `const`, só para leitura. `iniciarCorrida()` é chamado quando o tamanho do labirinto for escolhido.
 static micromouse::ArmazenamentoMapa armazenamentoMapa;
 
-/// Encoders ópticos das rodas (roda direita invertida devido à montagem mecânica espelhada).
+/// Encoders das rodas (roda direita invertida devido à montagem mecânica espelhada). Na Rev 2.0 os
+/// pinos estão reservados, mas os encoders ainda não estão instalados.
 static micromouse::EncoderEsp32 encoderEsq(micromouse::pinos::ENCODER_ESQ_A,
                                            micromouse::pinos::ENCODER_ESQ_B,
                                            false);
@@ -102,20 +109,23 @@ static void tarefaTelemetria(void*) {
   }
 }
 
-/// Motores de tração pelo DRV8833 (M1 à esquerda, M2 à direita). O direito fica invertido, como o
-/// encoder, pela montagem espelhada; confirme na bancada que `definirPotencia({300, 300})` faz as
-/// duas rodas andarem para a frente. O `ControleMovimento` (#191) entra na tarefa de navegação
-/// junto com o LiDAR.
-static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_A_IN1,
-                                          micromouse::pinos::MOTOR_A_IN2,
-                                          micromouse::pinos::MOTOR_B_IN1,
-                                          micromouse::pinos::MOTOR_B_IN2,
+/// Motores de tração pelo DRV8833 (IN1/IN2 no motor esquerdo, IN3/IN4 no direito). O direito fica
+/// invertido, como o encoder, pela montagem espelhada; confirme na bancada que
+/// `definirPotencia({300, 300})` faz as duas rodas andarem para a frente. O `ControleMovimento`
+/// (#191) entra na tarefa de navegação junto com os sensores de distância.
+static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
+                                          micromouse::pinos::MOTOR_ESQ_IN2,
+                                          micromouse::pinos::MOTOR_DIR_IN3,
+                                          micromouse::pinos::MOTOR_DIR_IN4,
                                           false,
                                           true);
 
-/// Inicializa o log serial (115200 baud), os encoders e cria as duas tarefas.
+/// Inicializa o log serial pela USB nativa, os encoders e cria as duas tarefas.
 void setup() {
   Serial.begin(115200);
+  // Sem um computador conectado, a escrita na USB CDC esperaria o tempo limite a cada chamada e
+  // atrasaria a telemetria. Com tempo zero, o dado é descartado se ninguém estiver lendo.
+  Serial.setTxTimeoutMs(0);
   Serial.println("micromouse: iniciando");
 
   motores.iniciar();  // começa freado
