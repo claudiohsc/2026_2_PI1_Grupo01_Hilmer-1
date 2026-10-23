@@ -11,7 +11,7 @@ Página de consulta rápida para saber **onde cada equipe está no projeto**, o 
 | Energia | Paulo Henrique Melo de Souza | [Status de Energia](energia.md) |
 | Estrutura | Ana Carolina Nunes | [Status de Estrutura](estrutura.md) |
 
-A gerência geral do projeto é de Ana Carolina Fialho. A lista de integrantes do início do projeto está no [TAP](../01-tap.md); a gerência de software e a gerência geral mudaram depois dele.
+A gerência geral do projeto é de Ana Carolina Fialho, e a gerência de software, de Cláudio Henrique. A lista de integrantes e as funções estão no [TAP](../01-tap.md), atualizado em 23/10/2026 com a mudança de gerência.
 
 !!! note "Como ler"
     Tudo o que está escrito aqui vem de uma fonte citada: *issues* e PRs do GitHub, páginas desta documentação ou o cronograma. Quando uma informação **não consta** nas fontes, a página diz isso em vez de supor. Se algo parecer desatualizado, confira a data de "Última atualização" da página da equipe e os links antes de usar a informação.
@@ -139,4 +139,4 @@ As páginas de cada equipe listam também os PRs de software em revisão.
 | **Versão** | **Data** | **Descrição** | **Autor(es)** | **Revisor(es)** |
 |:----------:|:--------:|---------------|---------------|-----------------|
 | 1.0 | 19/10/2026 | Criação da seção e primeiro levantamento a partir do GitHub, do cronograma e dos documentos do projeto | Cláudio Henrique | Paulo Henrique |
-| 1.1 | 23/10/2026 | Atualização para a Rev 2.0 do hardware (VL53L0X, MPU6050, N20, Super Mini), dependências D1 a D9 e situação dos PRs e das tarefas em 23/10 | Ana Carolina Fialho | — |
+| 1.1 | 23/10/2026 | Atualização para a Rev 2.0 do hardware (VL53L0X, MPU6050, N20, Super Mini), dependências D1 a D9 e situação dos PRs e das tarefas em 23/10; referência ao TAP atualizado com a mudança de gerência | Ana Carolina Fialho | — |
