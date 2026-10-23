@@ -32,7 +32,7 @@ $$V_{\text{pack}}(t) = 2 \cdot V_{\text{cel}}(Q_{\text{d}}(t))$$
 | :--- | :---: | :---: | :---: | :--- |
 | **Tensão do Patamar Eletroquímico** | $E_0$ | **$3{,}740$** | $\text{V}$ | Tensão de circuito aberto intrínseca da célula |
 | **Resistência Interna por Célula** | $R$ | **$15$** | $\text{m}\Omega$ | Resistência ôhmica interna ($30\text{ m}\Omega$ total no pack 2S) |
-| **Corrente Média em Corrida** | $I$ | **$0{,}426$** | $\text{A}$ | Demanda líquida contínua do robô a 7,4 V nominal (Rev 2.0) |
+| **Corrente Média em Corrida** | $I$ | **$0{,}426$** | $\text{A}$ | Demanda líquida contínua do robô a 7,4 V nominal |
 | **Coeficiente de Polarização** | $K$ | **$0{,}085$** | $\text{V}$ | Efeito de polarização e saturação na zona final de descarga |
 | **Capacidade Nominal da Célula** | $Q$ | **$0{,}650$** | $\text{Ah}$ | Capacidade de catálogo ($650\text{ mAh}$) |
 | **Carga Descarregada Acumulada** | $Q_{\text{d}}$ | $I \cdot t$ | $\text{Ah}$ | Integral da corrente de descarga ao longo do tempo |

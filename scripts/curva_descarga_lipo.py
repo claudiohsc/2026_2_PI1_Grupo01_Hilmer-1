@@ -26,7 +26,7 @@ K = 0.085                          # Constante de polarizacao de fim de descarga
 A = 0.440                          # Amplitude da zona exponencial inicial (V)
 B = 16.0                           # Coeficiente da zona exponencial (1/Ah)
 
-# Corrente de Missao Nominal do Micromouse (Revisao 2.0)
+# Corrente de Missao Nominal do Micromouse
 # Buck 6V U4 (Motores N20) + Buck 5V U2 (ESP32-C3 Super Mini) + Buck 3V3 U5 (3x VL53L0X + MPU6050) -> ~3.15 W / 7.4 V = ~0.426 A
 CORRENTE_MISSAO_A = 0.426
 

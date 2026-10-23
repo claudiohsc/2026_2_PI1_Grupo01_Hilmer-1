@@ -4,7 +4,7 @@
 
 ## 1. Contextualização e Metodologia de Projeto
 
-O sistema de alimentação do Micromouse opera a partir do barramento primário de bateria LiPo 2S (**$6{,}60\text{ V a }8{,}40\text{ V}$**, $V_{\text{nominal}} = 7{,}40\text{ V}$). Para garantir isolamento de ruído entre atuadores, processamento lógico e sensoriamento óptico/inercial, bem como imunidade eletromagnética contra transientes indutivos, padronizou-se na Revisão 2.0 do hardware uma arquitetura com **três conversores chaveados Step-Down (Buck) de alta frequência independentes baseados no CI MP1584EN** ($f_{\text{sw}} \approx 1{,}0\text{ MHz}$, chave MOSFET interna de canal N com $R_{\text{DS(on)}} \approx 180\text{ m}\Omega$, limite de pico de $3{,}0\text{ A}$):
+O sistema de alimentação do Micromouse opera a partir do barramento primário de bateria LiPo 2S (**$6{,}60\text{ V a }8{,}40\text{ V}$**, $V_{\text{nominal}} = 7{,}40\text{ V}$). Para garantir isolamento de ruído entre atuadores, processamento lógico e sensoriamento óptico/inercial, bem como imunidade eletromagnética contra transientes indutivos, adota-se uma arquitetura com **três conversores chaveados Step-Down (Buck) de alta frequência independentes baseados no CI MP1584EN** ($f_{\text{sw}} \approx 1{,}0\text{ MHz}$, chave MOSFET interna de canal N com $R_{\text{DS(on)}} \approx 180\text{ m}\Omega$, limite de pico de $3{,}0\text{ A}$):
 
 1. **Barramento `+6V0` (`U4` — Atuação Eletromecânica):** Alimentado por módulo regulador **MP1584EN (`U4`)** ajustado em $6{,}0\text{ V}$, dedicado ao pino de potência `VCC` do driver Ponte H **DRV8833 (`U6`)** e ao resistor de *pull-up* `R4 = 47 kΩ` do pino `EEP` (`nSLEEP`) para acionar os micromotores GA12-N20 (`J1` e `J2`) com tensão constante de $6{,}0\text{ V}$ e suporte a picos transitórios de partida/travamento (*stall*) de **até ~3,0 A**. Conta com filtragem externa dedicada na PCB ($C_3 = 10\ \mu\text{F}$ na entrada e $C_4 = 100\ \mu\text{F}$ na saída).
 2. **Barramento `+5V0` (`U2` — Processamento e Rádio Wi-Fi):** Alimentado por módulo regulador **MP1584EN (`U2`)** ajustado em $5{,}0\text{ V}$, dedicado à alimentação da placa **ESP32-C3 Super Mini (`U3`)** através do seu pino `5V` (consumo médio nominal de $130\text{ mA}$ e picos curtos de rádio Wi-Fi de até $350\text{ mA}$), isolando o regulador linear LDO interno da placa das oscilações do barramento de tração. Conta com filtragem externa na PCB ($C_6 = 10\ \mu\text{F}$ na entrada e $C_2 = 100\ \mu\text{F}$ na saída).
@@ -14,7 +14,7 @@ O sistema de alimentação do Micromouse opera a partir do barramento primário 
 
 ## 2. Dimensionamento do Regulador MP1584EN — `U4` (+6V0 — Motores DC e Driver DRV8833)
 
-O conversor **MP1584EN (`U4`)** substitui o antigo regulador bipolar LM2596, operando com frequência nominal de chaveamento de **$1{,}0\text{ MHz}$** e chave MOSFET High-Side interna ($R_{\text{DS(on)}} \approx 180\text{ m}\Omega$, corrente limite de pico ciclo a ciclo de $3{,}0\text{ A a }3{,}5\text{ A}$), reduzindo drasticamente a massa, a área ocupada na PCB e a queda de tensão em *dropout*.
+O conversor **MP1584EN (`U4`)** opera com frequência nominal de chaveamento de **$1{,}0\text{ MHz}$** e chave MOSFET High-Side interna ($R_{\text{DS(on)}} \approx 180\text{ m}\Omega$, corrente limite de pico ciclo a ciclo de $3{,}0\text{ A a }3{,}5\text{ A}$), provendo alta eficiência, baixo volume ocupado na PCB e reduzida queda de tensão em *dropout*.
 
 ### 2.1 Razão Cíclica (*Duty Cycle*) e Análise de *Dropout Voltage*
 Adotando rendimento médio sob carga de tração estimado em $\eta \approx 85\%$ ($0{,}85$):
@@ -27,7 +27,7 @@ $$D = \frac{V_{\text{out}}}{V_{\text{in}} \cdot \eta}$$
   $$D_{\text{nom}} = \frac{6{,}0}{7{,}4 \cdot 0{,}85} \approx 0{,}954 \implies \mathbf{95{,}4\%} \quad (\text{ideal sem perdas: } 81{,}1\%)$$
 
 **Comportamento em *Dropout* ($V_{\text{drop}}$):**  
-Diferentemente de conversores bipolares antigos (cuja junção Darlington exigia $V_{\text{drop}} \approx 1{,}3\text{ V}$), o estágio MOSFET do **MP1584EN** apresenta resistência em condução de apenas $R_{\text{DS(on)}} \approx 0{,}18\ \Omega$. Em regime nominal de corrida ($I_{\text{out}} = 0{,}30\text{ A}$), a queda resistiva na chave interna é de apenas $\Delta V_{\text{sw}} \approx 0{,}30\text{ A} \cdot 0{,}18\ \Omega = \mathbf{54\text{ mV}}$.  
+O estágio MOSFET do **MP1584EN** apresenta resistência em condução de apenas $R_{\text{DS(on)}} \approx 0{,}18\ \Omega$. Em regime nominal de corrida ($I_{\text{out}} = 0{,}30\text{ A}$), a queda resistiva na chave interna é de apenas $\Delta V_{\text{sw}} \approx 0{,}30\text{ A} \cdot 0{,}18\ \Omega = \mathbf{54\text{ mV}}$.  
 Considerando o ciclo de trabalho máximo do controlador PWM interno e a resistência série do indutor, o regulador `U4` sustenta a saída próxima de $6{,}0\text{ V}$ até o limiar de corte UVLO de **$6{,}60\text{ V}$** ($V_{\text{out}} \ge 5{,}85\text{ V}$), garantindo perfil cinemático uniforme aos motores GA12-N20 durante toda a descarga útil da bateria.
 
 ### 2.2 Malha de Realimentação (Feedback)
@@ -69,7 +69,7 @@ $$L_{\text{mín}} = \frac{(V_{\text{in,max}} - V_{\text{out}}) \cdot (V_{\text{o
 
 ## 3. Dimensionamento do Regulador MP1584EN — `U2` (+5V0 — Placa ESP32-C3 Super Mini `U3`)
 
-Na Revisão 2.0 do hardware, o barramento de $+5{,}0\text{ V}$ gerado pelo conversor **MP1584EN (`U2`)** alimenta exclusivamente o pino **`5V`** da placa microcontroladora **ESP32-C3 Super Mini (`U3`)** (consumo médio de $130\text{ mA}$ e picos de transmissão Wi-Fi de até $350\text{ mA}$). Essa topologia em cascata (Buck chaveado $7{,}4\text{ V} \to 5{,}0\text{ V}$ seguido do regulador LDO linear interno de $5{,}0\text{ V} \to 3{,}3\text{ V}$ da própria placa Super Mini) proporciona dupla rejeição de *ripple* (PSRR) para a CPU e o transceptor RF.
+O barramento de $+5{,}0\text{ V}$ gerado pelo conversor **MP1584EN (`U2`)** alimenta exclusivamente o pino **`5V`** da placa microcontroladora **ESP32-C3 Super Mini (`U3`)** (consumo médio de $130\text{ mA}$ e picos de transmissão Wi-Fi de até $350\text{ mA}$). Essa topologia em cascata (Buck chaveado $7{,}4\text{ V} \to 5{,}0\text{ V}$ seguido do regulador LDO linear interno de $5{,}0\text{ V} \to 3{,}3\text{ V}$ da própria placa Super Mini) proporciona dupla rejeição de *ripple* (PSRR) para a CPU e o transceptor RF.
 
 ### 3.1 Razão Cíclica e Margem de *Dropout*
 Com rendimento $\eta \approx 86\%$ ($0{,}86$) a $f_{\text{sw}} = 1{,}0\text{ MHz}$:
@@ -120,7 +120,7 @@ A segregação dos sensores em `U5` (separado do microcontrolador em `U2` e dos 
 
 ---
 
-## 5. Tabela Comparativa Consolidada dos Três Reguladores (Revisão 2.0)
+## 5. Tabela Comparativa Consolidada dos Três Reguladores
 
 | Parâmetro de Projeto | Linha `+6V0` (`U4` — Motores / DRV8833) | Linha `+5V0` (`U2` — MCU ESP32-C3) | Linha `+3V3` (`U5` — Sensores I²C) |
 | :--- | :--- | :--- | :--- |

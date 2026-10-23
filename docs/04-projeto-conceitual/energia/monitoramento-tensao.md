@@ -27,8 +27,8 @@ O circuito divisor de tensão é composto por dois resistores de filme metálico
                                    o----> BAT_ADC_TEST (Canal ADC1 ESP32-C3 Super Mini)
 ```
 
-> **Nota de Alinhamento com o Esquemático Rev 2.0 (`Micromouse.kicad_sch`):**  
-> Na Revisão 2.0 do hardware, o pino `GPIO 2` foi alocado para o sinal de habilitação `XSHUT` do sensor laser ToF direito (`J5` — `VL53L0X`). Por essa razão, a saída do divisor resistivo (`R1 = 100 kΩ`, `R2 = 33 kΩ` e capacitor de filtro designado **`C5 = 100 nF`**) encontra-se identificada no esquemático pela rede de teste **`BAT_ADC_TEST`**. Para operação em malha fechada do corte por subtensão (UVLO) via firmware na revisão final da placa, recomenda-se o roteamento do nó `BAT_ADC_TEST` ao pino **`GPIO 4 (ADC1_CH4)`** do `ESP32-C3 Super Mini` (`U3`), que se encontra livre no bloco `ADC1` (visto que os encoders de quadratura não estão instalados na Rev 2.0).
+> **Nota de Integração com o Esquemático (`Micromouse.kicad_sch`):**  
+> Como o pino `GPIO 2` é utilizado para o sinal de habilitação `XSHUT` do sensor laser ToF direito (`J5` — `VL53L0X`), a saída do divisor resistivo (`R1 = 100 kΩ`, `R2 = 33 kΩ` e capacitor de filtro **`C5 = 100 nF`**) é disponibilizada na rede **`BAT_ADC_TEST`**, devendo ser conectada a um canal livre do bloco `ADC1` do `ESP32-C3 Super Mini` (`U3`), como o pino **`GPIO 4 (ADC1_CH4)`**, para leitura analógica em malha fechada.
 
 A relação de transferência de tensão é dada por:
 
@@ -62,7 +62,7 @@ Esse valor é perfeitamente suportado por resistores SMD miniatura de encapsulam
 
 ## 3. Projeto do Filtro Passa-Baixas Anti-Aliasing ($RC$)
 
-Para evitar o fenômeno de mascaramento (*aliasing*) na conversão A/D e rejeitar a ondulação de alta frequência originada da modulação PWM de $20\text{ kHz}$ dos motores N20, adiciona-se o capacitor cerâmico multicamada **$C_5$** (`C5 = 100 nF` no esquemático Rev 2.0) em paralelo com $R_2$.
+Para evitar o fenômeno de mascaramento (*aliasing*) na conversão A/D e rejeitar a ondulação de alta frequência originada da modulação PWM de $20\text{ kHz}$ dos motores N20, adiciona-se o capacitor cerâmico multicamada **$C_5$** (`C5 = 100 nF`) em paralelo com $R_2$.
 
 ### 3.1 Resistência Equivalente de Thevenin
 A impedância de saída vista pelo capacitor no nó de amostragem corresponde ao paralelo de $R_1$ e $R_2$:
@@ -97,7 +97,7 @@ O comportamento analítico em frequência do circuito divisor com filtro anti-al
 ## 5. Implementação no Firmware e Processamento Digital
 
 Na placa microcontroladora **ESP32-C3 Super Mini (`U3`)**:
-* **Nó Analógico Vinculado:** Rede **`BAT_ADC_TEST`** roteada a um canal livre do periférico `ADC1` (recomendado **`GPIO 4 / ADC1_CH4`** na Revisão 2.0, visto que `GPIO 0, 1, 2` operam nos sinais `XSHUT` dos sensores `VL53L0X` e `GPIO 3` atua no `IN2` do `DRV8833`).
+* **Nó Analógico Vinculado:** Rede **`BAT_ADC_TEST`** roteada a um canal livre do periférico `ADC1` (pino **`GPIO 4 / ADC1_CH4`**, visto que `GPIO 0, 1, 2` operam nos sinais `XSHUT` dos sensores `VL53L0X` e `GPIO 3` atua no `IN2` do `DRV8833`).
 * **Configuração de Atenuação:** Atenuação configurada para `ADC_ATTEN_DB_11` (faixa calibrada de até 2500 mV).
 * **Filtro Digital por Software:** O firmware realiza uma média móvel de 16 amostras com intervalo de amostragem de 50 ms ($20\text{ Hz}$), complementando o filtro passivo de hardware (`C5 = 100 nF`).
 
