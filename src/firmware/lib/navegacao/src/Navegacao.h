@@ -11,6 +11,7 @@
 #include <cstdint>
 
 #include "Configuracao.h"
+#include "DetectorObjetivo.h"
 #include "Direcao.h"
 #include "Mapa.h"
 #include "Tipos.h"
@@ -52,7 +53,7 @@ class Navegacao {
   Pose obterPose() const { return {posicao_atual_, direcao_atual_}; }
 
   /// Célula objetivo configurada.
-  PosicaoCelula obterObjetivo() const { return objetivo_; }
+  PosicaoCelula obterObjetivo() const { return detector_.celulaObjetivo(); }
 
   /// Define a pose atual do robô sem compará-la com um passo (ex.: posição inicial).
   /// Cancela o passo pendente, se houver.
@@ -118,7 +119,12 @@ class Navegacao {
   const Mapa& mapa_;
   PosicaoCelula posicao_atual_ = {0, 0};
   Direcao direcao_atual_ = Direcao::Norte;
-  PosicaoCelula objetivo_ = {0, 0};
+
+  /// Detector de objetivo interno usado pelo Flood Fill para saber a célula de destino.
+  /// @note Duplicidade temporária: coexiste com o `detectorObjetivo` de `main.cpp`
+  /// até que a `Navegacao` seja integrada no laço da tarefa FreeRTOS e os detectores
+  /// sejam unificados e simplificados (#189 / revisão PR #351).
+  DetectorObjetivo detector_;
 
   bool passo_pendente_ = false;
   PosicaoCelula celula_esperada_ = {0, 0};
