@@ -65,10 +65,10 @@ O projeto compreende o desenvolvimento, integração e validação de um sistema
 |---|---|---|---|---|
 | Ágata Dias Vieira | 241012089 | Engenharia Aeroespacial | 241012089@aluno.unb.br | Estrutura |
 | Aline de Carvalho Rodrigues | 180096923 | Engenharia Eletrônica | 180096923@aluno.unb.br | Gerente de Eletrônica |
-| Ana Carolina Fialho | 221031102 | Engenharia de Software | 221031102@aluno.unb.br | Gerente de Software |
+| Ana Carolina Fialho | 221031102 | Engenharia de Software | 221031102@aluno.unb.br | Gerente Geral |
 | Ana Carolina Nunes | 221007770  | Engenharia Aeroespacial | 221007770@aluno.unb.br | Gerente de Estrutura |
-| Bruno Bernardes Duarte | 242034483 | Engenharia de Software | 242034483@aluno.unb.br | Gerente Geral |
-| Cláudio Henrique | 221007958 | Engenharia de Software | 221007958@aluno.unb.br | Software |
+| Bruno Bernardes Duarte | 242034483 | Engenharia de Software | 242034483@aluno.unb.br | Eletrônica |
+| Cláudio Henrique | 221007958 | Engenharia de Software | 221007958@aluno.unb.br | Gerente de Software |
 | Daniel Rodrigues Nascimento | 231037665 | Engenharia de Software | 231037665@aluno.unb.br | Energia |
 | Eduardo Gaspar | 251020191 | Engenharia de Software | 251020191@aluno.unb.br | Eletrônica |
 | Eduardo Viana Ribeiro da Silva | 251036440 | Engenharia de Software | 251036440@aluno.unb.br | Software |
@@ -83,6 +83,8 @@ O projeto compreende o desenvolvimento, integração e validação de um sistema
 | Rafael Lima Sant Ana | 251035659 | Engenharia de Software | 251035659@aluno.unb.br | Software |
 
 **Orientador:** Prof. Dr. Hilmer Rodrigues Neri (Turma 05)
+
+> **Mudança de gerência (outubro de 2026):** a gerência geral passou de Bruno Bernardes Duarte para Ana Carolina Fialho, e a gerência de software passou de Ana Carolina Fialho para Cláudio Henrique. Bruno Bernardes Duarte passou a integrar a equipe de eletrônica. As demais funções seguem as do início do projeto. O registro das alterações está no [histórico de versões](#historico-de-versoes).
 
 > **Nota sobre funções:** Ao decorrer do projeto, é comum que algumas funções possam ser remanejadas em detrimento de outras, sendo importante ressaltar que temos funções primárias e secundárias, de acordo com as habilidades de cada membro.
 
@@ -108,3 +110,16 @@ O projeto compreende o desenvolvimento, integração e validação de um sistema
 O esforço estimado será contabilizado considerando a quantidade de horas dedicadas por cada integrante da equipe às atividades relacionadas ao projeto. Serão 90h por aluno, contabilizando 60h dentro do horário de aula, mais cerca de 30h fora da sala de aula. Considerando atividades de pesquisa, planejamento, definição de requisitos, desenvolvimento, fabricação, programação, integração, testes e documentação.
 Considerando os 18 integrantes da equipe, o esforço total estimado para o projeto é de aproximadamente 1.620 horas.
 
+---
+
+## Histórico de versões
+
+| **Versão** | **Data** | **Descrição** | **Autor(es)** | **Revisor(es)** |
+|:----------:|:--------:|---------------|---------------|-----------------|
+| 0.1 | 02/09/2026 | Criação do documento a partir do modelo da disciplina | Cláudio Henrique | — |
+| 0.2 | 09/09/2026 | Primeira versão do TAP | Elias Faria de Oliveira | — |
+| 1.0 | 09/09/2026 | TAP completo | Cláudio Henrique | — |
+| 1.1 | 28/09/2026 | Migração do documento para o MkDocs | Jose Felipe Duarte Guedes de Oliveira | — |
+| 1.2 | 30/09/2026 | Realocação de membros da equipe | Bruno Bernardes Duarte | — |
+| 1.3 | 04/10/2026 | Alocação de Marllon Fausto Cardoso na equipe de software | Ana Carolina Fialho | — |
+| 1.4 | 23/10/2026 | Mudança de gerência: Ana Carolina Fialho na gerência geral, Cláudio Henrique na gerência de software e Bruno Bernardes Duarte na eletrônica | Ana Carolina Fialho | — |
