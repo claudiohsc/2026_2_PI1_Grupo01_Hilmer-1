@@ -84,6 +84,12 @@ extra_javascript:
 
 nav:
   - Início: README.md
+  - Status das equipes:
+      - status-equipes/README.md
+      - Software: status-equipes/software.md
+      - Eletrônica: status-equipes/eletronica.md
+      - Energia: status-equipes/energia.md
+      - Estrutura: status-equipes/estrutura.md
   - 1. TAP: 01-tap.md
   - 2. Requisitos: 02-requisitos.md
   - 3. EAP: 03-eap.md
