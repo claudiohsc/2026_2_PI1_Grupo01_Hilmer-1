@@ -145,6 +145,10 @@ static void tarefaTelemetria(void*) {
     const bool dispararEvento = detectorObjetivo.consumirEventoChegada();
     portEXIT_CRITICAL(&travaOdometria);
 
+    portENTER_CRITICAL(&travaTof);
+    const LeituraTofTelemetria leituraTof = ultimaLeituraTof;
+    portEXIT_CRITICAL(&travaTof);
+
     micromouse::PacoteTelemetria pacote;
     pacote.numeroSequencia = ++sequencia;
     pacote.pulsosEsq = pulsosEsq;
@@ -157,8 +161,14 @@ static void tarefaTelemetria(void*) {
     pacote.velocidade = 0.0f;     // Provisório até inclusão de cálculo de velocidade instantânea
     pacote.tensaoBateria = 0.0f;  // Provisório até integração de leitura analógica da bateria
     pacote.evento = dispararEvento ? "objetivo_alcancado" : nullptr;
+    pacote.tofFrenteMm = leituraTof.distancias.frenteMm;
+    pacote.tofEsqMm = leituraTof.distancias.esquerdaMm;
+    pacote.tofDirMm = leituraTof.distancias.direitaMm;
+    pacote.tofValida = leituraTof.valida;
+    pacote.tofIdadeMs = leituraTof.idadeMs;
 
-    char buffer[256];
+    // Comporta o pior caso do JSON; com menos, a linha seria descartada em silêncio.
+    char buffer[micromouse::TAMANHO_MAX_JSON_TELEMETRIA];
     if (micromouse::TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)) > 0) {
       Serial.println(buffer);
     }

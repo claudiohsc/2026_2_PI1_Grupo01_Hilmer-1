@@ -35,6 +35,13 @@ size_t TelemetriaJson::serializar(const PacoteTelemetria& pacote, char* saida, s
   doc["medio_mm"] = pacote.medioMm;
   doc["pose_valida"] = pacote.poseValida;
 
+  // Campos diagnósticos dos sensores de distância (#344):
+  doc["tof_frente_mm"] = pacote.tofFrenteMm;
+  doc["tof_esq_mm"] = pacote.tofEsqMm;
+  doc["tof_dir_mm"] = pacote.tofDirMm;
+  doc["tof_valida"] = pacote.tofValida;
+  doc["tof_idade_ms"] = pacote.tofIdadeMs;
+
   if (measureJson(doc) >= capacidade) {
     return 0;
   }
