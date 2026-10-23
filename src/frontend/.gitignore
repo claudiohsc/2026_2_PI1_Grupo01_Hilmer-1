@@ -1,0 +1,12 @@
+# Dependências e build (gerados por npm install e npm run build)
+node_modules/
+dist/
+
+# Variáveis de ambiente com valores reais: nunca versionar
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+*.log

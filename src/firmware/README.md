@@ -8,11 +8,9 @@ A documentação detalhada do código (camadas, tipos, pinagem, interface do LiD
 
 ```
 src/firmware/
-├── platformio.ini     # ambientes esp32c3 (placa), native (testes no computador), native_cobertura (testes com cobertura, usado no CI) e bancada_tof (firmware de bancada dos VL53L0X)
+├── platformio.ini     # ambientes esp32c3 (placa), native (testes no computador) e native_cobertura (testes com cobertura, usado no CI)
 ├── src/main.cpp       # ponto de entrada: cria as tarefas FreeRTOS (navegação e telemetria)
-├── src/bancada/       # programas de bancada, fora do firmware do robô
 ├── lib/               # uma biblioteca por camada
-├── scripts/           # ferramentas de bancada no computador (Python)
 └── test/              # testes unitários e de integração (Unity)
 ```
 
@@ -21,16 +19,14 @@ src/firmware/
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
 | `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar`, `IEncoder` e, nos próximos épicos, motores) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` a partir das distâncias do LiDAR |
-| `tof` | Sensoriamento | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros provisórios (`ConfiguracaoTof.h`), sem Arduino |
-| `deslocamento` | Sensoriamento | Deslocamento sem encoder: estimativa pela potência dos motores (`EncoderEstimado`, `MotoresComEstimativa`) e correção pelos ToF; todos os ajustes em `ConfiguracaoDeslocamento.h` |
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula), atualização a partir das leituras classificadas e armazenamento em memória |
-| `navegacao` | Navegação | Localização, decisão de movimento e detecção do objetivo |
+| `navegacao` | Navegação | Localização (`Odometria`), algoritmo de resolução do labirinto por *flood fill* (`Navegacao`, [#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)) e detecção do objetivo (`DetectorObjetivo`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
-| `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
+| `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, e `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, sem hardware |
-| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X pelo I²C, encoders, DRV8833, WiFi) |
+| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (LiDAR por UART, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
 
@@ -139,77 +135,6 @@ char letra = letraDaDirecao(pose.direcao);        // 'N', 'L', 'S' ou 'O', como 
 
 No `main.cpp`, a tarefa de navegação atualiza a odometria a cada 10 ms, e a telemetria acrescenta `linha`, `coluna`, `orientacao` e `pose_valida` à linha de JSON dos encoders.
 
-## Deslocamento sem encoder
-
-Na Rev 2.0 os encoders ainda não estão instalados. Enquanto isso, o deslocamento é **estimado pela potência comandada vezes o tempo** e **corrigido pelos ToF** ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)). O `EncoderEstimado` implementa o `IEncoder`, então a `Odometria` não muda; o `MotoresComEstimativa` implementa o `IMotores`, então quem aciona as rodas também não.
-
-```cpp
-DeslocamentoEstimado deslocamento(motoresDrv8833);
-IMotores& motores = deslocamento.motores();      // quem aciona as rodas usa este, não o driver
-// a cada 10 ms, na tarefa de navegação:
-deslocamento.ciclo(10, odometria, leituraNova ? &leitura : nullptr);
-bool poseValida = odometria.posicaoValida() && deslocamento.poseConfiavel();
-```
-
-| Regra | Comportamento |
-|---|---|
-| Estimativa | Cada roda anda a velocidade da `TABELA_VELOCIDADE` para a potência comandada vezes o tempo; abaixo do primeiro ponto, fica parada (zona morta) |
-| Correção pela frente | Com parede a até 300 mm do sensor frontal, a posição é ajustada pela distância à parede |
-| Correção pelas laterais | Quando um lado passa de parede para livre (ou o contrário) com o robô avançando, a posição é ajustada para a quina da parede, na fronteira de célula |
-| Eixo corrigido | Só quanto o robô andou; o desvio lateral e o rumo são da #188 e da #190 |
-| Proteções | Correção acima de 70 mm é descartada; durante um giro, o ToF não corrige |
-| `pose_valida` | Fica `false` depois de 360 mm sem nenhuma correção, até a próxima |
-| Telemetria | Campos `deslocamento` (`"estimado"` ou `"encoder"`) e `sem_correcao_mm`. O comando `Z` reposiciona o robô no centro da célula atual |
-| Troca para o encoder real | `ENCODERS_INSTALADOS = true` em `ConfiguracaoDeslocamento.h`; nada mais muda |
-
-### Limites deste modo
-
-- **Mais deriva:** patinagem, bateria fraca, piso diferente ou uma tabela mal calibrada viram erro de posição, que só some na próxima referência do ToF (parede à frente ou quina lateral).
-- **Sem velocidade medida:** a velocidade é a que a tabela supõe. Um motor travado ou uma roda patinando não aparecem na estimativa.
-- **Sem inércia:** a roda para no instante do comando.
-- **Giro grosseiro:** o giro vem da diferença de potência entre as rodas; o rumo confiável é o do giroscópio (#190).
-- **Corredores longos:** enquanto a #379 não tratar "fora de alcance" como livre, uma leitura com um lado aberto para mais de 1,2 m é recusada e não corrige (8×4 e 12×4).
-
-### Valores provisórios
-
-Todos ficam em **`lib/deslocamento/src/ConfiguracaoDeslocamento.h`**, e cada um diz o que faz, de onde veio e como medir:
-
-| Valor | Hoje | Como medir na bancada |
-|---|---|---|
-| `TABELA_VELOCIDADE` | 150 → 45, 400 → 120, 700 → 210, 1000 → 300 (potência → mm/s) | Etapa 2 da bancada abaixo: 2 s por ponto, medidos na régua; o menu imprime a tabela pronta para colar |
-| `DISTANCIA_SENSOR_FRONTAL_AO_CENTRO_MM` | 50 | Régua do centro entre as rodas até a face do sensor frontal |
-| `AVANCO_SENSORES_LATERAIS_MM` | 0 | Régua do centro até o eixo dos sensores laterais, para a frente |
-| `DISTANCIA_FRONTAL_MAXIMA_PARA_CORRIGIR_MM` | 300 | Até onde o erro do sensor frontal fica pequeno (#175) |
-| `LIMIAR_PAREDE_LATERAL_MM` / `HISTERESE_PAREDE_LATERAL_MM` | 120 / 40 | Usar os limiares da #379 |
-| `CORRECAO_MAXIMA_MM` | 70 | Maior que a deriva entre duas referências, menor que meia célula |
-| `DISTANCIA_MAXIMA_SEM_CORRECAO_MM` | 360 | Quanto o robô anda antes de errar a célula; aumentar com a tabela calibrada |
-
-### Bancada do deslocamento sem encoder
-
-Para conferir a estimativa com o robô montado (motores e ToF), use o menu de bancada (precisa de `pip install pyserial`):
-
-```bash
-./scripts/bancada_deslocamento.py          # escolhe a porta; ou --porta /dev/ttyACM0 (COM5 no Windows)
-```
-
-**ATENÇÃO:** as etapas acionam os motores. Robô no chão, com espaço livre. **Ctrl+C freia na hora**, e cada movimento dura no máximo 10 s.
-
-1. **Opção 1:** grava o firmware de bancada (`pio run -e bancada_deslocamento -t upload`).
-2. **Opção 3:** roteiro completo. Em cada etapa o menu explica o que montar, aciona o robô e mostra o log ao vivo (posição estimada, célula, `pose_valida`, distância sem correção, ToF e cada correção aplicada), pede a medida da régua e dá APROVADO, REPROVADO ou OBSERVADO.
-3. **Logs:** cada movimento vira um CSV numa pasta `bancada_deslocamento_<data>/`, junto com o `relatorio.md`, para registrar em `docs/07-testes/software.md`.
-4. Ao terminar, grave de volta o firmware do robô: `pio run -e esp32c3 -t upload`.
-
-| Etapa | O que verifica |
-|---|---|
-| 1. Estado inicial | Modo estimado, ToF iniciados e pose (0, 0) Norte confiável |
-| 2. Tabela de velocidade | Zona morta e cada ponto da tabela contra a régua (±10%); imprime a tabela medida para colar em `ConfiguracaoDeslocamento.h` |
-| 3. Uma célula | ~180 mm sem correção: erro até ±18 mm e célula estimada certa |
-| 4. Corredor com ToF | ~450 mm num corredor com parede no fim e uma abertura lateral: correção aplicada, erro até ±15 mm e pose válida |
-| 5. Confiança | ~450 mm sem correção: `pose_valida` falso; `ZERAR` devolve a confiança |
-| 6. Giro de 90° | Direção estimada Leste e giro real de 90 ± 20° |
-
-Há ainda **movimento livre** (potência, duração e correção à escolha, com o log ao vivo) e **ver o estado atual**. Os critérios ficam no topo do script e são provisórios. O firmware também funciona direto no `pio device monitor -e bancada_deslocamento`: `AJUDA` lista `INFO`, `VEL`, `ZERAR`, `CORRECAO`, `ANDAR`, `GIRAR` e `LER`.
-
 ## Serialização do mapa em JSON
 
 O `MapaJson` (`lib/comunicacao`) converte o `Mapa` em JSON (ArduinoJson) para o envio na telemetria. Não depende do Arduino, então é testado no ambiente `native`.
@@ -264,54 +189,91 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
 | `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
 
-## Sensores de distância (VL53L0X)
+## Resolução do labirinto (navegação)
 
-Na Rev 2.0 do hardware, o LiDAR deu lugar a 3 VL53L0X no I²C (esquerdo, frontal e direito). O `TofVl53l0x` (`lib/drivers_esp32`) implementa o `ILidar`, então mapa, percepção e navegação não mudaram ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)). A regra de validade fica no `CombinadorTof` (`lib/tof`), testado no `native`; a biblioteca `pololu/VL53L0X` só entra no `esp32c3`.
+A `Navegacao` (`lib/navegacao`) decide para qual célula vizinha o robô deve ir para chegar ao objetivo, usando o que o `Mapa` sabe sobre as paredes ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183), HU-01). O objetivo padrão é o canto oposto à partida: (3, 3) no 4×4, (3, 7) no 8×4 e (3, 11) no 12×4. Ela **não aciona os motores**: devolve a direção e a célula esperada, e só muda a pose do robô quando os sensores a confirmam.
+
+**Como a direção é escolhida**, a cada passo:
+
+1. ***Flood fill*:** uma busca em largura a partir do objetivo dá a cada célula a distância, em células, até ele.
+2. **Mapa otimista:** só parede confirmada (`Parede`) bloqueia; `Livre` e `Desconhecido` contam como passagem. Assim o algoritmo funciona com o mapa parcial e desvia de cada parede nova no cálculo seguinte, refeito a cada decisão.
+3. **Menor distância:** vai para a vizinha alcançável mais próxima do objetivo. No empate: frente, direita, esquerda e trás, nessa ordem, para evitar giros.
+
+**Como um passo acontece:** decidir, mover e confirmar.
 
 ```cpp
-Wire.begin(pinos::I2C_SDA, pinos::I2C_SCL);   // barramento compartilhado com o MPU6050
-TofVl53l0x tof(Wire, {pinos::XSHUT_FRONTAL, pinos::ENDERECO_TOF_FRONTAL},
-               {pinos::XSHUT_ESQ, pinos::ENDERECO_TOF_ESQ},
-               {pinos::XSHUT_DIR, pinos::ENDERECO_TOF_DIR});
-tof.iniciar();                                // XSHUT um por vez e endereços 0x31, 0x30, 0x32
+Navegacao navegacao(armazenamentoMapa.mapa());   // partida (0, 0) virada para o Norte
 
-DistanciasLaterais d;
-if (tof.lerDistanciasLaterais(d)) { /* os 3 sensores com medida válida e recente */ }
-tof.amostra(Lado::Frente);                    // medida bruta, estado e instante, mesmo com a leitura recusada
+// a cada ciclo da tarefa de navegação
+if (!navegacao.passoPendente()) {
+  // 1. ler o LiDAR e atualizar o mapa na célula atual (AtualizadorMapa)
+  Direcao direcao;
+  if (navegacao.darPasso(direcao)) {
+    // 2. o controle de movimento (#184) gira até `direcao` e anda até navegacao.obterCelulaEsperada()
+  }
+}
+// 3. os sensores confirmam onde o robô está (ex.: odometria, #187)
+ResultadoConfirmacao r = navegacao.confirmarPose(odometria.pose());
 ```
 
 | Regra | Comportamento |
 |---|---|
-| Inicialização | Os 3 XSHUT em nível baixo; cada sensor é solto, inicializado e recebe o endereço antes do próximo. Sensor que não responde fica em reset (`sensorIniciado(lado)` diz quais iniciaram) |
-| Leitura | Nunca espera medida: só lê os sensores que já têm medida pronta. A leitura vale com os 3 entre 30 e 1200 mm e a amostra mais antiga com até 100 ms |
-| Recusa | `false` com algum sensor em `Falha`, `AbaixoDoMinimo`, `ForaDeAlcance` (inclui os 8190 mm "sem alvo") ou parado há mais de 100 ms |
-| Idade | `idadeUltimaLeituraMs()`: idade do sensor mais atrasado, para a navegação não repetir dado antigo |
-| Referência | Distância a partir da face de cada sensor; a geometria do robô e os limiares ficam na percepção ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) |
+| `darPasso()` | Decide a direção e registra a célula esperada; a pose **não muda**. Devolve `false` se já há passo pendente, se não há caminho ou se o robô já está no objetivo |
+| `confirmarPose()` → `Confirmada` | Pose medida na célula esperada (ou sem passo pendente): adota a pose e conclui o passo |
+| `confirmarPose()` → `EmAndamento` | Pose medida ainda na célula de origem: adota a pose e mantém o passo pendente |
+| `confirmarPose()` → `Divergente` | Pose medida em outra célula: adota a pose medida, cancela o passo, e o próximo `darPasso()` replaneja a partir dela |
+| `confirmarPose()` → `Invalida` | Pose fora do mapa: ignorada, a pose e o passo não mudam |
+| Objetivo inalcançável | Com as paredes conhecidas fechando o caminho, a distância é `DISTANCIA_INFINITA` (255) e não há decisão |
+| Memória | Distâncias numa matriz fixa 4×12 e fila estática de 48 posições, sem alocação dinâmica |
 
-Os parâmetros estão em `lib/tof/src/ConfiguracaoTof.h` e são **provisórios** até a bancada ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)). A telemetria serial do `main.cpp` traz os campos `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`, `tof_valida` e `tof_idade_ms`.
+Detalhes e o diagrama de estados do passo em [Firmware: navegação](../../docs/04-projeto-conceitual/firmware.md#navegacao-algoritmo-de-resolucao-do-labirinto).
 
-### Bancada dos VL53L0X
+## Detecção do objetivo e conclusão do desafio
 
-Para conferir o driver no hardware montado, junto com a eletrônica, use o menu de bancada (precisa de `pip install pyserial`):
+O `DetectorObjetivo` (`lib/navegacao`) identifica o instante em que o robô chega à célula de destino (canto diametralmente oposto à partida) a partir da pose estimada pela odometria ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), HU-07 / RF-07):
 
-```bash
-./scripts/bancada_tof.py                   # escolhe a porta; ou --porta /dev/ttyACM0 (COM5 no Windows)
+```cpp
+DetectorObjetivo detector(DimensaoMapa::Labirinto4x4); // Objetivo em (3, 3)
+
+// A cada ciclo da tarefa de navegação:
+if (detector.processarChegada(pose, motores, &armazenamentoMapa)) {
+  // Motores freados imediatamente e mapa final congelado
+}
 ```
 
-1. **Opção 1:** grava o firmware de bancada (`pio run -e bancada_tof -t upload`). Ele mantém os motores freados o tempo todo.
-2. **Opção 3:** roteiro completo, com APROVADO, REPROVADO ou OBSERVADO em cada verificação, e um relatório em Markdown no fim, para registrar em `docs/07-testes/software.md`.
-3. Ao terminar, grave de volta o firmware do robô: `pio run -e esp32c3 -t upload`.
-
-| Etapa | O que verifica |
+| Critério de aceite | Solução implementada |
 |---|---|
-| 1. Fiação | Cada XSHUT liga só o seu sensor, que aparece sozinho no 0x29 |
-| 2. Inicialização | Os 3 sensores iniciam em 0x30, 0x31 e 0x32, e o 0x29 fica livre |
-| 3. Taxa e tempo | 20 a 40 Hz por sensor, leitura em até 5 ms e ≥ 95% de leituras válidas |
-| 4. Régua | Média, erro e desvio contra distâncias medidas (tolerância de ±10 mm ou ±5%) |
-| 5. Fora da faixa | Sensor sem alvo e sensor encostado: leitura recusada, com o motivo na amostra |
-| 6. Sensor ausente | Um sensor desconectado (com a placa desligada) não impede os outros |
+| Chegada detectada na malha | `DetectorObjetivo::calcularObjetivo` determina a célula oposta (`linhas - 1, colunas - 1`) para 4×4 (`(3, 3)`), 8×4 (`(3, 7)`), 12×4 (`(3, 11)`) ou dimensões customizadas, comparando com a célula atual estimada pela odometria independente da orientação |
+| Motores parados imediatamente | Ao detectar a chegada, aciona `motores.parar()` (freio elétrico instantâneo via DRV8833), congela o mapa final (`ArmazenamentoMapa::congelarMapa()`) e marca a flag interna de conclusão com idempotência |
+| Congelamento do mapa final | `ArmazenamentoMapa::congelarMapa()` salva a imagem imutável das paredes exploradas para telemetria e persistência (HU-04, [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) |
+| Evento pontual na telemetria | `DetectorObjetivo::consumirEventoChegada()` sinaliza e consome a chegada pontual, fazendo `TelemetriaJson` incluir `"evento": "objetivo_alcancado"` em um único pacote serializado após a chegada, voltando a `null` nos pacotes subsequentes |
 
-Os critérios ficam no topo do script e são provisórios. O firmware de bancada também funciona direto no monitor serial: `pio device monitor -e bancada_tof` e o comando `AJUDA` listam `SCAN`, `ISOLAR`, `INIT`, `LER`, `FLUXO` e `ESTAT`; cada resposta é uma linha JSON.
+> [!NOTE]
+> **Transmissão serial e telemetria:** o payload JSON gerado por `TelemetriaJson` é transmitido pela Serial (USB nativa CDC) do ESP32-C3. O envio por Wi-Fi e a persistência direta no Supabase (#236) ocorrerão quando a camada de rede for integrada no Épico 03.
+>
+> **Dimensão do labirinto em `main.cpp`:** a inicialização com `Labirinto4x4` no `main.cpp` (tanto em `detectorObjetivo` quanto em `armazenamentoMapa.iniciarCorrida`) é **provisória** para bancada e testes iniciais. Em labirintos 8x4 ou 12x4 a chegada só é detectada se o tamanho correto for configurado. A seleção definitiva do tamanho será recebida dinamicamente no início da corrida.
+>
+> **Sincronização entre tarefas:** `processarChegada`, `consumirEventoChegada` e `resetar` acessam o estado de detecção e odometria sob a seção crítica `travaOdometria`, garantindo thread-safety entre `tarefaNavegacao` (10 ms) e `tarefaTelemetria` (100 ms).
+>
+> **Arquitetura dos detectores:** atualmente coexistem duas instâncias (`Navegacao::detector_` para planejamento BFS/Flood Fill e `detectorObjetivo` em `main.cpp` para o laço do firmware). Ambas serão unificadas e a API de construtores será simplificada quando `Navegacao` for incorporada diretamente ao laço da tarefa FreeRTOS.
+
+### Telemetria e compatibilidade com o banco de dados
+
+O serializador `TelemetriaJson` (`lib/comunicacao`) gera payloads pela serial formatados para futura ingestão compatível com a tabela `telemetria` do Supabase e diagnósticos de bancada:
+
+| Campo JSON | Tabela `telemetria` (Supabase) | Descrição |
+|---|---|---|
+| `numero_sequencia` | `numero_sequencia` (INT) | Sequencial monotônico incremental |
+| `posicao_linha` | `posicao_linha` (INT) | Coordenada atual da linha na malha (0 a N-1) |
+| `posicao_coluna` | `posicao_coluna` (INT) | Coordenada atual da coluna na malha (0 a M-1) |
+| `orientacao` | `orientacao` (VARCHAR(2)) | Letra da direção: "N", "S", "L", "O" |
+| `velocidade` | `velocidade` (FLOAT) | Velocidade linear instantânea (m/s) |
+| `tensao_bateria` | `tensao_bateria` (FLOAT) | Tensão instantânea da bateria (V) |
+| `evento` | `evento` (VARCHAR(30)) | Evento pontual (`"objetivo_alcancado"`, `"colisao"` ou `null`) |
+
+Campos diagnósticos adicionais (`esq_pulsos`, `dir_pulsos`, `esq_mm`, `dir_mm`, `medio_mm`, `pose_valida`) são transmitidos na serial para calibração de bancada e scripts locais (como `calibrar_deslocamento_18cm.py`).
+
+Para mais detalhes, consulte [Firmware: implementação](../../docs/04-projeto-conceitual/firmware.md#navegacao-deteccao-do-objetivo-e-evento-na-telemetria) e o registro de execução dos 14 testes em [Testes de Software](../../docs/07-testes/software.md#sprint-4-deteccao-do-objetivo-e-evento-na-telemetria).
 
 ## Instalação
 
@@ -328,8 +290,6 @@ Execute os comandos dentro de `src/firmware`:
 |---|---|
 | Compilar para o ESP32-C3 | `pio run -e esp32c3` |
 | Gravar na placa | `pio run -e esp32c3 -t upload` |
-| Gravar o firmware de bancada dos VL53L0X | `pio run -e bancada_tof -t upload` (ou pelo `scripts/bancada_tof.py`) |
-| Gravar o firmware de bancada do deslocamento | `pio run -e bancada_deslocamento -t upload` (ou pelo `scripts/bancada_deslocamento.py`) |
 | Abrir o monitor serial | `pio device monitor` |
 | Rodar os testes no computador | `pio test -e native` |
 | Rodar um teste específico | `pio test -e native -f test_nucleo` |
@@ -340,7 +300,7 @@ Execute os comandos dentro de `src/firmware`:
 |---|---|---|---|
 | Unitário | Computador (`native`) | Unity | Lógica pura: tipos, classificação, mapa, serialização |
 | Integração | Computador (`native`) | Unity, com falsos de `simulacao` no lugar do hardware | Percepção → mapa em labirinto simulado |
-| Bancada | Placa com o hardware real | Monitor serial, checklist do teste e os scripts de `scripts/` | Sensores VL53L0X (`bancada_tof.py`), encoders, motores |
+| Bancada | Placa com o hardware real | Monitor serial e checklist do teste | LiDAR real, encoders, motores |
 
 Para criar um teste:
 

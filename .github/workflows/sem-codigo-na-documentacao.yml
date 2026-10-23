@@ -1,0 +1,56 @@
+name: Sem código na documentação
+
+# Regra do grupo: a branch documentacao não recebe código. Todo PR para ela é conferido e
+# reprova se alterar código (src/, scripts/ ou os workflows de CI do código). Documentação
+# (docs/, mkdocs.yml) e arquivos de projeto das frentes (hw/, mec/) são permitidos.
+# Código vai por PR para a main.
+on:
+  pull_request:
+    branches: [documentacao]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Sem código na documentação
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Conferir os arquivos alterados
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Caminhos de código, proibidos num PR para a documentacao.
+          CODIGO='^(src/|scripts/|\.github/workflows/ci-)'
+          # Exceção: arquivos .gitignore podem ser ajustados em qualquer pasta.
+          EXCECAO='(^|/)\.gitignore$'
+
+          git diff --name-only "$BASE...$HEAD" > alterados.txt
+          grep -E "$CODIGO" alterados.txt | grep -Ev "$EXCECAO" > codigo.txt || true
+
+          {
+            echo '### Sem código na documentação'
+            echo "Arquivos alterados neste PR: $(wc -l < alterados.txt)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -s codigo.txt ]; then
+            {
+              echo
+              echo '**Código neste PR** (deve ir por PR para a `main`, ou sair deste PR):'
+              echo '```'
+              cat codigo.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            while read -r arquivo; do
+              echo "::error file=$arquivo::Código num PR para a documentacao: $arquivo"
+            done < codigo.txt
+            exit 1
+          fi
+          echo 'Nenhum arquivo de código: ok.' >> "$GITHUB_STEP_SUMMARY"
