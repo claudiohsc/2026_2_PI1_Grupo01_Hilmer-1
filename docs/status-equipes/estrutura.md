@@ -2,7 +2,7 @@
 
 **Gerente:** Ana Carolina Nunes. **Integrantes:** Ágata Dias Vieira, Joao Artur de Andrades e Letícia Lima Dos Santos.
 
-**Última atualização:** 19/10/2026 (Sprint 4). **Atualizado por:** Cláudio Henrique (levantamento inicial a partir do GitHub e dos documentos; a partir daqui, a gerente de estrutura).
+**Última atualização:** 23/10/2026 (Sprint 5). **Atualizado por:** Ana Carolina Fialho (gerente geral), só para registrar os PRs do labirinto e a Rev 2.0; a partir daqui, a gerente de estrutura.
 
 **O que a equipe entrega:** o chassi e o sistema de tração, os suportes de integração com a eletrônica e a energia, e o labirinto físico de testes. A entrega no GitHub é [Sistema de Estrutura (#121)](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/121). Detalhes em [Estruturas](../04-projeto-conceitual/estruturas.md).
 
@@ -12,7 +12,7 @@
 |------------|--------------|
 | Sistema de Tração ([#61](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/61)) | CAD e seleção de materiais concluídos no cronograma; desenho técnico e dimensionamento em andamento; fabricação prevista até 20/10 |
 | Estrutura Mecânica ([#53](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/53)) | CAD concluído; desenho técnico, análise e seleção de materiais em andamento; prototipagem e fabricação ainda sem início registrado |
-| Labirinto de Teste ([#155](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/155)) | CAD do labirinto em revisão (PR #337); construção física prevista de 21/10 a 23/10 |
+| Labirinto de Teste ([#155](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/155)) | CAD do labirinto integrado ([#337](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/337)); documentação e desenhos técnicos em revisão ([#393](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/393)); construção física prevista de 21/10 a 23/10 |
 | Integração ([#68](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/68)) | Projeto de suportes e CAD concluídos; análise em andamento; montagem, validação e testes previstos para novembro (ED2) |
 
 Os percentuais acima vêm do [cronograma](../05-cronograma.md) e podem estar defasados; a data de cada atualização não consta nele.
@@ -24,7 +24,8 @@ Os percentuais acima vêm do [cronograma](../05-cronograma.md) e podem estar def
 
 ## Em revisão
 
-- [PR #337](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/337), "Adiciona CADs do labirinto de testes": arquivos STL da base e das paredes. O modelo é de 216 cm por 72 cm, com encaixes para as paredes, de modo que também simula os labirintos menores. Sem revisão registrada.
+- [#393](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/393), "Atualização dos documentos do Labirinto de Testes": documentação, desenhos técnicos e CAD dos dois modelos de fixação das paredes (rasgos e cavilhas). A descrição do PR fala em base de 216 × 72 cm, mas o documento descreve 720 × 720 mm (4×4); o tamanho precisa ser confirmado.
+- Integrado em 23/10: [#337](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/337), arquivos STL da base (216 × 72 cm) e das paredes.
 
 ## Em aberto
 
@@ -44,7 +45,7 @@ Os percentuais acima vêm do [cronograma](../05-cronograma.md) e podem estar def
 
 | **Quem** | **O quê** | **Dependência** |
 |----------|-----------|:---------------:|
-| Software | Diâmetro da roda e bitola definitivos; labirinto físico para o teste do LiDAR real e a corrida completa | D3, D4 |
+| Software | Diâmetro da roda e bitola definitivos; labirinto físico para a bancada dos sensores e a corrida completa; posição dos 3 VL53L0X no chassi | D3, D4, D9 |
 | Energia | Labirinto físico para os ensaios de autonomia em pista | D4 |
 
 Veja a tabela completa em [Status das equipes](README.md#dependencias-entre-equipes).
@@ -52,3 +53,10 @@ Veja a tabela completa em [Status das equipes](README.md#dependencias-entre-equi
 ## Fontes
 
 [Entrega Sistema de Estrutura (#121)](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/121) · [Estruturas](../04-projeto-conceitual/estruturas.md) · [Testes de estrutura](../07-testes/estrutura.md) · [Cronograma](../05-cronograma.md)
+
+## Histórico de versões
+
+| **Versão** | **Data** | **Descrição** | **Autor(es)** | **Revisor(es)** |
+|:----------:|:--------:|---------------|---------------|-----------------|
+| 1.0 | 19/10/2026 | Levantamento inicial a partir do GitHub e dos documentos do projeto | Cláudio Henrique | Paulo Henrique |
+| 1.1 | 23/10/2026 | Registro do PR #337 integrado, do PR #393 em revisão e da dependência D9 (posição dos VL53L0X) | Ana Carolina Fialho | — |

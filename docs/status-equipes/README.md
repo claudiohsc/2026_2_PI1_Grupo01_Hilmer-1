@@ -2,7 +2,7 @@
 
 Página de consulta rápida para saber **onde cada equipe está no projeto**, o que ela **entregou**, o que está **em andamento** e o que **precisa ou aguarda de outras equipes**. É uma visão geral: o detalhe técnico está nos documentos de cada frente e nas *issues* e *Pull Requests* do GitHub.
 
-**Última atualização desta página:** 19/10/2026 (Sprint 4). Cada equipe tem a sua própria página, atualizada pelo respectivo gerente.
+**Última atualização desta página:** 23/10/2026 (Sprint 5). Cada equipe tem a sua própria página, atualizada pelo respectivo gerente.
 
 | **Equipe** | **Gerente** | **Página** |
 |------------|-------------|:----------:|
@@ -37,15 +37,15 @@ A gerência geral do projeto é de Ana Carolina Fialho. A lista de integrantes d
 | **Parte** | **O que há nela** | **Equipe** |
 |-----------|-------------------|:----------:|
 | Estrutura | Chassi, sistema de tração, suportes e labirinto físico de testes | Estrutura |
-| Energia | Bateria LiPo 2S, reguladores de tensão (*buck*), proteções e carregamento | Energia |
-| Eletrônica | ESP32-C3, LiDAR por UART, dois encoders, driver de motores DRV8833 e dois motores DC | Eletrônica |
+| Energia | Bateria 2S (LiPo nos documentos; a química ainda precisa ser confirmada pela energia), reguladores de tensão (*buck*), proteções e carregamento | Energia |
+| Eletrônica | ESP32-C3 Super Mini, 3 sensores de distância VL53L0X e IMU MPU6050 no mesmo barramento I²C, driver de motores DRV8833 e dois motores N20 com encoders (Rev 2.0) | Eletrônica |
 | Firmware | Código do ESP32-C3 em C++ (PlatformIO): percepção das paredes, mapa, navegação e controle dos motores | Software |
 | Backend | Supabase: banco PostgreSQL e Edge Function que registra as corridas | Software |
 | Frontend | Dashboard web em React, Vite e TypeScript, que lê os dados do Supabase | Software |
 
 O fluxo previsto é: o robô percorre o labirinto, monta o mapa e envia a telemetria ao Supabase, e o dashboard exibe a corrida ao vivo e o histórico. O envio da telemetria pelo robô ainda está em desenvolvimento (Épico 03).
 
-**Convenções do software:** a posição no labirinto é (linha, coluna), com a partida em (0, 0); Norte aumenta a linha e Leste aumenta a coluna. A dimensão do labirinto é escrita como "colunas × linhas" (por exemplo, 8x4 tem 8 colunas e 4 linhas). Uma **corrida** é uma tentativa de resolver o labirinto, registrada no banco com identificador único. O robô não usa IMU: a posição vem da odometria dos encoders.
+**Convenções do software:** a posição no labirinto é (linha, coluna), com a partida em (0, 0); Norte aumenta a linha e Leste aumenta a coluna. A dimensão do labirinto é escrita como "colunas × linhas" (por exemplo, 8x4 tem 8 colunas e 4 linhas). Uma **corrida** é uma tentativa de resolver o labirinto, registrada no banco com identificador único. Na Rev 2.0 do hardware (21/10), o robô usa a IMU MPU6050 para medir o giro ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)); os encoders dos motores N20 já estão disponíveis (GPIO4 a 7), mas, enquanto não são integrados ao firmware, o deslocamento é estimado pelo comando dos motores e corrigido pelos sensores ToF ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)).
 
 **Termos usados nas páginas:**
 
@@ -81,16 +81,16 @@ Datas do [cronograma](../05-cronograma.md):
 | ED2 - Entrega definitiva 2 | 23/11/2026 | Testes de integração |
 | APT - Apresentação final | 02/12/2026 | Produto completo em funcionamento |
 
-Sprint atual: **Sprint 4 (15/10 a 21/10)**. A Sprint 5 vai de 22/10 a 28/10, com feriado em 28/10.
+Sprint atual: **Sprint 5 (22/10 a 28/10)**, com feriado em 28/10. A ED1 cai na segunda-feira desta sprint.
 
 ## Visão geral por equipe
 
 | **Equipe** | **Onde está** | **Próxima entrega** | **Principal dependência em aberto** |
 |------------|---------------|---------------------|-------------------------------------|
-| Software | Épico 01 (percepção e mapeamento) fechado, exceto o teste de bancada com o LiDAR real. Épico 02 (navegação) em andamento: algoritmo, odometria e centralização prontos. Base do Épico 03 (banco, Edge Function e frontend) em andamento. | Driver dos motores (#341), interface do LiDAR (#344) e execução dos movimentos (#184) | Protocolo do LiDAR e pinagem final, vindos da eletrônica; diâmetro da roda e bitola, vindos da estrutura |
-| Eletrônica | Projeto conceitual e seleção de componentes concluídos. Esquemático e relatório técnico em revisão (PR #311). Nenhuma tarefa de montagem ou teste fechada no GitHub. | Aprovação do PR #311 e início da montagem do circuito | Resolver os conflitos de GPIO registrados no relatório do PR #311 |
-| Energia | Dimensionamento da bateria, dos reguladores e das proteções documentado. Quatro PRs de documentação aguardando revisão. Resultados registrados até agora são de simulação. | Relatório técnico de testes de energia para a ED1 (#211) | PCB física para soldar os barramentos (#212) |
-| Estrutura | Projeto conceitual e CAD do chassi concluídos. CAD do labirinto de testes em revisão (PR #337). Fabricação ainda não registrada como iniciada. | Fabricação do chassi e do labirinto de testes (cronograma até 23/10) | Dimensões de PCB, bateria e motores vindas de eletrônica e energia |
+| Software | Mapa completo e navegação (resolução, odometria, centralização, objetivo e colisões) prontos; backend, frontend e histórico com dados reais prontos. Adaptação à Rev 2.0 em andamento: pinagem pronta ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377)); driver dos VL53L0X, limiares para ToF, IMU e deslocamento sem encoder abertos ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344), [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379), [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378), [#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)). | Testes isolados da Rev 2.0 ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381), até 25/10) | Hardware Rev 2.0 montado para a bancada; pino do ADC da bateria |
+| Eletrônica | Esquemático Rev 2.0, relatório técnico ([#311](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/311)) e projeto conceitual de hardware ([#383](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/383), entregue com atraso por e-mail) integrados na `documentacao`. Nenhuma tarefa de montagem ou teste fechada no GitHub; a tabela de testes de hardware ainda descreve o projeto antigo (LiDAR, encoders). | Montagem do circuito e testes de bancada para a ED1 (7.3) | Definir o pino do ADC da bateria e confirmar os parâmetros do motor N20 |
+| Energia | Dimensionamento documentado; ensaios simulados de subtensão e BMS ([#340](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/340)) e bancada de inspeção e carga da bateria ([#376](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/376)) integrados. PRs [#346](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/346), [#352](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/352), [#353](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/353) e [#399](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/399) aguardando revisão. | Relatório de testes de energia para a ED1 ([#211](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/211)) | PCB física para soldar os barramentos ([#212](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/212)) |
+| Estrutura | Projeto conceitual e CAD do chassi concluídos. CAD do labirinto (STL, 216 × 72 cm) integrado ([#337](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/337)); documentação e desenhos do labirinto em revisão ([#393](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/393)). Fabricação ainda não registrada como iniciada. | Tabela de testes de estrutura para a ED1 (7.1) e labirinto físico | Dimensões de PCB, sensores, bateria e motores |
 
 ## Dependências entre equipes
 
@@ -98,26 +98,27 @@ Cada linha diz quem precisa de quê e de quem. Quando uma dependência for resol
 
 | **ID** | **Quem precisa** | **De quem** | **O quê** | **Referências** |
 |:------:|------------------|-------------|-----------|-----------------|
-| D1 | Software | Eletrônica | Confirmar o protocolo do LiDAR: modelo exato (ST-L50B2 ou STL-50B2), bytes de partida e se o formato do pacote é o do LD06 | [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344), [#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175) |
-| D2 | Software e Eletrônica | Eletrônica | Fechar a pinagem. O firmware (`Pinos.h`) usa encoders em GPIO0, 1, 3 e 10 e o driver em GPIO4 a 7. O relatório do PR #311 usa encoder direito em GPIO4 e 5 e esquerdo em GPIO9 e 10, e registra conflito com o driver | [#311](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/311), [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) |
+| D1 | Software | Eletrônica | ~~Protocolo do LiDAR~~: deixou de valer com a Rev 2.0 (LiDAR trocado por 3 VL53L0X). Passa a ser: **hardware Rev 2.0 montado** para a bancada (3 VL53L0X, MPU6050, driver e motores N20) e os parâmetros do N20 (redução, corrente de travamento, tensão) | [#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175), [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341), [#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381) |
+| D2 | Software e Eletrônica | Eletrônica | Pinagem: **resolvida na Rev 2.0**. `Pinos.h` ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377), PR [#390](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/390)) e o esquemático Rev 2.0 ([#383](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/383)) usam I²C em GPIO9/8, XSHUT em GPIO0/1/2, motores em GPIO10/3/20/21 e encoders em GPIO4 a 7. Falta o pino do ADC da bateria (veja D7) | [#383](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/383), [#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377) |
 | D3 | Software | Estrutura | Diâmetro da roda e distância entre as rodas (bitola) definitivos. O firmware usa valores provisórios na odometria | [#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187) |
-| D4 | Software e Energia | Estrutura | Labirinto de testes físico montado, para o teste do LiDAR real, a corrida completa e os ensaios de autonomia em pista | [#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175), [#185](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/185), [#217](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/217) |
-| D5 | Eletrônica e Energia | Eletrônica e Energia | Alinhar o esquemático com o dimensionamento de energia: buck de 6 V para os motores (energia v1.4) e valores do divisor da bateria (R2 de 33 kΩ na energia, 39 kΩ no relatório de hardware de 10/10) | [#353](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/353), [#311](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/311) |
+| D4 | Software e Energia | Estrutura | Labirinto de testes físico montado, para a bancada dos sensores, a corrida completa e os ensaios de autonomia em pista. O CAD de 216 × 72 cm foi integrado ([#337](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/337)), mas a documentação em revisão ([#393](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/393)) descreve uma base de 720 × 720 mm; o tamanho precisa ser confirmado | [#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175), [#185](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/185), [#217](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/217) |
+| D5 | Eletrônica e Energia | Eletrônica e Energia | Alinhar o esquemático com o dimensionamento de energia. Na Rev 2.0, o divisor da bateria usa R2 de 33 kΩ (igual à energia) e há buck de 6 V para os motores; falta confirmar a química da bateria (LiPo ou Li-ion) e o BMS no esquemático | [#383](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/383), [#353](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/353) |
 | D6 | Energia | Eletrônica | PCB física montada para soldar os barramentos de alimentação e energizar a placa | [#212](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/212), [#213](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/213) |
-| D7 | Software | Energia | Telemetria de bateria no dashboard: curva de descarga e tabela de estado de carga (PR #352) e leitura do ADC. Não há *issue* de software aberta para a leitura da bateria no firmware | [#352](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/352), [#215](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/215) |
+| D7 | Software | Energia e Eletrônica | Telemetria de bateria no dashboard: curva de descarga e tabela de estado de carga ([#352](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/352)) e leitura do ADC. Na Rev 2.0, o divisor termina em `BAT_ADC_TEST` sem GPIO, porque o GPIO2 ficou com o XSHUT direito; não há *issue* de software para a leitura da bateria | [#352](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/352), [#215](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/215) |
 | D8 | Estrutura | Eletrônica e Energia | Dimensões da PCB, dos sensores, da bateria e dos motores para modelar os suportes | [#276](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/276), [#277](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/277), [#278](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/278) |
+| D9 | Software | Estrutura | Posição dos 3 VL53L0X no chassi (distância de cada sensor à borda e altura, que precisa ficar abaixo dos 50 mm das paredes do labirinto). É a base dos limiares de parede ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) | [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379), [#393](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/393) |
 
 ## Pull Requests abertos sem revisão ou com alterações pedidas
 
-Situação em 19/10/2026, conforme o GitHub.
+Situação em 23/10/2026, conforme o GitHub.
 
 | **PR** | **Equipe** | **Assunto** | **Situação** |
 |:------:|:----------:|-------------|--------------|
-| [#311](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/311) | Eletrônica | Diagramas, esquemático KiCad e relatório técnico | Alterações pedidas por Paulo Henrique |
+| [#393](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/393) | Estrutura | Documentação e desenhos do labirinto de testes | Sem revisão |
+| [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391) | Software | Driver dos 3 VL53L0X ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) | Alterações pedidas por Cláudio Henrique |
 | [#317](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/317) | Energia / Orçamento | Orçamento e plano de custos | Alterações pedidas por Cláudio Henrique |
-| [#312](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/312) | Energia | Reguladores step-down | Sem revisão |
-| [#337](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/337) | Estrutura | CADs do labirinto de testes | Sem revisão |
-| [#340](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/340), [#346](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/346), [#352](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/352), [#353](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/353) | Energia | Ensaios de proteção, POP de recarga, curva de descarga e divisor resistivo | Sem revisão |
+| [#312](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/312) | Energia | Reguladores step-down (base `main`) | Sem revisão |
+| [#346](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/346), [#352](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/352), [#353](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/353), [#399](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/399) | Energia | POP de recarga, curva de descarga, divisor resistivo e atualização do conceitual de energia | Sem revisão |
 
 As páginas de cada equipe listam também os PRs de software em revisão.
 
@@ -133,8 +134,9 @@ As páginas de cada equipe listam também os PRs de software em revisão.
     - Percentuais e status do cronograma ficam no [cronograma](../05-cronograma.md); aqui vale o que está no GitHub.
 5. **Dependências:** ao abrir uma dependência nova, acrescente uma linha na tabela acima (com o próximo ID livre). Ao resolvê-la, ajuste o texto da linha em vez de apagá-la, até o fim da sprint.
 
-## Histórico de versão
+## Histórico de versões
 
-| **Versão** | **Data** | **Descrição** | **Autor** | **Revisor** |
-|:----------:|:--------:|---------------|-----------|-------------|
-| 1.0 | 19/10/2026 | Criação da seção e primeiro levantamento a partir do GitHub, do cronograma e dos documentos do projeto | Cláudio Henrique | Revisão no PR de criação |
+| **Versão** | **Data** | **Descrição** | **Autor(es)** | **Revisor(es)** |
+|:----------:|:--------:|---------------|---------------|-----------------|
+| 1.0 | 19/10/2026 | Criação da seção e primeiro levantamento a partir do GitHub, do cronograma e dos documentos do projeto | Cláudio Henrique | Paulo Henrique |
+| 1.1 | 23/10/2026 | Atualização para a Rev 2.0 do hardware (VL53L0X, MPU6050, N20, Super Mini), dependências D1 a D9 e situação dos PRs e das tarefas em 23/10 | Ana Carolina Fialho | — |
