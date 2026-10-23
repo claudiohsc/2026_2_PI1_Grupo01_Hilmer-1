@@ -721,6 +721,129 @@ native         test_armazenamento_mapa  PASSED    00:00:01.287
 
 ---
 
+### Sprint 4 · Algoritmo de resolução sobre o mapa
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#183 Algoritmo de resolução sobre o mapa](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183) |
+| História de usuário | HU-01 · Percorrer o labirinto de forma autônoma até o objetivo ([#42](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42)), RF01 |
+| Código testado | `src/firmware` (branch `feat/183-algoritmo-resolucao-mapa`, commits `5e2e445` e `382aee6`; PR [#349](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/349)) |
+| Data da execução | 18/10/2026 |
+| Executado por | m4rllon |
+| Documentação do código | [Firmware: navegação](../04-projeto-conceitual/firmware.md#navegacao-algoritmo-de-resolucao-do-labirinto) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 24.04.4 LTS, kernel 7.0) |
+| Compilador | g++ 13.3.0 (C++17) |
+| Framework de testes | Unity 2.6.1 (o mesmo baixado pelo PlatformIO para o ambiente `native`) |
+| Cobertura | gcov 13.3.0 |
+
+O PlatformIO não estava instalado na máquina desta execução. A suíte foi compilada direto com o g++, com as mesmas pastas de `lib/` e o mesmo Unity do ambiente `native`; o `pio test -e native_cobertura` e o `pio run -e esp32c3` rodam no CI do PR.
+
+#### Critérios de pronto da #183
+
+| Critério | Como foi atendido | Casos de teste |
+| :--- | :--- | :--- |
+| Dado um mapa e a posição atual, retorna a próxima direção a seguir | `darPasso()` e `decidirProximaDirecao()` devolvem a direção da vizinha mais próxima do objetivo pelo *flood fill* | `test_flood_fill_mapa_vazio_4x4`, `test_contorno_parede_conhecida`, `test_sem_caminho_ate_objetivo`, `test_atingimento_de_objetivo` |
+| Testado no labirinto 4×4 simulado: encontra o caminho até o objetivo | O robô simulado vai de (0, 0) a (3, 3) no `LABIRINTO_4X4`; também testado no 8×4 e no 12×4 | `test_resolucao_labirinto_4x4_simulado`, `test_resolucao_labirinto_8x4_simulado`, `test_resolucao_labirinto_12x4_simulado` |
+| Funciona com mapas parciais (paredes ainda desconhecidas) | Os testes nos labirintos partem do mapa vazio: as paredes são descobertas pelo LiDAR simulado durante a corrida, e o *flood fill* trata as desconhecidas como passagem | Os mesmos três, e `test_resolucao_com_falhas_de_leitura` |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/navegacao/src/Navegacao.h/.cpp` | Classe `Navegacao`: *flood fill* por busca em largura a partir do objetivo, escolha da vizinha de menor distância com desempate frente → direita → esquerda → trás (`5e2e445`) |
+| `lib/navegacao/src/Navegacao.h/.cpp` | `darPasso()` passa a só decidir e registrar a célula esperada; `confirmarPose()` atualiza a pose com a medida dos sensores e devolve `ResultadoConfirmacao` (`Confirmada`, `EmAndamento`, `Divergente`, `Invalida`); `avancar()`, que mudava a pose sem confirmação, foi removido (`382aee6`) |
+| `test/test_resolucao_mapa/test_resolucao_mapa.cpp` | Suíte nova com 12 casos: lógica de decisão, confirmação da pose e resolução dos três labirintos simulados |
+
+#### Testes unitários e de integração (ambiente native)
+
+Comando executado em `src/firmware`, com `U` apontando para o Unity em `.pio/libdeps/native/Unity/src`:
+
+```bash
+g++ -std=gnu++17 -Wall -Wextra --coverage $(for d in lib/*/src; do printf -- "-I%s " $d; done) -I$U \
+  test/test_resolucao_mapa/test_resolucao_mapa.cpp lib/navegacao/src/Navegacao.cpp \
+  lib/mapeamento/src/Mapa.cpp lib/mapeamento/src/AtualizadorMapa.cpp \
+  lib/percepcao/src/ClassificadorParede.cpp lib/simulacao/src/LabirintoSimulado.cpp \
+  $U/unity.c -o test_resolucao_mapa && ./test_resolucao_mapa
+```
+
+| Suíte | Casos | Resultado |
+| :--- | :--- | :--- |
+| `test_resolucao_mapa` | 12 | **12 aprovados** |
+
+A compilação não gerou avisos com `-Wall -Wextra`. O `gcov` mediu **79%** das linhas de `Navegacao.cpp` executadas (96 de 121). As linhas sem cobertura são o construtor com objetivo e pose escolhidos, `definirPose()`, `definirObjetivo()` e retornos de casos-limite (objetivo fora do mapa, vizinha fora do mapa); a meta de 80% do CI vale para o total de `lib/`.
+
+#### Casos de teste
+
+A coluna "Critério" se refere aos critérios de aceite da HU-01: (1) dado um mapa e a posição atual, retorna a próxima direção a seguir; (2) testado no labirinto 4×4 simulado: encontra o caminho até o objetivo; e (3) funciona com mapas parciais (paredes ainda desconhecidas).
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_flood_fill_mapa_vazio_4x4` | Sem paredes internas, a distância de cada célula até (3, 3) é a de Manhattan; na partida virado para o Norte, o empate entre Norte e Leste escolhe a frente | 1, 3 | Aprovado |
+| `test_contorno_parede_conhecida` | Com parede conhecida ao Norte da partida, a direção decidida é Leste | 1, 3 | Aprovado |
+| `test_sem_caminho_ate_objetivo` | Partida cercada por paredes conhecidas: a célula atual fica com distância `DISTANCIA_INFINITA` (255) e `decidirProximaDirecao()` devolve `false` sem alterar a direção | 1 | Aprovado |
+| `test_dar_passo_aguarda_confirmacao_dos_sensores` | `darPasso()` devolve Norte e registra (1, 0) como célula esperada sem mudar a pose; um segundo `darPasso()` é recusado | 1 | Aprovado |
+| `test_confirmar_pose_em_andamento_e_chegada` | Pose medida na origem devolve `EmAndamento` e mantém o passo; na célula esperada, `Confirmada` e a pose vai para (1, 0) | 1 | Aprovado |
+| `test_confirmar_pose_divergente_replaneja` | Esperando (1, 0), a pose medida (0, 1) virada para Leste devolve `Divergente`, é adotada, e o passo seguinte segue para Leste até (0, 2) | 1, 3 | Aprovado |
+| `test_confirmar_pose_invalida_ignorada` | Pose (9, 9) devolve `Invalida`; a pose continua (0, 0) e o passo segue pendente | 1 | Aprovado |
+| `test_atingimento_de_objetivo` | No objetivo, `decidirProximaDirecao()` e `darPasso()` devolvem `false` | 1 | Aprovado |
+| `test_resolucao_labirinto_4x4_simulado` | Com o `LabirintoSimulado`, o `LidarSimulado` e o mapa vazio, o robô vai de (0, 0) a (3, 3) em menos de 50 passos; a cada passo, a parede da frente é conhecida antes da decisão, o passo não atravessa parede real e a pose é confirmada (`EmAndamento` e depois `Confirmada`) | 2, 3 | Aprovado |
+| `test_resolucao_labirinto_8x4_simulado` | O mesmo no `LABIRINTO_8X4`, até (3, 7), em menos de 100 passos | 2, 3 | Aprovado |
+| `test_resolucao_labirinto_12x4_simulado` | O mesmo no `LABIRINTO_12X4`, até (3, 11), em menos de 150 passos | 2, 3 | Aprovado |
+| `test_resolucao_com_falhas_de_leitura` | Com o LiDAR falhando uma a cada 3 leituras, o robô não decide sem leitura, lê de novo e chega a (3, 3) sem atravessar parede | 2, 3 | Aprovado |
+
+---
+
+#### Saída da execução
+
+```text
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:286:test_flood_fill_mapa_vazio_4x4:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:287:test_contorno_parede_conhecida:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:288:test_sem_caminho_ate_objetivo:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:289:test_dar_passo_aguarda_confirmacao_dos_sensores:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:290:test_confirmar_pose_em_andamento_e_chegada:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:291:test_confirmar_pose_divergente_replaneja:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:292:test_confirmar_pose_invalida_ignorada:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:293:test_atingimento_de_objetivo:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:294:test_resolucao_labirinto_4x4_simulado:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:295:test_resolucao_labirinto_8x4_simulado:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:296:test_resolucao_labirinto_12x4_simulado:PASS
+test/test_resolucao_mapa/test_resolucao_mapa.cpp:297:test_resolucao_com_falhas_de_leitura:PASS
+
+-----------------------
+12 Tests 0 Failures 0 Ignored
+OK
+```
+
+#### Verificação de detecção de falhas (teste negativo)
+
+Para confirmar que os testes pegam um robô que tenta atravessar paredes, a suíte foi compilada contra uma cópia da `Navegacao` em que a decisão ignora as paredes conhecidas (sem alterar o repositório). Resultado: **5 de 12 casos falharam**. `test_contorno_parede_conhecida` falhou com `Expected 1 Was 0` (decidiu Norte, através da parede), e os quatro testes de labirinto falharam com a mensagem `O robô tentou atravessar uma parede real do labirinto`.
+
+#### Validação em labirintos aleatórios
+
+Além da suíte, um programa de validação (fora do repositório) gerou 12.000 labirintos aleatórios, 2.000 por configuração: 4×4, 8×4 e 12×4, cada um sem laços (labirinto perfeito) e com até 4 paredes internas removidas (com laços). O robô partiu sempre do mapa vazio, com o mesmo ciclo dos testes (leitura, atualização do mapa, `darPasso()` e `confirmarPose()`).
+
+| Labirinto | Resolvidos | Passos (média) | Passos (máximo) |
+| :--- | :--- | :--- | :--- |
+| 4×4, sem laços | 2.000 de 2.000 | 8,9 | 14 |
+| 4×4, com laços | 2.000 de 2.000 | 8,0 | 14 |
+| 8×4, sem laços | 2.000 de 2.000 | 17,8 | 30 |
+| 8×4, com laços | 2.000 de 2.000 | 16,6 | 30 |
+| 12×4, sem laços | 2.000 de 2.000 | 27,3 | 44 |
+| 12×4, com laços | 2.000 de 2.000 | 25,4 | 42 |
+
+#### Pendências desta etapa
+
+- Rodar `pio test -e native_cobertura` e `pio run -e esp32c3` (o CI do PR faz os dois) e registrar a cobertura total de `lib/` e o uso de memória na placa.
+- Ligar a `Navegacao` ao robô na `tarefaNavegacao`: o controle de movimento ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) executa a direção decidida, e a odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187), PR [#343](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/343)) informa a pose a `confirmarPose()`.
+- Cobrir com testes o construtor com objetivo e pose escolhidos, `definirPose()` e `definirObjetivo()`.
+
+---
+
 ### Sprint 4 · Odometria
 
 | Item | Valor |
