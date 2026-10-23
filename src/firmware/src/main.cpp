@@ -5,6 +5,7 @@
 /// diagrama de atividades. Os encoders físicos de quadratura são decodificados por
 /// interrupção de hardware no ESP32-C3, alimentam a odometria (pose na malha) e são reportados na
 /// telemetria. Os 3 sensores de distância VL53L0X são lidos pelo I²C na tarefa de navegação.
+/// Os motores só são liberados depois do autoteste do boot (#50) encontrar os 4 dispositivos do I²C.
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -16,14 +17,18 @@
 #endif
 
 #include "ArmazenamentoMapa.h"
+#include "AutotesteBoot.h"
+#include "BarramentoI2cEsp32.h"
 #include "Configuracao.h"
 #include "ConversorDeslocamento.h"
 #include "DetectorObjetivo.h"
 #include "EncoderEsp32.h"
 #include "MedidorDeslocamento.h"
+#include "MotoresComTrava.h"
 #include "MotoresDrv8833.h"
 #include "Odometria.h"
 #include "Pinos.h"
+#include "RelatorioBoot.h"
 #include "TelemetriaJson.h"
 #include "TofVl53l0x.h"
 
@@ -69,6 +74,30 @@ static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
                                           false,
                                           true);
 
+/// Trava dos motores (#50): começa travada e só é liberada com o autoteste do boot aprovado. Quem
+/// aciona as rodas usa `motoresTracao`, nunca o driver direto, para a trava valer.
+static micromouse::MotoresComTrava motoresTracao(motores);
+
+/// Resultado do autoteste do boot, para a telemetria repetir em todo pacote. Só o `setup()` escreve,
+/// antes de criar as tarefas; depois é só lido, então não precisa de seção crítica.
+struct EstadoBoot {
+  bool ok = false;
+  char falhas[micromouse::TAMANHO_MAX_FALHAS_BOOT] = "";
+  uint32_t duracaoMs = 0;
+  micromouse::ResultadoBoot resultado;
+};
+static EstadoBoot estadoBoot;
+static const micromouse::AutotesteBoot autoteste;
+
+/// Escreve no log a linha JSON do relatório do boot (`{"tipo":"boot",...}`).
+static void imprimirRelatorioBoot() {
+  char relatorio[micromouse::TAMANHO_MAX_JSON_RELATORIO_BOOT];
+  if (micromouse::RelatorioBoot::serializar(estadoBoot.resultado, autoteste, estadoBoot.duracaoMs, relatorio,
+                                            sizeof(relatorio)) > 0) {
+    Serial.println(relatorio);
+  }
+}
+
 /// Sensores de distância VL53L0X (#344). Só a tarefa de navegação fala com eles pelo I²C; a
 /// telemetria lê a cópia `ultimaLeituraTof`, protegida pela seção crítica `travaTof`.
 static micromouse::TofVl53l0x tof(Wire,
@@ -108,7 +137,7 @@ static void tarefaNavegacao(void*) {
     const bool poseValida = odometria.posicaoValida();
     if (poseValida) {
       // Chegada detectada pela posição na malha: para os motores imediatamente e congela o mapa final (HU-07 / #189)
-      alcancou = detectorObjetivo.processarChegada(pose, motores, &armazenamentoMapa);
+      alcancou = detectorObjetivo.processarChegada(pose, motoresTracao, &armazenamentoMapa);
     } else {
       alcancou = detectorObjetivo.objetivoAlcancado();
     }
@@ -127,7 +156,8 @@ static void tarefaNavegacao(void*) {
 /// Tarefa de telemetria: coleta e envia os dados a cada `PERIODO_TELEMETRIA_MS`.
 ///
 /// Prioridade 1. Transmite as leituras dos encoders, pose da odometria e eventos pontuais em formato JSON
-/// estruturado e aceita o comando 'Z' para zerar os encoders e voltar a odometria à pose atual.
+/// estruturado e aceita os comandos 'Z', para zerar os encoders e voltar a odometria à pose atual, e
+/// 'B', para repetir o relatório do boot (a linha do boot se perde se o monitor abrir depois).
 static void tarefaTelemetria(void*) {
   static uint32_t sequencia = 0;
 
@@ -166,6 +196,9 @@ static void tarefaTelemetria(void*) {
     pacote.tofDirMm = leituraTof.distancias.direitaMm;
     pacote.tofValida = leituraTof.valida;
     pacote.tofIdadeMs = leituraTof.idadeMs;
+    pacote.bootOk = estadoBoot.ok;
+    pacote.falhasBoot = estadoBoot.falhas;
+    pacote.bootMs = estadoBoot.duracaoMs;
 
     // Comporta o pior caso do JSON; com menos, a linha seria descartada em silêncio.
     char buffer[micromouse::TAMANHO_MAX_JSON_TELEMETRIA];
@@ -184,6 +217,8 @@ static void tarefaTelemetria(void*) {
         detectorObjetivo.resetar();
         portEXIT_CRITICAL(&travaOdometria);
         Serial.println("{\"status\":\"encoders_zerados\"}");
+      } else if (c == 'B' || c == 'b') {
+        imprimirRelatorioBoot();
       }
     }
 
@@ -191,8 +226,9 @@ static void tarefaTelemetria(void*) {
   }
 }
 
-/// Inicializa o log serial pela USB nativa, os encoders, os sensores de distância e cria as duas
-/// tarefas.
+/// Sequência de boot da Rev 2.0 (#50): motores freados e travados, sensores de distância com os
+/// endereços novos, autoteste do I²C e, só com ele aprovado, motores liberados. As tarefas sobem
+/// mesmo com falha, para a telemetria continuar informando o que falhou.
 void setup() {
   Serial.begin(115200);
   // Sem um computador conectado, a escrita na USB CDC esperaria o tempo limite a cada chamada e
@@ -209,12 +245,25 @@ void setup() {
 
   // O barramento I²C é dos 3 VL53L0X e do MPU6050; o driver dos ToF recebe ele já iniciado.
   Wire.begin(micromouse::pinos::I2C_SDA, micromouse::pinos::I2C_SCL);
-  if (!tof.iniciar()) {
-    Serial.printf("micromouse: falha nos sensores de distancia (frente %s, esquerda %s, direita %s)\n",
-                  tof.sensorIniciado(micromouse::Lado::Frente) ? "ok" : "falhou",
-                  tof.sensorIniciado(micromouse::Lado::Esquerda) ? "ok" : "falhou",
-                  tof.sensorIniciado(micromouse::Lado::Direita) ? "ok" : "falhou");
+  tof.iniciar();  // o autoteste abaixo diz qual sensor falhou
+
+  // Autoteste: os 3 ToF em 0x30, 0x31 e 0x32, o MPU6050 em 0x68 e ninguém no 0x29.
+  micromouse::BarramentoI2cEsp32 barramento(Wire);
+  estadoBoot.resultado = autoteste.verificar(barramento, {tof.sensorIniciado(micromouse::Lado::Esquerda),
+                                                          tof.sensorIniciado(micromouse::Lado::Frente),
+                                                          tof.sensorIniciado(micromouse::Lado::Direita)});
+  micromouse::AutotesteBoot::descreverFalhas(estadoBoot.resultado, estadoBoot.falhas, sizeof(estadoBoot.falhas));
+  estadoBoot.ok = estadoBoot.resultado.aprovado();
+  if (estadoBoot.ok) {
+    motoresTracao.liberar();
+  } else {
+    motoresTracao.travar();
+    Serial.printf("micromouse: falha no boot (%s): motores travados ate reiniciar\n", estadoBoot.falhas);
   }
+
+  // Tempo desde o início do programa (RNF-09); a ROM e o bootloader rodam antes e ficam de fora.
+  estadoBoot.duracaoMs = millis();
+  imprimirRelatorioBoot();
 
   xTaskCreate(tarefaNavegacao, "navegacao", 4096, nullptr, 2, nullptr);
   xTaskCreate(tarefaTelemetria, "telemetria", 4096, nullptr, 1, nullptr);
