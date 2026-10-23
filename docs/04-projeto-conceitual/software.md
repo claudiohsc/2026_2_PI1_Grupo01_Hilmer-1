@@ -746,6 +746,66 @@ conferem o token do robô no cabeçalho `x-device-token`.
 `supabase_realtime`: o dashboard assina as duas pelo `supabase-js` e recebe cada linha
 nova sem precisar consultar o banco de novo (HU-08, RNF05).
 
+#### Escrita mediada por Edge Function: corridas
+
+Como a chave pública não grava, criar e encerrar uma corrida passa pela Edge Function
+`corridas` (`src/backend/supabase/functions/corridas`, tarefa
+[#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233), PR
+[#334](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/334), HU-15). A função
+só autentica, valida o corpo e traduz erros; a regra de negócio fica em duas funções SQL
+(`20261016120000_funcoes_corridas.sql`), que só a `service_role` pode executar.
+
+```mermaid
+sequenceDiagram
+    participant R as Robô (ESP32-C3)
+    participant G as Gateway do Supabase
+    participant F as Edge Function corridas
+    participant B as PostgreSQL
+    R->>G: POST /functions/v1/corridas<br/>Authorization (JWT anon) + x-device-token
+    G->>G: verifica o JWT
+    G->>F: repassa a requisição
+    F->>F: compara x-device-token com o segredo DEVICE_TOKEN
+    F->>B: criar_corrida('8x4') com a service_role
+    B-->>F: corrida em andamento, numero_tentativa por labirinto
+    F-->>R: 201 com a corrida
+```
+
+**Figura.** Criação de uma corrida pelo robô: o gateway confere o JWT, a função confere o
+token do dispositivo e só então o banco é chamado com a chave de serviço.
+
+| Requisição | Corpo | Resposta |
+|---|---|---|
+| `POST /functions/v1/corridas` | `{"labirinto": "4x4"}`, `"8x4"` ou `"12x4"` | `201` com a corrida `em_andamento` e o `numero_tentativa` contado por labirinto |
+| `POST /functions/v1/corridas/{id}/encerrar` | `{"status": "concluida"}` ou `"nao_concluida"`, mais `tempo_final`, `velocidade_media`, `velocidade_pico` e `consumo_bateria` (opcionais, números não negativos) | `200` com a corrida encerrada e `data_hora_fim` preenchida |
+
+**Regras.**
+
+- **Tentativa por labirinto:** a primeira corrida de cada labirinto é a tentativa 1. Um
+  *advisory lock* no banco serializa as criações do mesmo labirinto, e a restrição única
+  (`labirinto_id`, `numero_tentativa`) é a segunda barreira contra números repetidos.
+- **Encerramento idempotente:** repetir o encerramento com o mesmo status (por exemplo,
+  quando o robô reenvia o pedido depois de uma queda de Wi-Fi) devolve a corrida como
+  está; com outro status, a resposta é `409`. Sem `tempo_final`, o banco usa o tempo
+  desde `data_hora_inicio`.
+- **Erros:** `400` (corpo, status ou id inválidos), `401` (JWT ou token do dispositivo),
+  `404` (labirinto ou corrida inexistente), `405` (método), `409` (já encerrada com outro
+  status) e `500` (falha do banco, sem expor a mensagem).
+
+**Autenticação em duas camadas.** O gateway do Supabase exige um JWT válido no
+`Authorization` (a chave `anon`), e a função exige também o cabeçalho `x-device-token`,
+comparado em tempo constante com o segredo `DEVICE_TOKEN`. Sem o segredo configurado,
+ninguém é autorizado. O `DEVICE_TOKEN` é definido com `supabase secrets set` e guardado
+fora do Git; a `service_role` nunca sai do servidor.
+
+**Decisão sobre quem cria a corrida.** Ficou decidido que **tanto o robô quanto o
+dashboard podem criar a corrida**, e que a **verificação de JWT do gateway continua
+ativa** (a função não é publicada com `--no-verify-jwt`). Hoje a função aceita só o
+`x-device-token`, o caminho do robô. O caminho do dashboard fica para a HU-15 e depende do
+login de operador: o dashboard vai enviar o JWT do operador autenticado, e a função
+precisará aceitá-lo como alternativa ao token do dispositivo e responder ao CORS do
+navegador. O `DEVICE_TOKEN` não deve ir para o frontend, porque qualquer pessoa poderia
+lê-lo no navegador.
+
 #### Visões 4+1
 
 1. **Lógica:** módulos do firmware (Navegação, Percepção via LiDAR e *encoders*,
@@ -836,11 +896,48 @@ das colunas da migração, então a troca não muda os componentes:
   tema do PI1.
 - **Bateria:** o percentual é estimado de forma linear pela tensão, entre 6,6 V (corte) e
   8,4 V (carga plena) da LiPo 2S. É provisório, porque a curva real não é linear; na HU-08
-  ele pode passar a usar a [tabela de SoC × tensão](energia.md#tabela-de-correlacao-estado-de-carga-soc-vs-tensao-de-terminal)
+  ele pode passar a usar a [tabela de SoC × tensão](energia/curva-descarga-lipo.md#4-tabela-de-correlacao-estado-de-carga-soc-vs-tensao-de-terminal)
   da [#139](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/139).
 - **Consumo no histórico:** a coluna `corridas.consumo_bateria` ainda admite "mAh ou %
   consumida". A tela assume % consumida e mostra a carga restante (`100 − consumo`), como no
   Frame 04. A unidade precisa ser fechada na HU-09.
+
+#### Consulta ao histórico de corridas no Supabase (HU-10)
+
+O histórico de corridas do dashboard (`src/frontend/src/paginas/TelaHistorico.tsx`) foi
+integrado à tabela `corridas` do Supabase (tarefa
+[#235](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235), HU-10, RF10),
+substituindo os dados estáticos de exemplo pela consulta real via `supabase-js`.
+
+**Segurança e RLS.** A leitura é realizada com a chave pública `anon`
+(`VITE_SUPABASE_ANON_KEY`), autorizada pela política RLS `"Leitura pública de corridas"`
+(definida na migração `20261014180500_seguranca_rls.sql`). A política concede exclusivamente
+permissão de `SELECT` para as roles `anon` e `authenticated`. Operações de escrita continuam
+bloqueadas no frontend e são mediadas exclusivamente pelas Edge Functions do backend (#233).
+
+**Hook `useCorridas`.** Criado em `src/frontend/src/hooks/useCorridas.ts`, o hook encapsula
+o ciclo de vida da requisição e expõe os estados `{ corridas, carregando, erro, recarregar }`:
+
+- **Consulta:** executa `supabase.from('corridas').select('*').order('data_hora_inicio', { ascending: false })`,
+  garantindo que as tentativas mais recentes apareçam no topo da tabela.
+- **Disparo sob demanda:** a função `recarregar` permite reexecutar a busca quando o usuário
+  aciona o botão "Atualizar" no cabeçalho do histórico.
+- **Tratamento de fallback:** quando `supabase` for `null` (ausência de `.env.local`), o hook
+  carrega os dados simulados de `CORRIDAS_EXEMPLO`, permitindo que desenvolvedores de outras
+  áreas executem a interface localmente sem dependência externa.
+
+**Componentes e Regras de Interface.**
+
+- **`TelaHistorico`:** dispara a busca no banco ao montar quando o usuário navega para a aba
+  Histórico. Gerencia o filtro por tipo de labirinto (Todos, 4×4, 8×4, 12×4), exibe o contador
+  de corridas visíveis, botão de atualização manual com indicador de carregamento e mensagem
+  de erro caso ocorra falha de rede.
+- **`TabelaHistorico`:** renderiza as 7 colunas previstas na especificação (Data/Hora, Labirinto,
+  Tentativa com nota, Tempo final formatado em mm:ss.sss, Velocidade média em m/s, Carga
+  restante estimada da bateria em percentual e o Badge de status).
+- **Tratamento de estado vazio:** caso o banco de dados ainda não possua registros de corridas,
+  a interface exibe `"Nenhuma corrida registrada."`. Caso o usuário aplique um filtro que não
+  tenha correspondências, a mensagem passa a ser `"Nenhuma corrida registrada para este filtro."`.
 
 > - **Roteiro de testes funcionais:**
 >   - Código do caso de teste;
@@ -1016,4 +1113,6 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 0.7 | 28/09/2026 | Adiciona o roteiro de testes de software | Eduardo Viana | Bruno Duarte |
 | 0.8 | 07/10/2026 | Adiciona o histórico de versões | Ana Carolina Fialho | Cláudio Henrique |
 | 0.9 | 16/10/2026 | Documenta a implementação do banco no Supabase: migrações, restrições, *seed*, RLS e Realtime (#228) | Eduardo Viana | Cláudio Henrique |
+| 1.0 | 18/10/2026 | Documenta a escrita de corridas mediada por Edge Function e a decisão sobre quem cria a corrida ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)) | Eduardo Viana | Cláudio Henrique |
 | 1.1 | 19/10/2026 | Documenta a implementação do frontend: estrutura, variáveis de ambiente, telas, componentes e dados de exemplo ([#230](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230)) | Eduardo Viana | Ana Carolina Fialho |
+| 1.2 | 19/10/2026 | Documenta a consulta do histórico de corridas no Supabase: hook useCorridas, ordenação e estado vazio ([#235](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235)) | Rafael Lima | Ana Carolina Fialho |
