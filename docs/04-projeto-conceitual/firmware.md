@@ -73,16 +73,17 @@ Há ainda o ambiente **`bancada_tof`**, que herda o `esp32c3` mas compila só `s
 | `platformio.ini` | Ambientes `esp32c3` (placa) e `native` (testes no computador, com Unity) |
 | `src/main.cpp` | Ponto de entrada: inicializa o log e cria as tarefas de navegação e telemetria |
 | `lib/nucleo` | Tipos compartilhados, constantes do desafio e pinagem |
-| `lib/hal` | Interfaces de hardware (`ILidar` e `IEncoder`; motores no Épico 02) |
+| `lib/hal` | Interfaces de hardware (`ILidar`, `IEncoder`, `IMotores` e `IBarramentoI2c`) |
+| `lib/inicializacao` | Autoteste do boot: varredura do I²C, conferência dos 4 dispositivos e relatório (`AutotesteBoot`, `RelatorioBoot`), com os parâmetros em `ConfiguracaoBoot.h` ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
 | `lib/tof` | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros (`ConfiguracaoTof.h`), sem Arduino ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) |
 | `lib/encoders` | Decodificação em quadratura dos encoders, conversão de pulsos em mm e distância por roda ([#186](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/186)) |
 | `lib/percepcao` | Classificação `parede`/`livre` (tarefa [#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174)) |
 | `lib/mapeamento` | Mapa do labirinto, atualização, armazenamento em memória e mapa final ([#176](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/176), [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177), [#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179), [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) |
 | `lib/navegacao` | Algoritmo de resolução do labirinto por *flood fill* ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)), localização por odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)) e detecção do objetivo ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) |
-| `lib/atuacao` | Controle dos motores e correção de trajetória (Épico 02) |
+| `lib/atuacao` | Controle dos motores, correção de trajetória e trava dos motores (`MotoresComTrava`, [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
 | `lib/comunicacao` | Telemetria e eventos pontuais (`TelemetriaJson`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)), serialização do mapa em JSON ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)) e *buffer* de reenvio (Épico 03) |
-| `lib/simulacao` | `LidarSimulado` e `LabirintoSimulado` ([#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224)) |
-| `lib/drivers_esp32` | Drivers que dependem do Arduino: 3 VL53L0X pelo I²C (`TofVl53l0x`), encoders, DRV8833, Wi-Fi |
+| `lib/simulacao` | `LidarSimulado` e `LabirintoSimulado` ([#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224)), e `BarramentoI2cSimulado` ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
+| `lib/drivers_esp32` | Drivers que dependem do Arduino: 3 VL53L0X pelo I²C (`TofVl53l0x`), varredura do I²C (`BarramentoI2cEsp32`), encoders, DRV8833, Wi-Fi |
 | `src/bancada/` | Programas de bancada, fora do firmware do robô: `bancada_tof.cpp` testa os VL53L0X no hardware ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) |
 | `scripts/` | Ferramentas de bancada no computador: `bancada_tof.py` (menu dos VL53L0X) e `calibrar_deslocamento_18cm.py` (encoders) |
 | `test/` | Testes Unity, uma pasta `test_<modulo>` por módulo |
@@ -270,7 +271,7 @@ Um `static_assert` em `Pinos.h` reprova a compilação se dois endereços coinci
 * **`const AmostraTof& amostra(Lado) const`:** distância bruta, `EstadoAmostraTof` e instante da última medida do sensor.
 * **`CombinadorTof`:** `classificar(distancia, falhou)`, `registrar(lado, distancia, falhou, agoraMs)`, `distancias(agoraMs, saida)`, `idadeMs(agoraMs)` e `reiniciar()`.
 
-**No `main.cpp`.** O `setup()` inicia o barramento e chama `iniciar()`; se algum sensor falhar, o log diz qual. A tarefa de navegação lê os sensores a cada 10 ms e guarda uma cópia, protegida por seção crítica, que a telemetria envia nos campos `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`, `tof_valida` e `tof_idade_ms`.
+**No `main.cpp`.** O `setup()` inicia o barramento e chama `iniciar()`; o autoteste do boot (próxima seção) confere o resultado e diz qual sensor falhou. A tarefa de navegação lê os sensores a cada 10 ms e guarda uma cópia, protegida por seção crítica, que a telemetria envia nos campos `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`, `tof_valida` e `tof_idade_ms`.
 
 ### Bancada dos VL53L0X
 
@@ -286,6 +287,70 @@ Para a equipe de software e a eletrônica validarem o driver no hardware montado
 | 6. Sensor ausente (opcional) | Um sensor desconectado com a placa desligada | Os outros dois iniciam e a leitura falha |
 
 O passo a passo de uso está no [README do firmware](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/main/src/firmware/README.md#bancada-dos-vl53l0x).
+
+## Boot do sistema: autoteste do I²C (`AutotesteBoot`)
+
+Na Rev 2.0, o boot passa pelo I²C: os 3 VL53L0X precisam receber os endereços e o MPU6050 precisa responder antes de o robô poder andar. O `AutotesteBoot` (`lib/inicializacao`) confere o barramento depois do `TofVl53l0x::iniciar()` e só então os motores são liberados ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50), RNF-09). A lógica não usa Arduino e é testada no computador com o `BarramentoI2cSimulado`; na placa, o `BarramentoI2cEsp32` faz a varredura pelo `Wire`.
+
+```mermaid
+flowchart TD
+    a["setup(): motores freados<br/>e travados (MotoresComTrava)"] --> b["Wire.begin(SDA, SCL)"]
+    b --> c["tof.iniciar()<br/>XSHUT um por vez: 0x30, 0x31, 0x32"]
+    c --> d["AutotesteBoot::verificar<br/>varre 0x08 a 0x77"]
+    d --> e{"4 dispositivos ok<br/>e ninguém no 0x29?"}
+    e -- "sim" --> f["motoresTracao.liberar()"]
+    e -- "não" --> g["motores travados até reiniciar<br/>log diz o que falhou"]
+    f --> h["relatório do boot (linha JSON)<br/>e criação das tarefas"]
+    g --> h
+```
+
+**Figura 5.** Sequência de boot da Rev 2.0: os motores começam travados e só são liberados com o autoteste aprovado; as tarefas sobem nos dois casos, para a telemetria continuar informando a falha.
+
+### Regras de Negócio e Algoritmo
+
+* **Dispositivos exigidos:** ToF esquerdo (0x30), frontal (0x31) e direito (0x32), e MPU6050 (0x68). Os endereços vêm de `Pinos.h`, a única fonte deles.
+* **Estado de cada dispositivo:**
+
+| Situação | Estado | Reprova o boot? |
+|---|---|---|
+| Responde no endereço esperado (no MPU6050, com o `WHO_AM_I` certo) | `ok` | Não |
+| Ninguém no endereço | `ausente` | Sim |
+| ToF responde no endereço novo, mas o driver não conseguiu configurá-lo | `nao_iniciou` | Sim |
+| Algo no 0x68 com outro `WHO_AM_I`, ou sem leitura | `nao_identificado` | Sim |
+| Algo no 0x29: um VL53L0X ficou no endereço de fábrica (não trocou de endereço ou o XSHUT está trocado) | `tof_0x29` | Sim |
+| Outro endereço respondendo | `inesperados` | Não, só aviso |
+| Boot acima de 2 s | `no_prazo: false` | Não, só aviso |
+
+* **Identidade do MPU6050:** além de responder no 0x68, o registrador `WHO_AM_I` (0x75) precisa valer 0x68, para outro chip nesse endereço não passar pela IMU. Usa só o `Wire`, sem depender do driver da IMU ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)).
+* **Falha:** os motores ficam travados **até o robô ser reiniciado**. Repetir as tentativas durante a corrida e reiniciar um ToF pelo XSHUT é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava.
+* **Trava dos motores:** a `MotoresComTrava` envolve o driver e começa travada. Travada, todo `definirPotencia` vira `parar()`; o `parar()` sempre passa. Quem aciona as rodas (o detector do objetivo hoje e o controle de movimento depois) recebe a trava em vez do driver.
+* **Tempo do boot (RNF-09):** `boot_ms` é o `millis()` no fim do `setup()`, contado desde o início do programa. A ROM e o bootloader do ESP32-C3 rodam antes e ficam de fora; o tempo desde o ligar precisa ser medido na bancada.
+
+**Parâmetros:** em `lib/inicializacao/src/ConfiguracaoBoot.h`.
+
+| Parâmetro | Valor | Observação |
+|---|---|---|
+| `TEMPO_MAXIMO_BOOT_MS` | 2000 | RNF-09 |
+| `WHO_AM_I_MPU6050` | 0x68 | **Provisório:** clones do MPU6050 respondem outro valor (0x70, 0x72, 0x98); conferir na bancada pelo `mpu6050_who_am_i` do relatório |
+| Faixa varrida | 0x08 a 0x77 | Fora dela ficam os endereços reservados do I²C |
+| `MAXIMO_ENDERECOS_INESPERADOS` | 8 | Os seguintes só entram na contagem |
+
+### Interface das Classes
+
+* **`IBarramentoI2c`** (`lib/hal`): `bool responde(endereco)` e `bool lerRegistrador(endereco, registrador, valor&)`.
+* **`ResultadoBoot AutotesteBoot::verificar(IBarramentoI2c&, InicializacaoTof)`:** varre o barramento e devolve o estado de cada dispositivo, o 0x29, o `WHO_AM_I` lido e os endereços inesperados. `InicializacaoTof` traz o `sensorIniciado` de cada ToF.
+* **`ResultadoBoot::aprovado()`:** `true` com os 4 `ok` e ninguém no 0x29.
+* **`AutotesteBoot::dentroDoPrazo(duracaoMs)`** e **`descreverFalhas(resultado, saida, capacidade)`:** prazo do RNF-09 e texto das falhas (por exemplo, `tof_frontal,mpu6050`).
+* **`RelatorioBoot::serializar(resultado, autoteste, duracaoMs, saida, capacidade)`:** a linha JSON do boot, em até `TAMANHO_MAX_JSON_RELATORIO_BOOT` (512) bytes.
+* **`MotoresComTrava`** (`lib/atuacao`): `IMotores` com `travar()`, `liberar()` e `travado()`.
+
+```json
+{"tipo":"boot","ok":false,"motores_liberados":false,"falhas":"tof_frontal","boot_ms":412,"prazo_ms":2000,"no_prazo":true,"dispositivos":{"tof_esquerdo":"ok","tof_frontal":"ausente","tof_direito":"ok","mpu6050":"ok"},"tof_0x29":false,"mpu6050_who_am_i":104,"inesperados":[],"inesperados_total":0}
+```
+
+**Figura 6.** Relatório de um boot com o ToF frontal ausente: os motores ficam travados e a falha é nomeada.
+
+**No `main.cpp`.** A sequência da Figura 5 roda no `setup()`, antes de criar as tarefas. Como a linha do boot se perde se o monitor serial abrir depois do reset (a USB nativa reconecta), a telemetria repete `boot_ok`, `boot_falhas` e `boot_ms` em todo pacote, e o comando `B` no monitor reimprime o relatório. Com os campos do boot, o pior caso do JSON de telemetria chegou a 516 bytes, e o buffer (`TAMANHO_MAX_JSON_TELEMETRIA`) passou de 512 para 768 bytes.
 
 ## Labirinto simulado: `LabirintoSimulado`
 
@@ -305,7 +370,7 @@ O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes con
 +---+---+---+---+
 ```
 
-**Figura 5.** Labirinto 4×4 de exemplo (`LABIRINTO_4X4`), com a partida (0, 0) no canto inferior esquerdo.
+**Figura 7.** Labirinto 4×4 de exemplo (`LABIRINTO_4X4`), com a partida (0, 0) no canto inferior esquerdo.
 
 Cada parede aparece uma única vez no texto, entre as duas células que ela separa. Por isso, o lado leste de uma célula e o lado oeste da vizinha nunca discordam. Ao carregar o texto, o `LabirintoSimulado` recusa:
 
@@ -386,7 +451,7 @@ stateDiagram-v2
     Congelado --> Explorando: iniciarCorrida() (nova corrida)
 ```
 
-**Figura 6.** Ciclo de vida do mapa final no `ArmazenamentoMapa`: o congelamento só acontece uma vez por corrida e só uma nova corrida o destrava.
+**Figura 8.** Ciclo de vida do mapa final no `ArmazenamentoMapa`: o congelamento só acontece uma vez por corrida e só uma nova corrida o destrava.
 
 ### Regras de Negócio e Algoritmo
 
@@ -425,7 +490,7 @@ A decisão devolve `false`, sem direção, quando o robô já está no objetivo 
 | 5 | 4 | 3 | 2 |
 | **6** | 5 | 4 | 3 |
 
-**Figura 7.** Distâncias calculadas pelo *flood fill* num mapa 4×4 sem paredes internas conhecidas, com o objetivo (3, 3) no canto superior direito (0) e a partida (0, 0) no canto inferior esquerdo (6). Na partida, virado para o Norte, as vizinhas Norte (1, 0) e Leste (0, 1) empatam com distância 5; o desempate escolhe a frente, o Norte. Se o LiDAR revelar uma parede ao Norte, o próximo cálculo descarta essa vizinha e o robô segue para Leste.
+**Figura 9.** Distâncias calculadas pelo *flood fill* num mapa 4×4 sem paredes internas conhecidas, com o objetivo (3, 3) no canto superior direito (0) e a partida (0, 0) no canto inferior esquerdo (6). Na partida, virado para o Norte, as vizinhas Norte (1, 0) e Leste (0, 1) empatam com distância 5; o desempate escolhe a frente, o Norte. Se o LiDAR revelar uma parede ao Norte, o próximo cálculo descarta essa vizinha e o robô segue para Leste.
 
 ### Ciclo de um passo: decisão, movimento e confirmação pelos sensores
 
@@ -447,7 +512,7 @@ stateDiagram-v2
     PassoPendente --> SemPasso: confirmarPose() → Divergente (outra célula, replaneja a partir dela)
 ```
 
-**Figura 8.** Estados de um passo na `Navegacao`: enquanto há passo pendente, `darPasso()` recusa um novo passo, e só a confirmação dos sensores conclui ou cancela o passo.
+**Figura 10.** Estados de um passo na `Navegacao`: enquanto há passo pendente, `darPasso()` recusa um novo passo, e só a confirmação dos sensores conclui ou cancela o passo.
 
 | `ResultadoConfirmacao` | Quando | Efeito |
 |---|---|---|
@@ -493,7 +558,7 @@ O módulo de comunicação (`lib/comunicacao`) implementa a classe `MapaJson`, r
 }
 ```
 
-**Figura 9.** JSON de um mapa 4×4 recém-criado (só o perímetro conhecido), formatado aqui para leitura: a saída real não tem espaços nem quebras de linha.
+**Figura 11.** JSON de um mapa 4×4 recém-criado (só o perímetro conhecido), formatado aqui para leitura: a saída real não tem espaços nem quebras de linha.
 
 | Campo | Valor |
 |---|---|
@@ -532,7 +597,7 @@ flowchart LR
     H --> C
 ```
 
-**Figura 10.** Da contagem dos encoders à pose: a diferença entre as rodas gira a direção, e a média das rodas avança o robô na direção atual.
+**Figura 12.** Da contagem dos encoders à pose: a diferença entre as rodas gira a direção, e a média das rodas avança o robô na direção atual.
 
 ### Regras de Negócio e Algoritmo
 
@@ -636,7 +701,7 @@ sequenceDiagram
     T->>S: Serial.println(buffer)
 ```
 
-**Figura 11.** Fluxo de detecção da célula objetivo: ao confirmar que a célula da pose coincide com o destino sob a seção crítica `travaOdometria`, o robô freia imediatamente, congela o mapa explorado e envia o evento pontual único pela telemetria serial.
+**Figura 13.** Fluxo de detecção da célula objetivo: ao confirmar que a célula da pose coincide com o destino sob a seção crítica `travaOdometria`, o robô freia imediatamente, congela o mapa explorado e envia o evento pontual único pela telemetria serial.
 
 ### Regras de Negócio e Algoritmo
 
@@ -721,7 +786,7 @@ flowchart LR
     motores -. implementa .-> sim["MotoresSimulados<br/>testes"]
 ```
 
-**Figura 12.** Fluxo do controle de movimento: a cada leitura do LiDAR, a distância frontal define a potência base, as distâncias laterais definem a correção, e o resultado vai para os motores pela interface `IMotores`.
+**Figura 14.** Fluxo do controle de movimento: a cada leitura do LiDAR, a distância frontal define a potência base, as distâncias laterais definem a correção, e o resultado vai para os motores pela interface `IMotores`.
 
 ### Geometria considerada
 
@@ -871,6 +936,31 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | | `test_reiniciar_esquece_as_amostras` | `reiniciar()` volta todos os sensores a `SemAmostra` |
 | | `test_configuracao_altera_faixa_e_idade` | Faixa e idade vêm da `ConfiguracaoTof` |
 | `test_pinos/test_pinos.cpp` | `test_enderecos_dos_vl53l0x_conferem_com_a_issue_344` | Endereços 0x30, 0x31 e 0x32, distintos do 0x29 e do 0x68 |
+| `test_boot/test_boot.cpp` | `test_os_quatro_presentes_aprovam_o_boot` | Os 4 dispositivos `ok`, `WHO_AM_I` lido e nenhuma falha |
+| | `test_a_varredura_cobre_0x08_a_0x77` | A varredura consulta os 112 endereços da faixa |
+| | `test_cada_dispositivo_ausente_reprova_e_e_nomeado` | Cada um dos 4 ausente, um por vez: reprova e só ele é nomeado |
+| | `test_tof_que_responde_mas_nao_iniciou_reprova` | ToF presente sem configuração do driver fica `nao_iniciou` |
+| | `test_tof_iniciado_pelo_driver_mas_sem_resposta_fica_ausente` | O driver diz que iniciou, mas o sensor não responde: `ausente` |
+| | `test_todos_ausentes_listam_todas_as_falhas_em_ordem` | Barramento vazio lista os 4, na ordem |
+| | `test_outro_chip_no_0x68_nao_passa_por_mpu6050` | `WHO_AM_I` 0x70 no 0x68: `nao_identificado` |
+| | `test_who_am_i_que_nao_le_reprova` | Leitura do `WHO_AM_I` falha: `nao_identificado` |
+| | `test_who_am_i_aceito_vem_da_configuracao` | Outro `WHO_AM_I` aceito pela `ConfiguracaoBoot` |
+| | `test_tof_no_endereco_de_fabrica_reprova` | Alguém no 0x29 reprova, mesmo com os 4 presentes |
+| | `test_endereco_inesperado_so_avisa` | Um endereço a mais só entra em `inesperados` |
+| | `test_inesperados_alem_da_capacidade_so_entram_na_contagem` | Acima de 8 inesperados, só a contagem cresce |
+| | `test_enderecos_fora_da_faixa_varrida_sao_ignorados` | 0x00 e 0x7F não entram na varredura |
+| | `test_pior_caso_das_falhas_cabe_em_tamanho_max_falhas_boot` | Todas as falhas cabem em `TAMANHO_MAX_FALHAS_BOOT` |
+| | `test_falhas_que_nao_cabem_devolvem_texto_vazio` | Buffer pequeno ou nulo devolve 0 e texto vazio |
+| | `test_nomes_dos_estados` | Nomes dos estados e dos dispositivos no relatório |
+| | `test_prazo_de_2_s_do_rnf_09` | 2000 ms no prazo e 2001 ms fora; prazo configurável |
+| | `test_relatorio_do_boot_aprovado` | Relatório JSON de um boot aprovado |
+| | `test_relatorio_do_boot_com_falhas_e_atrasado` | Relatório com ToF ausente, IMU sem leitura, endereço a mais e boot de 2,5 s |
+| | `test_pior_caso_do_relatorio_cabe_e_buffer_pequeno_devolve_zero` | Pior caso cabe em 512 bytes; buffer pequeno devolve 0 |
+| | `test_trava_comeca_travada_e_freia_em_vez_de_andar` | A trava começa travada e transforma potência em freio |
+| | `test_trava_liberada_repassa_a_potencia` | Liberada, a potência chega ao driver |
+| | `test_travar_freia_na_hora_e_parar_sempre_passa` | `travar()` freia na hora; `parar()` sempre chega ao driver |
+| | `test_sequencia_do_boot_so_libera_os_motores_com_tudo_presente` | Como no `main.cpp`: sem a IMU os motores não andam; com tudo presente, andam |
+| `test_telemetria_json/test_telemetria_json.cpp` | `test_serializa_resultado_do_boot` | Campos `boot_ok`, `boot_falhas` e `boot_ms` |
 
 Para rodar, dentro de `src/firmware`:
 
@@ -917,6 +1007,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/navegacao` (`DetectorObjetivo`), `lib/comunicacao` (`TelemetriaJson`) | [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189) Detecção da célula objetivo e evento na telemetria | [HU-07](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/43) (RF07) |
 | `lib/navegacao` (`Navegacao`: validação da pose, `cancelarPasso`, `Bloqueado`) | [#357](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/357) Robustez da navegação | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
 | `lib/tof` (`CombinadorTof`), `TofVl53l0x`, `ILidar::idadeUltimaLeituraMs`, endereços em `Pinos.h`, firmware e menu de bancada | [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344) Driver dos 3 sensores VL53L0X | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
+| `lib/inicializacao` (`AutotesteBoot`, `RelatorioBoot`), `IBarramentoI2c`, `BarramentoI2cEsp32`, `MotoresComTrava` | [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) |
 
 ## Próximos passos
 
@@ -930,3 +1021,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 - **Detecção do objetivo** ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), PR [#351](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/351)), concluídos: o robô detecta a chegada à célula objetivo (canto diametralmente oposto à partida), freia os motores imediatamente via DRV8833, congela o mapa explorado através de `congelarMapa()` e emite o evento `objetivo_alcancado` na telemetria JSON periódica. Falta o envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), no Épico 03.
 - **Odometria** ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)): a lógica, os testes no computador e a ligação no `main.cpp` estão prontos. Falta a bancada: medir os pulsos de diferença entre as rodas num giro de 90° (hoje 625, provisório), testar giros de 90° e 180° e um percurso de 3 células, e registrar o erro.
 - **Sensores VL53L0X** ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): o driver, a regra de validade com testes no computador e a ligação no `main.cpp` estão prontos, e o build da placa compila. Falta rodar o roteiro da [bancada](#bancada-dos-vl53l0x) com o hardware montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)) e trocar os valores provisórios de `ConfiguracaoTof.h` pelos medidos. Dependem desta tarefa a percepção para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), a calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), o boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e a recuperação de falhas do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
+- **Boot do sistema** ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): o autoteste do I²C, a trava dos motores e o relatório estão prontos e testados no computador com dispositivos simulados. Falta a bancada: medir o tempo desde o ligar (o `boot_ms` não conta a ROM nem o bootloader), conferir o `WHO_AM_I` do módulo montado e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (0x68).
