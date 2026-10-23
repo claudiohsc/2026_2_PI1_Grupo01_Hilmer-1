@@ -45,10 +45,34 @@ pip install mkdocs-material
 2. Registre-o em `nav:` no `mkdocs.yml` (define o título e a ordem no menu).
 3. Rode `mkdocs serve` para visualizar antes de commitar.
 
+## O que pode ir na branch `documentacao`
+
+Regra combinada pelo grupo: **a `documentacao` não recebe código**. A `main` pode receber
+documentação normalmente.
+
+| Pode ir na `documentacao` | Não pode (vai por PR para a `main`) |
+|---|---|
+| `docs/` (páginas e imagens) e `mkdocs.yml` | `src/` (firmware, backend e frontend, incluindo os `README.md` dessas pastas) |
+| Arquivos de projeto das frentes: `hw/` (KiCad, PDFs) e `mec/` (CAD) | `scripts/` |
+| Arquivos `.gitignore` | Workflows de CI do código (`.github/workflows/ci-*.yml`) |
+
+Todo PR para a `documentacao` passa pelo check **"Sem código na documentação"**
+(`.github/workflows/sem-codigo-na-documentacao.yml`). Se o PR alterar algum arquivo de código, o
+check reprova e o resumo do workflow lista os arquivos: tire-os do PR ou abra um PR separado
+para a `main`.
+
+> **Regra do grupo:** PR para a `documentacao` com o check "Sem código na documentação"
+> vermelho não é integrado.
+
+Os arquivos de código continuam existindo na `documentacao`, porque toda branch tem a árvore
+completa do repositório e a `documentacao` volta para a `main` nos marcos. **Não apague**
+`src/` dela: no PR `documentacao → main`, a remoção apagaria o código da `main`. O check garante
+que nenhuma *mudança* de código entre pela `documentacao`.
+
 ## Publicação
 
 O site é publicado automaticamente pelo workflow `deploy-docs.yml` a cada push na
-branch `main` que altere `docs/`, `mkdocs.yml` ou o próprio workflow. O resultado
+branch `documentacao` que altere `docs/`, `mkdocs.yml` ou o próprio workflow. O resultado
 fica disponível em:
 
 <https://fcte-pi1.github.io/2026_2_PI1_Grupo01_Hilmer/>
