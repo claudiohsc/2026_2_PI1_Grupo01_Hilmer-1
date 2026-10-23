@@ -1,0 +1,74 @@
+#pragma once
+
+/// @file TelemetriaJson.h
+/// @brief Serialização dos pacotes de telemetria periódicos em JSON para a transmissão serial/Wi-Fi e banco de dados.
+///
+/// Mapeamento dos campos JSON com a tabela `telemetria` do Supabase:
+/// | Campo JSON          | Coluna na tabela `telemetria` | Descrição |
+/// |---------------------|-------------------------------|-----------|
+/// | `numero_sequencia`  | `numero_sequencia` (INT)      | Sequencial monotônico incremental por corrida |
+/// | `posicao_linha`     | `posicao_linha` (INT)         | Linha atual na malha do labirinto (0 a N-1) |
+/// | `posicao_coluna`    | `posicao_coluna` (INT)        | Coluna atual na malha do labirinto (0 a M-1) |
+/// | `orientacao`        | `orientacao` (VARCHAR(2))     | Letra da direção: "N", "S", "L", "O" |
+/// | `velocidade`        | `velocidade` (FLOAT)          | Velocidade linear instantânea estimada (m/s) |
+/// | `tensao_bateria`    | `tensao_bateria` (FLOAT)      | Tensão instantânea da bateria em Volts (V) |
+/// | `evento`            | `evento` (VARCHAR(30))        | Evento pontual ("objetivo_alcancado", "colisao" ou nulo) |
+///
+/// Campos adicionais de diagnóstico local (encoders e bancada, não persistidos na tabela padrão):
+/// - `esq_pulsos`, `dir_pulsos`: contagem acumulada dos encoders ópticos
+/// - `esq_mm`, `dir_mm`, `medio_mm`: deslocamento linear percorrido em milímetros
+/// - `pose_valida`: flag de integridade da pose na malha discreta
+/// - `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`: última leitura dos 3 VL53L0X, em mm (#344)
+/// - `tof_valida`: se a leitura dos 3 sensores é válida (`ILidar::lerDistanciasLaterais`)
+/// - `tof_idade_ms`: idade da amostra mais antiga da leitura (`ILidar::idadeUltimaLeituraMs`)
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "Direcao.h"
+#include "Tipos.h"
+
+namespace micromouse {
+
+/// Tamanho de buffer que comporta o pior caso do JSON de telemetria (todos os números no maior
+/// valor, com o evento `objetivo_alcancado`), com folga. O pior caso tem cerca de 400 caracteres;
+/// com um buffer menor, `serializar` devolve `0` e a linha se perde.
+constexpr size_t TAMANHO_MAX_JSON_TELEMETRIA = 512;
+
+/// Dados reportados na telemetria periódica do robô.
+struct PacoteTelemetria {
+  // Campos diretamente alinhados com a tabela `telemetria` do Supabase:
+  uint32_t numeroSequencia = 0;   ///< Sequencial monotônico incremental por corrida (`numero_sequencia`)
+  Pose pose = {{0, 0}, Direcao::Norte};  ///< Célula (`posicao_linha`, `posicao_coluna`) e orientação ("N", "S", "L", "O")
+  float velocidade = 0.0f;        ///< Velocidade linear instantânea em m/s (`velocidade`)
+  float tensaoBateria = 0.0f;     ///< Tensão instantânea da bateria em Volts (`tensao_bateria`)
+  const char* evento = nullptr;   ///< Evento pontual ("objetivo_alcancado", "colisao" ou nullptr)
+
+  // Campos de diagnóstico de encoders e calibração de bancada:
+  int32_t pulsosEsq = 0;          ///< Pulsos contados no encoder esquerdo (`esq_pulsos`)
+  int32_t pulsosDir = 0;          ///< Pulsos contados no encoder direito (`dir_pulsos`)
+  int32_t esqMm = 0;              ///< Deslocamento da roda esquerda em mm (`esq_mm`)
+  int32_t dirMm = 0;              ///< Deslocamento da roda direita em mm (`dir_mm`)
+  int32_t medioMm = 0;            ///< Deslocamento médio do robô em mm (`medio_mm`)
+  bool poseValida = true;         ///< Pose estimada é válida na malha (`pose_valida`)
+
+  // Campos de diagnóstico dos sensores de distância (#344):
+  uint16_t tofFrenteMm = 0;       ///< Sensor frontal, em mm (`tof_frente_mm`)
+  uint16_t tofEsqMm = 0;          ///< Sensor esquerdo, em mm (`tof_esq_mm`)
+  uint16_t tofDirMm = 0;          ///< Sensor direito, em mm (`tof_dir_mm`)
+  bool tofValida = false;         ///< Leitura dos 3 sensores válida (`tof_valida`)
+  uint32_t tofIdadeMs = 0;        ///< Idade da leitura, em ms (`tof_idade_ms`)
+};
+
+/// Serializador de dados de telemetria em formato JSON compatível com a tabela `telemetria` e o dashboard web.
+class TelemetriaJson {
+ public:
+  /// Serializa o pacote em cadeia de caracteres JSON em `saida`, terminada com `\0`.
+  /// @param pacote Dados da telemetria a serializar.
+  /// @param saida Buffer de destino.
+  /// @param capacidade Tamanho do buffer em bytes.
+  /// @return Quantidade de bytes gravados (sem o `\0`), ou `0` se não couber ou buffer inválido.
+  static size_t serializar(const PacoteTelemetria& pacote, char* saida, size_t capacidade);
+};
+
+}  // namespace micromouse
