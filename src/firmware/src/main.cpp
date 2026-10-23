@@ -181,6 +181,7 @@ static void tarefaTelemetria(void*) {
     const micromouse::Pose pose = odometria.pose();
     const bool poseConfiavel = micromouse::ENCODERS_INSTALADOS || deslocamento.poseConfiavel();
     const bool poseValida = odometria.posicaoValida() && poseConfiavel;
+    const uint32_t semCorrecaoMm = deslocamento.distanciaSemCorrecaoMm();
     const bool dispararEvento = detectorObjetivo.consumirEventoChegada();
     portEXIT_CRITICAL(&travaOdometria);
 
@@ -205,6 +206,8 @@ static void tarefaTelemetria(void*) {
     pacote.tofDirMm = leituraTof.distancias.direitaMm;
     pacote.tofValida = leituraTof.valida;
     pacote.tofIdadeMs = leituraTof.idadeMs;
+    pacote.modoDeslocamento = micromouse::ENCODERS_INSTALADOS ? "encoder" : "estimado";
+    pacote.semCorrecaoMm = micromouse::ENCODERS_INSTALADOS ? 0 : semCorrecaoMm;
 
     // Comporta o pior caso do JSON; com menos, a linha seria descartada em silêncio.
     char buffer[micromouse::TAMANHO_MAX_JSON_TELEMETRIA];

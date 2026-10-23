@@ -1,6 +1,7 @@
 /// @file test_telemetria_json.cpp
 /// @brief Testes da serialização JSON do pacote de telemetria e inclusão do evento objetivo_alcancado (#189, HU-07),
-/// dos campos de diagnóstico do ToF (#344) e do pior caso no buffer de `TAMANHO_MAX_JSON_TELEMETRIA`.
+/// dos campos de diagnóstico do ToF (#344) e do deslocamento sem encoder (#380), e do pior caso no buffer de
+/// `TAMANHO_MAX_JSON_TELEMETRIA`.
 /// Roda no computador: `pio test -e native -f test_telemetria_json`.
 
 #include <ArduinoJson.h>
@@ -113,6 +114,32 @@ void test_serializa_campos_de_diagnostico_do_tof() {
   TEST_ASSERT_EQUAL_UINT32(33, doc["tof_idade_ms"].as<uint32_t>());
 }
 
+void test_serializa_campos_do_deslocamento_estimado() {
+  PacoteTelemetria padrao;  // sem preencher: fonte encoder e nenhuma distância sem correção
+  char buffer[CAPACIDADE];
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(padrao, buffer, sizeof(buffer)));
+  JsonDocument doc;
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_EQUAL_STRING("encoder", doc["deslocamento"].as<const char*>());
+  TEST_ASSERT_EQUAL_UINT32(0, doc["sem_correcao_mm"].as<uint32_t>());
+
+  PacoteTelemetria estimado;
+  estimado.modoDeslocamento = "estimado";
+  estimado.semCorrecaoMm = 375;
+  estimado.poseValida = false;
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(estimado, buffer, sizeof(buffer)));
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_EQUAL_STRING("estimado", doc["deslocamento"].as<const char*>());
+  TEST_ASSERT_EQUAL_UINT32(375, doc["sem_correcao_mm"].as<uint32_t>());
+  TEST_ASSERT_FALSE(doc["pose_valida"].as<bool>());
+
+  PacoteTelemetria nulo;  // ponteiro nulo não derruba a serialização
+  nulo.modoDeslocamento = nullptr;
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(nulo, buffer, sizeof(buffer)));
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_EQUAL_STRING("encoder", doc["deslocamento"].as<const char*>());
+}
+
 void test_pior_caso_cabe_em_tamanho_max_json_telemetria() {
   PacoteTelemetria pacote;
   pacote.numeroSequencia = UINT32_MAX;
@@ -131,6 +158,8 @@ void test_pior_caso_cabe_em_tamanho_max_json_telemetria() {
   pacote.tofDirMm = UINT16_MAX;
   pacote.tofValida = false;
   pacote.tofIdadeMs = UINT32_MAX;
+  pacote.modoDeslocamento = "estimado";
+  pacote.semCorrecaoMm = UINT32_MAX;
 
   char buffer[TAMANHO_MAX_JSON_TELEMETRIA];
   const size_t bytes = TelemetriaJson::serializar(pacote, buffer, sizeof(buffer));
@@ -161,6 +190,7 @@ int main(int, char**) {
   RUN_TEST(test_serializa_telemetria_padrao_sem_evento);
   RUN_TEST(test_serializa_telemetria_com_evento_objetivo_alcancado);
   RUN_TEST(test_serializa_campos_de_diagnostico_do_tof);
+  RUN_TEST(test_serializa_campos_do_deslocamento_estimado);
   RUN_TEST(test_pior_caso_cabe_em_tamanho_max_json_telemetria);
   RUN_TEST(test_buffer_insuficiente_retorna_zero);
   RUN_TEST(test_buffer_nulo_ou_capacidade_zero);
