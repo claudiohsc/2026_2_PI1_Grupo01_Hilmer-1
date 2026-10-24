@@ -1,6 +1,7 @@
 # Dependências e build (gerados por npm install e npm run build)
 node_modules/
 dist/
+coverage/
 
 # Variáveis de ambiente com valores reais: nunca versionar
 .env
