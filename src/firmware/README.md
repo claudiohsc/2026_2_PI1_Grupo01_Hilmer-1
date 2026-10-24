@@ -19,24 +19,25 @@ src/firmware/
 | Pasta em `lib/` | Camada | O que entra |
 |---|---|---|
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
-| `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar`, `IEncoder` e `IMotores`) |
+| `hal` | Interfaces de hardware | Interfaces abstratas (`ISensorDistancia`, `IEncoder`, `IMotores` e `IBarramentoI2c`) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` para os 3 sensores ToF (VL53L0X) com limiares por lado, filtro digital e saturação defensiva (#379) |
+| `inicializacao` | Boot | Autoteste do boot (`AutotesteBoot`): varredura do I²C, conferência dos 4 dispositivos e relatório (`RelatorioBoot`), com os parâmetros em `ConfiguracaoBoot.h` |
 | `tof` | Sensoriamento | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros provisórios (`ConfiguracaoTof.h`), sem Arduino |
 | `deslocamento` | Sensoriamento | Deslocamento sem encoder: estimativa pela potência dos motores (`EncoderEstimado`, `MotoresComEstimativa`) e correção pelos ToF; todos os ajustes em `ConfiguracaoDeslocamento.h` |
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula) e armazenamento em memória |
 | `navegacao` | Navegação | Localização (`Odometria`: pose pela odometria diferencial dos encoders), decisão de movimento (`Navegacao`) e detecção do objetivo (`DetectorObjetivo`) |
-| `atuacao` | Atuação | Controle dos motores e correção de trajetória |
+| `atuacao` | Atuação | Controle dos motores, correção de trajetória e trava dos motores (`MotoresComTrava`) |
 | `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
-| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, e `MotoresSimulados`, um `IMotores` que guarda o último comando, sem hardware |
-| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X pelo I²C, encoders, DRV8833, WiFi) |
+| `simulacao` | Falsos para teste | `SensorDistanciaSimulado`, um `ISensorDistancia` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `SensorDistanciaSimulado`, `TofSimulado`, os 3 VL53L0X no labirinto, com amostras brutas pelo `CombinadorTof` real, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, `MotoresSimulados`, um `IMotores` que guarda o último comando, e `BarramentoI2cSimulado`, um `IBarramentoI2c` com os dispositivos escolhidos pelo teste, sem hardware |
+| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X e varredura pelo I²C, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
 
 - As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
 - O acesso ao hardware passa pelas interfaces de `hal`. Os drivers reais ficam em `drivers_esp32`, e `src/main.cpp` liga cada driver à sua interface.
-- Para testar a lógica sem sensor, use o `LidarSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência, `simularFalha(true)` faz o sensor parar de responder e, com um `LabirintoSimulado`, `posicionar` faz a leitura vir da posição do robô (veja [Labirinto simulado](#labirinto-simulado)).
+- Para testar a lógica sem sensor, use o `SensorDistanciaSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência, `simularFalha(true)` faz o sensor parar de responder e, com um `LabirintoSimulado`, `posicionar` faz a leitura vir da posição do robô (veja [Labirinto simulado](#labirinto-simulado)).
 - Evite alocação dinâmica na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo (`MAX_LINHAS_LABIRINTO` × `MAX_COLUNAS_LABIRINTO`) bastam.
 
 ## Mapa do labirinto
@@ -74,7 +75,7 @@ O armazenamento não pode ser copiado, e o acesso `const` impede que a telemetri
 
 ## Labirinto simulado
 
-O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes conhecidas. Com ele, o `LidarSimulado` devolve o que o sensor real veria na posição do robô, sem digitar leituras à mão. Serve para testar a classificação de paredes e a atualização do mapa num labirinto inteiro.
+O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes conhecidas. Com ele, o `SensorDistanciaSimulado` devolve o que o sensor real veria na posição do robô, sem digitar leituras à mão. Serve para testar a classificação de paredes e a atualização do mapa num labirinto inteiro.
 
 **Formato do texto.** O labirinto é escrito em ASCII: cada célula ocupa 4 colunas e 2 linhas de texto, `+` marca os cantos, `---` uma parede horizontal, `|` uma parede vertical e espaço é passagem livre. A primeira linha é a borda Norte e a partida (0, 0) é a célula do canto inferior esquerdo, como no `Mapa`. Cada parede aparece uma única vez, então as duas células vizinhas sempre concordam. Há um exemplo de cada tamanho (4×4, 8×4 e 12×4) em `test/test_labirinto_simulado/LabirintosExemplo.h`.
 
@@ -83,7 +84,7 @@ LabirintoSimulado labirinto;
 labirinto.carregar(exemplos::LABIRINTO_4X4);   // ResultadoCarga::Carregado
 labirinto.temParede({0, 0}, Direcao::Leste);   // true
 
-LidarSimulado lidar;
+SensorDistanciaSimulado lidar;
 lidar.usarLabirinto(labirinto);                // o labirinto precisa continuar vivo
 lidar.posicionar({{0, 0}, Direcao::Norte});
 DistanciasLaterais d;
@@ -97,7 +98,7 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `carregar(texto)` | Lê o labirinto. Se o texto for inválido, devolve o motivo (`TamanhoInvalido`, `CaractereInvalido`, `ParedeIncompleta` ou `PerimetroAberto`) e mantém o labirinto anterior |
 | `temParede(celula, direcao)` | `true` se há parede naquele lado; célula fora do labirinto conta como parede |
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
-| `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
+| `SensorDistanciaSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
 
 ## Percepção ToF (VL53L0X) e classificação de paredes
 
@@ -155,7 +156,7 @@ O `ControleMovimento` (`lib/atuacao`) leva o robô em linha reta, centralizado n
 
 ```cpp
 ControleMovimento controle;
-EstadoMovimento estado = controle.atualizar(lidar, motores, 100);  // ILidar e IMotores
+EstadoMovimento estado = controle.atualizar(lidar, motores, 100);  // ISensorDistancia e IMotores
 if (estado == EstadoMovimento::ParadoNaParede) {
   // decidir o próximo passo e, antes de andar de novo, chamar controle.reiniciar()
 }
@@ -289,7 +290,7 @@ Campos diagnósticos adicionais (`esq_pulsos`, `dir_pulsos`, `esq_mm`, `dir_mm`,
 
 ## Sensores de distância (VL53L0X)
 
-Na Rev 2.0 do hardware, o LiDAR deu lugar a 3 VL53L0X no I²C (esquerdo, frontal e direito). O `TofVl53l0x` (`lib/drivers_esp32`) implementa o `ILidar`, então mapa, percepção e navegação não mudaram ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)). A regra de validade fica no `CombinadorTof` (`lib/tof`), testado no `native`; a biblioteca `pololu/VL53L0X` só entra no `esp32c3`.
+Na Rev 2.0 do hardware, o LiDAR deu lugar a 3 VL53L0X no I²C (esquerdo, frontal e direito). O `TofVl53l0x` (`lib/drivers_esp32`) implementa o `ISensorDistancia`, então mapa, percepção e navegação não mudaram ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)). A regra de validade fica no `CombinadorTof` (`lib/tof`), testado no `native`; a biblioteca `pololu/VL53L0X` só entra no `esp32c3`.
 
 ```cpp
 Wire.begin(pinos::I2C_SDA, pinos::I2C_SCL);   // barramento compartilhado com o MPU6050
@@ -299,19 +300,22 @@ TofVl53l0x tof(Wire, {pinos::XSHUT_FRONTAL, pinos::ENDERECO_TOF_FRONTAL},
 tof.iniciar();                                // XSHUT um por vez e endereços 0x31, 0x30, 0x32
 
 DistanciasLaterais d;
-if (tof.lerDistanciasLaterais(d)) { /* os 3 sensores com medida válida e recente */ }
+if (tof.lerDistanciasLaterais(d)) { /* os 3 sensores respondendo, medidas recentes e limitadas à faixa */ }
 tof.amostra(Lado::Frente);                    // medida bruta, estado e instante, mesmo com a leitura recusada
 ```
 
 | Regra | Comportamento |
 |---|---|
 | Inicialização | Os 3 XSHUT em nível baixo; cada sensor é solto, inicializado e recebe o endereço antes do próximo. Sensor que não responde fica em reset (`sensorIniciado(lado)` diz quais iniciaram) |
-| Leitura | Nunca espera medida: só lê os sensores que já têm medida pronta. A leitura vale com os 3 entre 30 e 1200 mm e a amostra mais antiga com até 100 ms |
-| Recusa | `false` com algum sensor em `Falha`, `AbaixoDoMinimo`, `ForaDeAlcance` (inclui os 8190 mm "sem alvo") ou parado há mais de 100 ms |
+| Leitura | Nunca espera medida: só lê os sensores que já têm medida pronta. A leitura vale com os 3 respondendo e a amostra mais antiga com até 100 ms |
+| Fora da faixa | Não recusa a leitura: a medida sai limitada à faixa, como a percepção (#379) trata. `ForaDeAlcance` (acima de 1200 mm, inclui os 8190 mm "sem alvo") vira 1200 mm, lado livre; `AbaixoDoMinimo` (menos de 30 mm) vira 30 mm, parede muito perto. O valor bruto continua em `amostra(lado)` |
+| Recusa | `false` com algum sensor em `Falha`, sem nenhuma medida ou parado há mais de 100 ms |
 | Idade | `idadeUltimaLeituraMs()`: idade do sensor mais atrasado, para a navegação não repetir dado antigo |
 | Referência | Distância a partir da face de cada sensor; a geometria do robô e os limiares ficam na percepção ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) |
 
 Os parâmetros estão em `lib/tof/src/ConfiguracaoTof.h` e são **provisórios** até a bancada ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)). A telemetria serial do `main.cpp` traz os campos `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`, `tof_valida` e `tof_idade_ms`.
+
+No computador, o `TofSimulado` (`lib/simulacao`) faz o papel do driver: gera a amostra bruta de cada sensor no `LabirintoSimulado` (distância da face, 30 mm mais perto que o centro, e 8190 mm sem alvo além de 1200 mm) e a passa pelo `CombinadorTof`. `forcarAmostra(lado, mm)` troca a próxima amostra de um lado (por exemplo, sensor encostado) e `simularFalha(lado, true)` faz um sensor parar de responder. O `test_integracao_tof` explora os labirintos 4×4, 8×4 e 12×4 por essa cadeia, mais um 12×4 com corredores longos que só se fecha com o "sem alvo" tratado como livre, e confere que o mapa final é igual ao labirinto.
 
 ### Bancada dos VL53L0X
 
@@ -325,16 +329,58 @@ Para conferir o driver no hardware montado, junto com a eletrônica, use o menu 
 2. **Opção 3:** roteiro completo, com APROVADO, REPROVADO ou OBSERVADO em cada verificação, e um relatório em Markdown no fim, para registrar em `docs/07-testes/software.md`.
 3. Ao terminar, grave de volta o firmware do robô: `pio run -e esp32c3 -t upload`.
 
+O CI compila o `bancada_tof` junto com o firmware do robô e roda os testes do menu (`scripts/testes/test_bancada_tof.py`), que conferem cada etapa com respostas falsas da placa, sem hardware nem `pyserial`. Para rodar localmente: `python3 -m unittest discover -s scripts/testes -v`.
+
 | Etapa | O que verifica |
 |---|---|
 | 1. Fiação | Cada XSHUT liga só o seu sensor, que aparece sozinho no 0x29 |
 | 2. Inicialização | Os 3 sensores iniciam em 0x30, 0x31 e 0x32, e o 0x29 fica livre |
 | 3. Taxa e tempo | 20 a 40 Hz por sensor, leitura em até 5 ms e ≥ 95% de leituras válidas |
 | 4. Régua | Média, erro e desvio contra distâncias medidas (tolerância de ±10 mm ou ±5%) |
-| 5. Fora da faixa | Sensor sem alvo e sensor encostado: leitura recusada, com o motivo na amostra |
+| 5. Fora da faixa | Sensor sem alvo e sensor encostado: leitura válida, limitada a 1200 mm ou 30 mm, com o motivo na amostra |
 | 6. Sensor ausente | Um sensor desconectado (com a placa desligada) não impede os outros |
 
 Os critérios ficam no topo do script e são provisórios. O firmware de bancada também funciona direto no monitor serial: `pio device monitor -e bancada_tof` e o comando `AJUDA` listam `SCAN`, `ISOLAR`, `INIT`, `LER`, `FLUXO` e `ESTAT`; cada resposta é uma linha JSON.
+
+## Boot e autoteste
+
+Na Rev 2.0, o robô só libera os motores depois de encontrar os 4 dispositivos do I²C ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)). A sequência do `setup()`:
+
+1. Motores freados e **travados** (`MotoresComTrava`): travado, todo comando de potência vira freio.
+2. `Wire.begin` e `tof.iniciar()`: os 3 VL53L0X saem do reset um por vez e recebem 0x30, 0x31 e 0x32 (#344).
+3. `AutotesteBoot::verificar`: varre de 0x08 a 0x77 e confere os ToF esquerdo (0x30), frontal (0x31) e direito (0x32) e o MPU6050 (0x68, com o `WHO_AM_I` = 0x68).
+4. Aprovado, `motoresComTrava.liberar()`; com qualquer falha, os motores ficam travados **até reiniciar** e o log diz o que falhou.
+5. A linha `{"tipo":"boot",...}` sai no log, e as tarefas sobem mesmo com falha.
+
+```cpp
+MotoresComTrava motoresComTrava(motores);            // quem aciona as rodas usa este, não o driver
+ResultadoBoot r = autoteste.verificar(barramento, {tofEsqIniciado, tofFrenteIniciado, tofDirIniciado});
+if (r.aprovado()) { motoresComTrava.liberar(); }
+```
+
+No `main.cpp`, cada camada dos motores tem o próprio nome (`motores` é o driver, `motoresComTrava` a trava) e a navegação aciona as rodas só por `motoresTracao`, uma referência à camada de fora. Ordem combinada quando as outras camadas entrarem: `MotoresComTrava` (#50) → `MotoresComProtecao` (#341) → `MotoresComEstimativa` (#380) → `MotoresDrv8833`. O `motores.iniciar()` é a primeira linha do `setup()`, para frear antes de tudo.
+
+| Situação | Estado no relatório | Libera os motores? |
+|---|---|---|
+| Dispositivo responde no endereço esperado | `ok` | Sim, se os 4 estiverem `ok` |
+| Ninguém no endereço | `ausente` | Não |
+| ToF responde, mas o driver não conseguiu configurá-lo | `nao_iniciou` | Não |
+| Algo no 0x68 com outro `WHO_AM_I` (ou sem leitura) | `nao_identificado` | Não |
+| Algo no 0x29: um ToF ficou no endereço de fábrica | `tof_0x29: true` | Não |
+| Outro endereço qualquer | `inesperados` (só aviso) | Sim |
+| Boot acima de 2 s (RNF-09) | `no_prazo: false` (só aviso) | Sim |
+
+Exemplo do relatório:
+
+```json
+{"tipo":"boot","ok":false,"motores_liberados":false,"falhas":"tof_frontal","boot_ms":412,"prazo_ms":2000,"no_prazo":true,"dispositivos":{"tof_esquerdo":"ok","tof_frontal":"ausente","tof_direito":"ok","mpu6050":"ok"},"tof_0x29":false,"mpu6050_who_am_i":104,"inesperados":[],"inesperados_total":0}
+```
+
+**Na USB nativa, a linha do boot se perde se o monitor abrir depois do reset.** Por isso a telemetria repete `boot_ok`, `boot_falhas` e `boot_ms` em todo pacote, e o comando `B` no monitor serial reimprime o relatório.
+
+O `boot_ms` é o `millis()` no fim do `setup()`, contado desde o início do programa: a ROM e o bootloader do ESP32-C3 rodam antes e ficam de fora. Para o tempo desde o ligar, meça na bancada.
+
+Os parâmetros ficam em `lib/inicializacao/src/ConfiguracaoBoot.h`. O `WHO_AM_I` esperado é **provisório**: módulos com clone do MPU6050 respondem outro valor (0x70, 0x72, 0x98); se a bancada mostrar um desses em `mpu6050_who_am_i`, confirme com a eletrônica e troque lá. Repetir as tentativas durante a corrida é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava (`motoresComTrava.travar()`).
 
 ## Instalação
 
@@ -353,7 +399,7 @@ Execute os comandos dentro de `src/firmware`:
 | Gravar na placa | `pio run -e esp32c3 -t upload` |
 | Gravar o firmware de bancada dos VL53L0X | `pio run -e bancada_tof -t upload` (ou pelo `scripts/bancada_tof.py`) |
 | Gravar o firmware de bancada do deslocamento | `pio run -e bancada_deslocamento -t upload` (ou pelo `scripts/bancada_deslocamento.py`) |
-| Abrir o monitor serial | `pio device monitor` |
+| Abrir o monitor serial | `pio device monitor` (`B` repete o relatório do boot; `Z` zera os encoders) |
 | Rodar os testes no computador | `pio test -e native` |
 | Rodar um teste específico | `pio test -e native -f test_nucleo` |
 
@@ -378,8 +424,8 @@ O **log serial sai pela USB nativa** (`ARDUINO_USB_MODE=1` e `ARDUINO_USB_CDC_ON
 | Nível | Onde roda | Ferramenta | Quando usar |
 |---|---|---|---|
 | Unitário | Computador (`native`) | Unity | Lógica pura: tipos, classificação, mapa, serialização |
-| Integração | Computador (`native`) | Unity, com falsos de `simulacao` no lugar do hardware | Percepção → mapa em labirinto simulado |
-| Bancada | Placa com o hardware real | Monitor serial, checklist do teste e os scripts de `scripts/` | Sensores VL53L0X (`bancada_tof.py`), deslocamento sem encoder (`bancada_deslocamento.py`), motores |
+| Integração | Computador (`native`) | Unity, com falsos de `simulacao` no lugar do hardware | Percepção → mapa em labirinto simulado; ToF → mapa pelas amostras brutas (`test_integracao_tof`) |
+| Bancada | Placa com o hardware real | Monitor serial, checklist do teste e os scripts de `scripts/` (testados em `scripts/testes/`, sem a placa) | Sensores VL53L0X (`bancada_tof.py`), deslocamento sem encoder (`bancada_deslocamento.py`), encoders, motores |
 
 Para criar um teste:
 
@@ -391,7 +437,7 @@ Nomeie as funções de teste pelo comportamento esperado (`test_classifica_como_
 
 ## Convenções
 
-**Idioma do código:** nomes de pastas, arquivos, tipos, funções, variáveis, constantes e testes em português, sem acentos (identificadores só com ASCII), e comentários em português. Mantêm-se em inglês apenas as APIs e os termos consagrados: `setup`/`loop`, `Serial`, `xTaskCreate`, `LiDAR`, `UART`, `PWM`, `buffer`, `ILidar` (prefixo `I` de interface).
+**Idioma do código:** nomes de pastas, arquivos, tipos, funções, variáveis, constantes e testes em português, sem acentos (identificadores só com ASCII), e comentários em português. Mantêm-se em inglês apenas as APIs e os termos consagrados: `setup`/`loop`, `Serial`, `xTaskCreate`, `LiDAR`, `UART`, `PWM`, `buffer`, `ISensorDistancia` (prefixo `I` de interface).
 
 | Elemento | Estilo | Exemplo |
 |---|---|---|

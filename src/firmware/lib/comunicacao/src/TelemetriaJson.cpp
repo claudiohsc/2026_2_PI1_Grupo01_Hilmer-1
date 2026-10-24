@@ -46,6 +46,11 @@ size_t TelemetriaJson::serializar(const PacoteTelemetria& pacote, char* saida, s
   doc["deslocamento"] = pacote.modoDeslocamento != nullptr ? pacote.modoDeslocamento : "encoder";
   doc["sem_correcao_mm"] = pacote.semCorrecaoMm;
 
+  // Resultado do autoteste do boot (#50):
+  doc["boot_ok"] = pacote.bootOk;
+  doc["boot_falhas"] = pacote.falhasBoot != nullptr ? pacote.falhasBoot : "";
+  doc["boot_ms"] = pacote.bootMs;
+
   if (measureJson(doc) >= capacidade) {
     return 0;
   }

@@ -3,7 +3,7 @@
 /// @file TofVl53l0x.h
 /// @brief Driver dos 3 sensores de distância VL53L0X (esquerdo, frontal e direito) pelo I²C.
 ///
-/// Implementa `ILidar` (camada `hal`), então mapa, percepção e navegação não mudam com a troca do
+/// Implementa `ISensorDistancia` (camada `hal`), então mapa, percepção e navegação não mudam com a troca do
 /// LiDAR pelos ToF (#344). A regra de validade da leitura fica no `CombinadorTof` (camada `tof`),
 /// testado no computador; aqui só se fala com os sensores pela biblioteca `pololu/VL53L0X`.
 
@@ -13,7 +13,7 @@
 
 #include "CombinadorTof.h"
 #include "ConfiguracaoTof.h"
-#include "ILidar.h"
+#include "ISensorDistancia.h"
 
 namespace micromouse {
 
@@ -41,9 +41,9 @@ struct ConexaoTof {
 ///                {pinos::XSHUT_ESQ, pinos::ENDERECO_TOF_ESQ},
 ///                {pinos::XSHUT_DIR, pinos::ENDERECO_TOF_DIR});
 /// if (!tof.iniciar()) { /* algum sensor não respondeu: veja sensorIniciado() */ }
-/// ILidar& sensor = tof;
+/// ISensorDistancia& sensor = tof;
 /// @endcode
-class TofVl53l0x : public ILidar {
+class TofVl53l0x : public ISensorDistancia {
  public:
   /// @param barramento Barramento I²C já iniciado (`Wire.begin(SDA, SCL)`), compartilhado com o
   ///        MPU6050.
@@ -66,10 +66,10 @@ class TofVl53l0x : public ILidar {
   /// `true` se o sensor do `lado` iniciou na última chamada de `iniciar()`.
   bool sensorIniciado(Lado lado) const { return iniciados_[static_cast<uint8_t>(lado)]; }
 
-  /// @copydoc ILidar::lerDistanciasLaterais
+  /// @copydoc ISensorDistancia::lerDistanciasLaterais
   bool lerDistanciasLaterais(DistanciasLaterais& saida) override;
 
-  /// @copydoc ILidar::idadeUltimaLeituraMs
+  /// @copydoc ISensorDistancia::idadeUltimaLeituraMs
   /// Devolve `CombinadorTof::IDADE_DESCONHECIDA` se algum sensor ainda não entregou amostra.
   uint32_t idadeUltimaLeituraMs() const override;
 

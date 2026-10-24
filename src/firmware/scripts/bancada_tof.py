@@ -46,6 +46,9 @@ TEMPO_LEITURA_MAXIMO_US = 5000  # metade do ciclo de 10 ms da navegação
 LEITURAS_VALIDAS_MINIMO = 0.95  # fração das leituras válidas com obstáculo à frente dos 3
 TOLERANCIA_REGUA_MM = 10.0  # erro aceito contra a régua: o maior entre 10 mm e 5%
 TOLERANCIA_REGUA_PERC = 5.0
+# Faixa do `ConfiguracaoTof.h`: fora dela, a leitura vale com a distância limitada a estes valores.
+DISTANCIA_MINIMA_MM = 30
+DISTANCIA_MAXIMA_MM = 1200
 
 VERDE = "\033[32m" if sys.stdout.isatty() else ""
 VERMELHO = "\033[31m" if sys.stdout.isatty() else ""
@@ -294,32 +297,46 @@ def verificar_regua(bancada):
 
 
 def verificar_fora_da_faixa(bancada):
-    titulo("5. Fora da faixa: a leitura deve falhar, com o motivo na amostra do sensor")
+    titulo("5. Fora da faixa: a leitura vale, limitada à faixa, com o motivo na amostra do sensor")
     aprovado = True
     for lado in LADOS:
-        for situacao, instrucao, esperado in (
+        for situacao, instrucao, esperado, limitada in (
             ("sem alvo", f"Aponte o sensor {lado} para um espaço aberto, sem nada a menos de 1,5 m.",
-             "fora_de_alcance"),
+             "fora_de_alcance", DISTANCIA_MAXIMA_MM),
             ("muito perto", f"Encoste um obstáculo a menos de 2 cm do sensor {lado}.",
-             "abaixo_do_minimo"),
+             "abaixo_do_minimo", DISTANCIA_MINIMA_MM),
         ):
-            pausar(instrucao + " Os outros dois sensores podem ficar como estiverem.")
+            pausar(instrucao + " Os outros dois sensores devem ficar a menos de 1 m de um obstáculo.")
             time.sleep(0.3)
             leitura = bancada.comando("LER", "leitura")
             if leitura is None:
                 return False
-            estado = leitura[lado]["estado"]
-            mm = leitura[lado]["mm"]
-            if estado == esperado and not leitura["valida"]:
-                bancada.registrar(f"{lado}, {situacao}", "APROVADO",
-                                  f"estado {estado} ({mm} mm) e leitura inválida")
-            else:
-                # O comportamento real do sensor é o que a #175 quer registrar: não é defeito do
-                # driver se o sensor devolver outro valor; anote para a percepção (#379).
-                bancada.registrar(f"{lado}, {situacao}", "OBSERVADO",
-                                  f"esperado {esperado}; veio {estado} ({mm} mm), leitura "
-                                  f"{'válida' if leitura['valida'] else 'inválida'}")
+            resultado, detalhe = avaliar_fora_da_faixa(leitura, lado, esperado, limitada)
+            # Estado diferente do esperado não é defeito do driver: é o comportamento real do sensor,
+            # que a #175 quer registrar para a percepção (#379).
+            bancada.registrar(f"{lado}, {situacao}", resultado, detalhe)
+            aprovado = aprovado and resultado != "REPROVADO"
     return aprovado
+
+
+def avaliar_fora_da_faixa(leitura, lado, esperado, limitada):
+    """Classifica o passo 5 para um lado: (resultado, detalhe).
+
+    APROVADO quando o sensor deu o estado esperado e a leitura valeu com a distância limitada;
+    REPROVADO quando o estado veio certo, mas a leitura foi recusada ou não veio limitada (defeito
+    do driver); OBSERVADO quando o sensor deu outro estado.
+    """
+    estado = leitura[lado]["estado"]
+    mm = leitura[lado]["mm"]
+    entregue = leitura.get("limitada", {}).get(lado)
+    if estado != esperado:
+        return "OBSERVADO", (f"esperado {esperado}; veio {estado} ({mm} mm), leitura "
+                             f"{'válida' if leitura['valida'] else 'inválida'}")
+    if leitura["valida"] and entregue == limitada:
+        return "APROVADO", f"estado {estado} ({mm} mm brutos), leitura válida com {entregue} mm"
+    return "REPROVADO", (f"estado {estado} ({mm} mm brutos), mas a leitura veio "
+                         f"{'válida' if leitura['valida'] else 'inválida'} com {entregue} mm; "
+                         f"esperado válida com {limitada} mm")
 
 
 def verificar_sensor_ausente(bancada):

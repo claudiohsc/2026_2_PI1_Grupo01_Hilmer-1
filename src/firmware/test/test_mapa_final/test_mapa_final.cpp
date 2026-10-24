@@ -9,7 +9,7 @@
 #include "AtualizadorMapa.h"
 #include "ClassificadorParede.h"
 #include "LabirintoSimulado.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 #include "Mapa.h"
 #include "MapaJson.h"
 #include "../test_labirinto_simulado/LabirintosExemplo.h"
@@ -129,7 +129,7 @@ void test_serializacao_mapa_final_formato_5_3_3() {
 ///
 /// Este teste simula o robô percorrendo um labirinto virtual 4x4 com LiDAR simulado:
 /// - Carrega o labirinto 4x4 de referência (LabirintoSimulado);
-/// - Acopla o sensor virtual (LidarSimulado);
+/// - Acopla o sensor virtual (SensorDistanciaSimulado);
 /// - Percorre passo a passo as células até a célula de destino (3, 3);
 /// - A cada célula, atualiza o mapa via AtualizadorMapa a partir das distâncias medidas;
 /// - Ao atingir o objetivo (3, 3), dispara o evento de "objetivo alcançado" e congela o mapa;
@@ -141,7 +141,7 @@ void test_mapa_final_testado_no_labirinto_simulado() {
                           static_cast<uint8_t>(labirinto.carregar(exemplos::LABIRINTO_4X4)));
 
   // 2. Conecta o sensor LiDAR ao labirinto simulado
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   lidar.usarLabirinto(labirinto);
 
   // 3. Inicializa o armazenamento de mapa para a corrida

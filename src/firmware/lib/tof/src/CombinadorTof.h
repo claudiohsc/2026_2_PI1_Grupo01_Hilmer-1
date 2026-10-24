@@ -23,8 +23,8 @@ enum class EstadoAmostraTof : uint8_t {
   Falha            ///< O sensor não respondeu no I²C ou estourou o tempo de espera.
 };
 
-/// Última amostra de um sensor, com a distância bruta, para quem precisa tratar cada caso
-/// (por exemplo, "fora de alcance" como lado livre, na percepção, issue #379).
+/// Última amostra de um sensor, com a distância bruta, para quem precisa saber o caso exato
+/// (por exemplo, a bancada, ou a telemetria mostrar que um lado está fora de alcance).
 struct AmostraTof {
   uint16_t distanciaMm = 0;                           ///< Distância bruta, em mm.
   EstadoAmostraTof estado = EstadoAmostraTof::SemAmostra;
@@ -34,8 +34,13 @@ struct AmostraTof {
 /// Guarda a última amostra de cada sensor e monta a leitura das três direções.
 ///
 /// A leitura só vale (`distancias()` devolve `true`) quando:
-/// - os 3 sensores têm amostra no estado `Valida`;
+/// - os 3 sensores têm amostra e nenhum está em `Falha`;
 /// - a amostra mais antiga tem no máximo `idadeMaximaLeituraMs`.
+///
+/// Fora da faixa, a medida não derruba a leitura: ela sai limitada à faixa, como a percepção
+/// (#379) já trata. `ForaDeAlcance` vira `distanciaMaximaMm` (nada à frente, lado livre, comum
+/// nos corredores do 12x4) e `AbaixoDoMinimo` vira `distanciaMinimaMm` (parede muito perto).
+/// O estado e a distância brutos de cada lado continuam em `amostra()`.
 ///
 /// Exemplo:
 /// @code
@@ -70,7 +75,7 @@ class CombinadorTof {
 
   /// Monta a leitura das três direções.
   /// @param agoraMs Instante atual, em ms, para conferir a idade das amostras.
-  /// @param[out] saida Recebe as distâncias, em mm, quando a leitura vale.
+  /// @param[out] saida Recebe as distâncias, em mm, limitadas à faixa, quando a leitura vale.
   /// @return `true` se a leitura vale; `false` caso contrário (veja a regra na classe).
   bool distancias(uint32_t agoraMs, DistanciasLaterais& saida) const;
 
@@ -83,6 +88,9 @@ class CombinadorTof {
 
  private:
   static uint8_t indice(Lado lado) { return static_cast<uint8_t>(lado); }
+
+  /// Distância da amostra limitada à faixa `[distanciaMinimaMm, distanciaMaximaMm]`.
+  uint16_t distanciaLimitada(const AmostraTof& amostra) const;
 
   ConfiguracaoTof config_;
   AmostraTof amostras_[3];  ///< Indexado por `Lado`: frente, esquerda, direita.

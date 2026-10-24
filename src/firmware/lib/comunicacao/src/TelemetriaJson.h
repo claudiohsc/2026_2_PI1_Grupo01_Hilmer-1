@@ -19,10 +19,12 @@
 /// - `esq_mm`, `dir_mm`, `medio_mm`: deslocamento linear percorrido em milímetros
 /// - `pose_valida`: flag de integridade da pose na malha discreta
 /// - `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`: última leitura dos 3 VL53L0X, em mm (#344)
-/// - `tof_valida`: se a leitura dos 3 sensores é válida (`ILidar::lerDistanciasLaterais`)
-/// - `tof_idade_ms`: idade da amostra mais antiga da leitura (`ILidar::idadeUltimaLeituraMs`)
+/// - `tof_valida`: se a leitura dos 3 sensores é válida (`ISensorDistancia::lerDistanciasLaterais`)
+/// - `tof_idade_ms`: idade da amostra mais antiga da leitura (`ISensorDistancia::idadeUltimaLeituraMs`)
 /// - `deslocamento`: fonte do deslocamento, `"encoder"` ou `"estimado"` (sem encoder, #380)
 /// - `sem_correcao_mm`: distância andada desde a última correção pelo ToF no modo estimado (#380)
+/// - `boot_ok`, `boot_falhas`, `boot_ms`: resultado do autoteste do boot (#50), repetido em todo pacote
+///   porque a linha do relatório do boot se perde se o computador ainda não estiver lendo a USB
 
 #include <stddef.h>
 #include <stdint.h>
@@ -33,9 +35,10 @@
 namespace micromouse {
 
 /// Tamanho de buffer que comporta o pior caso do JSON de telemetria (todos os números no maior
-/// valor, com o evento `objetivo_alcancado`), com folga. O pior caso tem cerca de 400 caracteres;
-/// com um buffer menor, `serializar` devolve `0` e a linha se perde.
-constexpr size_t TAMANHO_MAX_JSON_TELEMETRIA = 512;
+/// valor, com o evento `objetivo_alcancado` e todas as falhas do boot), com folga. O pior caso tem
+/// 516 caracteres; com um buffer menor, `serializar` devolve `0` e a linha se perde. Ao acrescentar
+/// campos, confira o teste `test_pior_caso_cabe_em_tamanho_max_json_telemetria`.
+constexpr size_t TAMANHO_MAX_JSON_TELEMETRIA = 768;
 
 /// Dados reportados na telemetria periódica do robô.
 struct PacoteTelemetria {
@@ -64,6 +67,11 @@ struct PacoteTelemetria {
   // Campos de diagnóstico do deslocamento sem encoder (#380):
   const char* modoDeslocamento = "encoder";  ///< `"encoder"` ou `"estimado"` (`deslocamento`)
   uint32_t semCorrecaoMm = 0;     ///< Distância desde a última correção pelo ToF (`sem_correcao_mm`)
+
+  // Resultado do autoteste do boot (#50):
+  bool bootOk = true;                  ///< Autoteste aprovado e motores liberados (`boot_ok`)
+  const char* falhasBoot = nullptr;    ///< O que falhou, separado por vírgula; nullptr = "" (`boot_falhas`)
+  uint32_t bootMs = 0;                 ///< Duração do boot, em ms (`boot_ms`)
 };
 
 /// Serializador de dados de telemetria em formato JSON compatível com a tabela `telemetria` e o dashboard web.

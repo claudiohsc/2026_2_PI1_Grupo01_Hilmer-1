@@ -28,17 +28,27 @@ const AmostraTof& CombinadorTof::amostra(Lado lado) const { return amostras_[ind
 
 bool CombinadorTof::distancias(uint32_t agoraMs, DistanciasLaterais& saida) const {
   for (const AmostraTof& amostra : amostras_) {
-    if (amostra.estado != EstadoAmostraTof::Valida) {
+    if (amostra.estado == EstadoAmostraTof::SemAmostra || amostra.estado == EstadoAmostraTof::Falha) {
       return false;
     }
   }
   if (idadeMs(agoraMs) > config_.idadeMaximaLeituraMs) {
     return false;
   }
-  saida.frenteMm = amostra(Lado::Frente).distanciaMm;
-  saida.esquerdaMm = amostra(Lado::Esquerda).distanciaMm;
-  saida.direitaMm = amostra(Lado::Direita).distanciaMm;
+  saida.frenteMm = distanciaLimitada(amostra(Lado::Frente));
+  saida.esquerdaMm = distanciaLimitada(amostra(Lado::Esquerda));
+  saida.direitaMm = distanciaLimitada(amostra(Lado::Direita));
   return true;
+}
+
+uint16_t CombinadorTof::distanciaLimitada(const AmostraTof& amostra) const {
+  if (amostra.estado == EstadoAmostraTof::AbaixoDoMinimo) {
+    return config_.distanciaMinimaMm;
+  }
+  if (amostra.estado == EstadoAmostraTof::ForaDeAlcance) {
+    return config_.distanciaMaximaMm;
+  }
+  return amostra.distanciaMm;
 }
 
 uint32_t CombinadorTof::idadeMs(uint32_t agoraMs) const {

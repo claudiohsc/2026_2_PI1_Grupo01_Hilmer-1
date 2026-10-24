@@ -1,6 +1,6 @@
 /// @file test_tof.cpp
-/// @brief Testes unitários do `CombinadorTof` (#344): faixa válida, falha de sensor, sensor sem
-/// amostra, idade da leitura e amostras brutas expostas por sensor. O driver `TofVl53l0x` só
+/// @brief Testes unitários do `CombinadorTof` (#344): faixa válida, medidas fora da faixa limitadas,
+/// falha de sensor, sensor sem amostra, idade da leitura e amostras brutas expostas por sensor. O driver `TofVl53l0x` só
 /// repassa as medidas a esta classe, então a regra de validade é toda testada aqui.
 /// Roda no computador: `pio test -e native -f test_tof`.
 
@@ -71,26 +71,59 @@ void test_sensor_com_falha_invalida_a_leitura() {
   TEST_ASSERT_EQUAL(EstadoAmostraTof::Falha, combinador.amostra(Lado::Esquerda).estado);
 }
 
-void test_fora_de_alcance_invalida_a_leitura_mas_fica_exposto_por_sensor() {
+void test_fora_de_alcance_vale_limitado_ao_maximo_e_fica_exposto_por_sensor() {
   CombinadorTof combinador;
   registrarTres(combinador, 8190, 40, 45, 1000);
   DistanciasLaterais saida;
-  TEST_ASSERT_FALSE(combinador.distancias(1000, saida));
+  // "Nada à frente" é uma leitura válida (lado livre, comum no 12x4): sai limitada a 1200 mm,
+  // acima do limiar de parede da percepção (#379).
+  TEST_ASSERT_TRUE(combinador.distancias(1000, saida));
+  TEST_ASSERT_EQUAL_UINT16(1200, saida.frenteMm);
+  TEST_ASSERT_EQUAL_UINT16(40, saida.esquerdaMm);
+  TEST_ASSERT_EQUAL_UINT16(45, saida.direitaMm);
 
-  // A percepção (#379) pode tratar "sem alvo" como lado livre a partir da amostra bruta.
+  // A amostra bruta continua disponível para quem precisa do caso exato.
   const AmostraTof& frente = combinador.amostra(Lado::Frente);
   TEST_ASSERT_EQUAL(EstadoAmostraTof::ForaDeAlcance, frente.estado);
   TEST_ASSERT_EQUAL_UINT16(8190, frente.distanciaMm);
   TEST_ASSERT_EQUAL_UINT32(1000, frente.instanteMs);
 }
 
-void test_abaixo_do_minimo_invalida_a_leitura() {
+void test_abaixo_do_minimo_vale_limitado_ao_minimo() {
   CombinadorTof combinador;
   registrarTres(combinador, 250, 12, 45, 1000);
   DistanciasLaterais saida;
-  TEST_ASSERT_FALSE(combinador.distancias(1000, saida));
+  // O sensor lateral perto da parede pode ler menos de 30 mm: vale como parede muito perto.
+  TEST_ASSERT_TRUE(combinador.distancias(1000, saida));
+  TEST_ASSERT_EQUAL_UINT16(30, saida.esquerdaMm);
   TEST_ASSERT_EQUAL(EstadoAmostraTof::AbaixoDoMinimo, combinador.amostra(Lado::Esquerda).estado);
   TEST_ASSERT_EQUAL_UINT16(12, combinador.amostra(Lado::Esquerda).distanciaMm);
+}
+
+void test_os_tres_lados_fora_da_faixa_ainda_montam_a_leitura() {
+  CombinadorTof combinador;
+  registrarTres(combinador, 8191, 0, 65535, 1000);
+  DistanciasLaterais saida;
+  TEST_ASSERT_TRUE(combinador.distancias(1000, saida));
+  TEST_ASSERT_EQUAL_UINT16(1200, saida.frenteMm);
+  TEST_ASSERT_EQUAL_UINT16(30, saida.esquerdaMm);
+  TEST_ASSERT_EQUAL_UINT16(1200, saida.direitaMm);
+}
+
+void test_falha_derruba_a_leitura_mesmo_com_os_outros_fora_da_faixa() {
+  CombinadorTof combinador;
+  registrarTres(combinador, 8190, 12, 45, 1000);
+  combinador.registrar(Lado::Direita, 0, true, 1000);
+  DistanciasLaterais saida;
+  TEST_ASSERT_FALSE(combinador.distancias(1000, saida));
+}
+
+void test_leitura_fora_da_faixa_velha_tambem_falha() {
+  CombinadorTof combinador;  // idade máxima padrão: 100 ms
+  registrarTres(combinador, 8190, 40, 45, 1000);
+  DistanciasLaterais saida;
+  TEST_ASSERT_TRUE(combinador.distancias(1100, saida));
+  TEST_ASSERT_FALSE(combinador.distancias(1101, saida));
 }
 
 void test_sensor_que_nunca_mediu_invalida_a_leitura() {
@@ -169,6 +202,13 @@ void test_configuracao_altera_faixa_e_idade() {
   DistanciasLaterais saida;
   TEST_ASSERT_TRUE(combinador.distancias(1020, saida));
   TEST_ASSERT_FALSE(combinador.distancias(1021, saida));
+
+  // A limitação segue a faixa configurada, não a padrão.
+  registrarTres(combinador, 600, 40, 60, 2000);
+  TEST_ASSERT_TRUE(combinador.distancias(2000, saida));
+  TEST_ASSERT_EQUAL_UINT16(500, saida.frenteMm);
+  TEST_ASSERT_EQUAL_UINT16(50, saida.esquerdaMm);
+  TEST_ASSERT_EQUAL_UINT16(60, saida.direitaMm);
 }
 
 int main(int, char**) {
@@ -178,8 +218,11 @@ int main(int, char**) {
   RUN_TEST(test_classificacao_nos_limites_da_faixa);
   RUN_TEST(test_falha_tem_prioridade_sobre_a_distancia);
   RUN_TEST(test_sensor_com_falha_invalida_a_leitura);
-  RUN_TEST(test_fora_de_alcance_invalida_a_leitura_mas_fica_exposto_por_sensor);
-  RUN_TEST(test_abaixo_do_minimo_invalida_a_leitura);
+  RUN_TEST(test_fora_de_alcance_vale_limitado_ao_maximo_e_fica_exposto_por_sensor);
+  RUN_TEST(test_abaixo_do_minimo_vale_limitado_ao_minimo);
+  RUN_TEST(test_os_tres_lados_fora_da_faixa_ainda_montam_a_leitura);
+  RUN_TEST(test_falha_derruba_a_leitura_mesmo_com_os_outros_fora_da_faixa);
+  RUN_TEST(test_leitura_fora_da_faixa_velha_tambem_falha);
   RUN_TEST(test_sensor_que_nunca_mediu_invalida_a_leitura);
   RUN_TEST(test_a_idade_e_a_da_amostra_mais_antiga);
   RUN_TEST(test_leitura_velha_falha_e_volta_quando_chega_amostra_nova);
