@@ -226,15 +226,16 @@ TofVl53l0x tof(Wire, {pinos::XSHUT_FRONTAL, pinos::ENDERECO_TOF_FRONTAL},
 tof.iniciar();                                // XSHUT um por vez e endereços 0x31, 0x30, 0x32
 
 DistanciasLaterais d;
-if (tof.lerDistanciasLaterais(d)) { /* os 3 sensores com medida válida e recente */ }
+if (tof.lerDistanciasLaterais(d)) { /* os 3 sensores respondendo, medidas recentes e limitadas à faixa */ }
 tof.amostra(Lado::Frente);                    // medida bruta, estado e instante, mesmo com a leitura recusada
 ```
 
 | Regra | Comportamento |
 |---|---|
 | Inicialização | Os 3 XSHUT em nível baixo; cada sensor é solto, inicializado e recebe o endereço antes do próximo. Sensor que não responde fica em reset (`sensorIniciado(lado)` diz quais iniciaram) |
-| Leitura | Nunca espera medida: só lê os sensores que já têm medida pronta. A leitura vale com os 3 entre 30 e 1200 mm e a amostra mais antiga com até 100 ms |
-| Recusa | `false` com algum sensor em `Falha`, `AbaixoDoMinimo`, `ForaDeAlcance` (inclui os 8190 mm "sem alvo") ou parado há mais de 100 ms |
+| Leitura | Nunca espera medida: só lê os sensores que já têm medida pronta. A leitura vale com os 3 respondendo e a amostra mais antiga com até 100 ms |
+| Fora da faixa | Não recusa a leitura: a medida sai limitada à faixa, como a percepção (#379) trata. `ForaDeAlcance` (acima de 1200 mm, inclui os 8190 mm "sem alvo") vira 1200 mm, lado livre; `AbaixoDoMinimo` (menos de 30 mm) vira 30 mm, parede muito perto. O valor bruto continua em `amostra(lado)` |
+| Recusa | `false` com algum sensor em `Falha`, sem nenhuma medida ou parado há mais de 100 ms |
 | Idade | `idadeUltimaLeituraMs()`: idade do sensor mais atrasado, para a navegação não repetir dado antigo |
 | Referência | Distância a partir da face de cada sensor; a geometria do robô e os limiares ficam na percepção ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) |
 
@@ -258,7 +259,7 @@ Para conferir o driver no hardware montado, junto com a eletrônica, use o menu 
 | 2. Inicialização | Os 3 sensores iniciam em 0x30, 0x31 e 0x32, e o 0x29 fica livre |
 | 3. Taxa e tempo | 20 a 40 Hz por sensor, leitura em até 5 ms e ≥ 95% de leituras válidas |
 | 4. Régua | Média, erro e desvio contra distâncias medidas (tolerância de ±10 mm ou ±5%) |
-| 5. Fora da faixa | Sensor sem alvo e sensor encostado: leitura recusada, com o motivo na amostra |
+| 5. Fora da faixa | Sensor sem alvo e sensor encostado: leitura válida, limitada a 1200 mm ou 30 mm, com o motivo na amostra |
 | 6. Sensor ausente | Um sensor desconectado (com a placa desligada) não impede os outros |
 
 Os critérios ficam no topo do script e são provisórios. O firmware de bancada também funciona direto no monitor serial: `pio device monitor -e bancada_tof` e o comando `AJUDA` listam `SCAN`, `ISOLAR`, `INIT`, `LER`, `FLUXO` e `ESTAT`; cada resposta é uma linha JSON.

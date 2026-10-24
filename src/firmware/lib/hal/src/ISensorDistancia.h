@@ -27,7 +27,9 @@ class ISensorDistancia {
   /// @param[out] saida Recebe as distâncias, em milímetros, quando a leitura é válida.
   /// @return `true` se houve leitura válida das três direções; `false` se o sensor
   ///         não respondeu ou a leitura é inválida. Quando retorna `false`, o conteúdo
-  ///         de `saida` não deve ser usado.
+  ///         de `saida` não deve ser usado. Medida fora da faixa do sensor não é inválida:
+  ///         sai limitada à faixa (no `TofVl53l0x`, "sem alvo" vira o alcance máximo, ou
+  ///         seja, lado livre, e "perto demais" vira o mínimo, ou seja, parede).
   virtual bool lerDistanciasLaterais(DistanciasLaterais& saida) = 0;
 
   /// Idade, em ms, da amostra mais antiga que compõe a última leitura, medida agora.
