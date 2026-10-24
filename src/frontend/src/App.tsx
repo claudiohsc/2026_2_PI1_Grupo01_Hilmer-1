@@ -4,6 +4,7 @@ import { gerarCorridaExemplo } from './dados/corridaExemplo';
 import { LABIRINTOS_EXEMPLO } from './dados/labirintosExemplo';
 import { type EstadoConexao, useLabirintos } from './hooks/useLabirintos';
 import { useReproducaoCorrida } from './hooks/useReproducaoCorrida';
+import { useTelemetriaAoVivo } from './hooks/useTelemetriaAoVivo';
 import { MAXIMO_TENTATIVAS } from './lib/formatacao';
 import { TelaAoVivo } from './paginas/TelaAoVivo';
 import { TelaHistorico } from './paginas/TelaHistorico';
@@ -35,6 +36,31 @@ export function App() {
   }, [tipo, tentativa]);
   const reproducao = useReproducaoCorrida(corridaExemplo.telemetria);
 
+  // Com o Supabase configurado, a tela acompanha a corrida real pelo Realtime (#231);
+  // sem ele, segue com a corrida de exemplo.
+  const aoVivo = useTelemetriaAoVivo();
+  const labirintoAoVivo =
+    labirintos.find((l) => l.id === aoVivo.corrida?.labirinto_id) ??
+    labirintos.find((l) => l.tipo === tipo) ??
+    corridaExemplo.labirinto;
+  const painel = aoVivo.disponivel
+    ? {
+        labirinto: labirintoAoVivo,
+        mapa: [],
+        estado: aoVivo.estado,
+        tempo: aoVivo.tempo,
+        leituras: aoVivo.leituras,
+        tentativa: aoVivo.corrida?.numero_tentativa ?? tentativa,
+      }
+    : {
+        labirinto: corridaExemplo.labirinto,
+        mapa: corridaExemplo.mapa,
+        estado: reproducao.estado,
+        tempo: reproducao.tempo,
+        leituras: reproducao.leituras,
+        tentativa,
+      };
+
   const selecionarLabirinto = (novo: TipoLabirinto) => {
     setTipo(novo);
     setTentativa(1);
@@ -54,15 +80,14 @@ export function App() {
         labirintos={labirintos}
         tipoSelecionado={tipo}
         aoSelecionarLabirinto={selecionarLabirinto}
-        estado={reproducao.estado}
+        estado={painel.estado}
       />
 
       <main className="app__conteudo">
         {aba === 'ao_vivo' ? (
           <TelaAoVivo
-            corridaExemplo={corridaExemplo}
-            reproducao={reproducao}
-            tentativa={tentativa}
+            {...painel}
+            aoVivo={aoVivo.disponivel}
             aoIniciar={reproducao.iniciar}
             aoResetar={resetar}
           />
@@ -72,7 +97,7 @@ export function App() {
       </main>
 
       <footer className="app__rodape">
-        <span>Dados de exemplo</span>
+        <span>{aoVivo.disponivel ? 'Telemetria ao vivo (Supabase Realtime)' : 'Dados de exemplo'}</span>
         <span aria-hidden="true">·</span>
         <span className={`app__conexao app__conexao--${conexao}`}>{TEXTO_CONEXAO[conexao]}</span>
       </footer>
