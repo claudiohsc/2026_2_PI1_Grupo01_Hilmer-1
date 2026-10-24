@@ -7,7 +7,7 @@
 
 #include "CalibradorGiro.h"
 #include "ImuSimulado.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 #include "RotinaCalibracao.h"
 
 using namespace micromouse;
@@ -143,7 +143,7 @@ void test_calibrador_giro_amostra_fora_de_calibrando_e_ignorada() {
 
 void test_rotina_calibracao_sucesso_com_imu_simulado_e_lidar_simulado() {
   RotinaCalibracao rotina(configRotinaRapida());
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   ImuSimulado imu;
 
   // Lidar simulado fornece distâncias com leve offset: frente=58 (+4), esq=50 (-4), dir=56 (+2)
@@ -181,7 +181,7 @@ void test_rotina_calibracao_duracao_medida_dentro_do_orcamento_rnf08() {
   // Configuração padrão: 10 amostras ToF (~330 ms) e 50 amostras IMU (500 ms)
   ConfiguracaoRotinaCalibracao configPadrao;
   RotinaCalibracao rotina(configPadrao);
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   ImuSimulado imu;
 
   lidar.definirLeituraFixa({54, 54, 54});
@@ -203,7 +203,7 @@ void test_rotina_calibracao_falha_tempo_excedido_quando_estoura_orcamento() {
   c.orcamentoTotalMs = 300;  // Força orçamento muito curto: 300 ms
   c.giro.amostras = 50;      // 50 x 10 ms = 500 ms > 300 ms
   RotinaCalibracao rotina(c);
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   ImuSimulado imu;
 
   lidar.definirLeituraFixa({54, 54, 54});
@@ -218,7 +218,7 @@ void test_rotina_calibracao_falha_tempo_excedido_quando_estoura_orcamento() {
 
 void test_rotina_calibracao_recusa_quando_robo_se_move_no_giro() {
   RotinaCalibracao rotina(configRotinaRapida());
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   ImuSimulado imu;
 
   lidar.definirLeituraFixa({54, 54, 54});
@@ -234,7 +234,7 @@ void test_rotina_calibracao_recusa_quando_robo_se_move_no_giro() {
 
 void test_rotina_calibracao_recusa_quando_robo_se_move_no_tof() {
   RotinaCalibracao rotina(configRotinaRapida());
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   ImuSimulado imu;
 
   // Lidar enfileira leituras oscilando mais que variacaoMaximaMm (8 mm)
@@ -255,7 +255,7 @@ void test_rotina_calibracao_recusa_quando_robo_se_move_no_tof() {
 
 void test_rotina_calibracao_aborta_em_caso_de_falha_de_sensor() {
   RotinaCalibracao rotina(configRotinaRapida());
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   ImuSimulado imu;
 
   lidar.definirLeituraFixa({54, 54, 54});

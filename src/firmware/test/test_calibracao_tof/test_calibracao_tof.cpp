@@ -6,7 +6,7 @@
 #include <unity.h>
 
 #include "CalibradorTof.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 
 using namespace micromouse;
 
@@ -136,7 +136,7 @@ void test_orcamento_tof_cabe_no_rnf08() {
 }
 
 void test_com_leituras_simuladas_do_lidar() {
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   lidar.definirLeituraFixa({60, 50, 58});
 
   CalibradorTof calibrador(configRapido());

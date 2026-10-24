@@ -9,7 +9,7 @@
 #include "CalibradorTof.h"
 #include "ConfiguracaoCalibracao.h"
 #include "IImu.h"
-#include "ILidar.h"
+#include "ISensorDistancia.h"
 #include "Tipos.h"
 
 namespace micromouse {
@@ -52,11 +52,11 @@ class RotinaCalibracao {
                                   int16_t taxaGiroDecimosDps, bool giroValido, uint32_t dtMs);
 
   /// Executa o laço de calibração alimentando-se das interfaces de hardware/simulação.
-  /// @param sensorDistancia Fonte das leituras ToF (`ILidar` / `LidarSimulado`).
+  /// @param sensorDistancia Fonte das leituras ToF (`ISensorDistancia` / `SensorDistanciaSimulado`).
   /// @param imu Fonte da taxa de giro (`IImu` / `ImuSimulado`).
   /// @param dtPassoMs Passo de tempo simulado entre leituras da IMU (padrão 10 ms).
   /// @return Situação final da calibração.
-  EstadoRotinaCalibracao executar(ILidar& sensorDistancia, IImu& imu,
+  EstadoRotinaCalibracao executar(ISensorDistancia& sensorDistancia, IImu& imu,
                                  uint32_t dtPassoMs = PERIODO_AMOSTRAGEM_GIRO_MS);
 
   /// Estado atual da rotina.

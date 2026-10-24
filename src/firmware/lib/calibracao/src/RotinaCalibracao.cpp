@@ -64,7 +64,7 @@ EstadoRotinaCalibracao RotinaCalibracao::atualizar(const DistanciasLaterais& dis
   return estado_;
 }
 
-EstadoRotinaCalibracao RotinaCalibracao::executar(ILidar& sensorDistancia, IImu& imu,
+EstadoRotinaCalibracao RotinaCalibracao::executar(ISensorDistancia& sensorDistancia, IImu& imu,
                                                  uint32_t dtPassoMs) {
   iniciar();
   uint32_t acumuladorTofMs = 0;

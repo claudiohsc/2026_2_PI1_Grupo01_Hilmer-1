@@ -41,7 +41,7 @@ PotenciaRodas ControleMovimento::calcular(const DistanciasLaterais* leitura, uin
   return {limitarPotencia(base - correcao), limitarPotencia(base + correcao)};
 }
 
-EstadoMovimento ControleMovimento::atualizar(ILidar& lidar, IMotores& motores, uint32_t dtMs) {
+EstadoMovimento ControleMovimento::atualizar(ISensorDistancia& lidar, IMotores& motores, uint32_t dtMs) {
   DistanciasLaterais leitura = {};
   const bool valida = lidar.lerDistanciasLaterais(leitura);
   const PotenciaRodas potencia = calcular(valida ? &leitura : nullptr, dtMs);

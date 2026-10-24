@@ -8,7 +8,7 @@
 #include "ClassificadorParede.h"
 #include "Direcao.h"
 #include "LabirintoSimulado.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 #include "Mapa.h"
 #include "Navegacao.h"
 #include "../test_labirinto_simulado/LabirintosExemplo.h"
@@ -193,7 +193,7 @@ void resolverLabirintoSimulado(const char* texto, DimensaoMapa dimensao, uint16_
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ResultadoCarga::Carregado),
                           static_cast<uint8_t>(labirinto.carregar(texto)));
 
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   lidar.usarLabirinto(labirinto);
 
   ClassificadorParede classificador;

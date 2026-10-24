@@ -14,6 +14,7 @@
 /// por I²C), entrou o MPU6050 no mesmo barramento e todos os outros pinos mudaram de lugar.
 
 #include <stddef.h>
+#include <stdint.h>
 
 namespace micromouse {
 namespace pinos {
@@ -30,6 +31,17 @@ constexpr int I2C_SCL = 8;  ///< GPIO8 → SCL.
 constexpr int XSHUT_ESQ = 0;      ///< GPIO0 → XSHUT do sensor esquerdo (J3).
 constexpr int XSHUT_FRONTAL = 1;  ///< GPIO1 → XSHUT do sensor frontal (J4).
 constexpr int XSHUT_DIR = 2;      ///< GPIO2 → XSHUT do sensor direito (J5). GPIO2 é pino de strapping.
+/// @}
+
+/// @name Endereços I²C dos VL53L0X, atribuídos no boot (#344)
+/// Todos ligam no endereço de fábrica (0x29). O driver solta um XSHUT por vez e muda o endereço
+/// do sensor recém-ligado, então os três precisam ser distintos entre si, do 0x29 e do MPU6050.
+/// @{
+constexpr uint8_t ENDERECO_FABRICA_TOF = 0x29;  ///< Endereço do VL53L0X ao sair do reset.
+constexpr uint8_t ENDERECO_MPU6050 = 0x68;      ///< MPU6050 com o pino AD0 em nível baixo.
+constexpr uint8_t ENDERECO_TOF_ESQ = 0x30;      ///< Sensor esquerdo (J3).
+constexpr uint8_t ENDERECO_TOF_FRONTAL = 0x31;  ///< Sensor frontal (J4).
+constexpr uint8_t ENDERECO_TOF_DIR = 0x32;      ///< Sensor direito (J5).
 /// @}
 
 /// @name Driver de motores DRV8833 (ponte H dupla, sinais PWM)
@@ -101,6 +113,21 @@ constexpr bool pinosExistemNoEsp32C3() {
 
 static_assert(pinosSemRepeticao(), "Pinos.h: ha GPIO repetido na pinagem");
 static_assert(pinosExistemNoEsp32C3(), "Pinos.h: ha GPIO que nao existe no ESP32-C3");
+
+/// `true` se os endereços I²C dos 3 VL53L0X são distintos entre si, do endereço de fábrica e do
+/// MPU6050, e cabem em 7 bits.
+constexpr bool enderecosTofDistintos() {
+  const int enderecos[] = {ENDERECO_TOF_ESQ, ENDERECO_TOF_FRONTAL, ENDERECO_TOF_DIR,
+                           ENDERECO_FABRICA_TOF, ENDERECO_MPU6050};
+  for (int endereco : enderecos) {
+    if (endereco > 0x7F) {
+      return false;
+    }
+  }
+  return semRepeticao(enderecos, sizeof(enderecos) / sizeof(enderecos[0]));
+}
+
+static_assert(enderecosTofDistintos(), "Pinos.h: enderecos I2C dos VL53L0X em conflito");
 
 }  // namespace pinos
 }  // namespace micromouse
