@@ -1946,13 +1946,13 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 - [#239 Exibição de mapa e percurso](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239): utilizará os testes de parsing e células de `labirinto.ts` integrados à grade visual.
 - [#242 Estado "Aguardando Largada"](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242): utilizará o hook `useReproducaoCorrida` e os estados do painel.
 
-### Sprint 5 · Buffer local, reenvio sem duplicação e envio da telemetria ao Supabase
+### Sprint 5 · Envio da telemetria ao Supabase, buffer local e reenvio sem duplicação
 
 | Item | Valor |
 |---|---|
-| Tarefa | [#238 Buffer local e reenvio sem duplicação](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/238) |
-| História de usuário | HU-16 · Estabilização de Conexão ([#46](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/46)), RF16 e RNF05 |
-| Código testado | `src/firmware/lib/comunicacao`, `lib/hal`, `lib/simulacao` e `lib/drivers_esp32` (branch `feat/238-buffer-reenvio` com a `feat/238-envio-http`: commits `2909415`, `b759b6a`, `d42378c` e `f3b0a28`, PR [#412](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/412)) |
+| Tarefas | [#236 Envio de telemetria do ESP32 ao Supabase](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/236) e [#238 Buffer local e reenvio sem duplicação](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/238) |
+| Histórias de usuário | HU-08 · Captura e Transmissão ([#45](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/45)) e HU-16 · Estabilização de Conexão ([#46](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/46)); RF08, RF16 e RNF05 |
+| Código testado | `src/firmware/lib/comunicacao`, `lib/hal`, `lib/simulacao` e `lib/drivers_esp32` (branch `feat/238-buffer-reenvio` com a `feat/238-envio-http`: commits `2909415`, `b759b6a`, `d42378c`, `f3b0a28` e `c1ba268`, PR [#412](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/412)) |
 | Data da execução | 24/10/2026 |
 | Executado por | Eduardo Viana |
 | Tipo de teste | Unitário e de integração, no computador, com o servidor simulado `EnvioSimulado` |
@@ -1961,9 +1961,29 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 **Ambiente de execução:** Linux (Ubuntu 24.04), GCC 13.3, Unity 2.6.1 e ArduinoJson 7.4.2, com as mesmas bibliotecas do ambiente `native` (todas as de `lib/`, menos `drivers_esp32`). Cobertura medida com `gcov`, somando todas as suítes.
 
 !!! warning "Testes no computador"
-    O servidor, a rede e o Wi-Fi foram simulados: o `EnvioSimulado` imita o backend (ignora `(corrida, sequência)` repetidos, fica fora do ar e perde respostas quando o teste pede), e a `RedeWifiSimulada` imita o Wi-Fi. O teste com o Wi-Fi real fica para a bancada (ED2), e o ponta a ponta com o Supabase, para a [#232](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/232).
+    O servidor, a rede e o Wi-Fi foram simulados: o `EnvioSimulado` imita o backend (ignora `(corrida, sequência)` repetidos, fica fora do ar, perde respostas e, no `EnvioLentoSimulado`, demora a responder quando o teste pede), e a `RedeWifiSimulada` imita o Wi-Fi. O teste com o Wi-Fi real fica para a bancada (ED2), e o ponta a ponta com o Supabase, para a [#232](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/232).
 
 #### Critérios da issue e testes
+
+| Critério da #236 | Testes | Situação |
+|---|---|:-:|
+| Cliente Wi-Fi e HTTPS (`HTTPClient` com `WiFiClientSecure`), com validação de certificado; `setInsecure` só na bancada e documentado | `EnvioHttpSupabase` e `RedeWifiEsp32` (`drivers_esp32`); `test_so_https_e_com_certificado_ou_excecao_de_bancada`; seção "Credenciais" do README | Aprovado no código; HTTPS real na bancada |
+| Credenciais fora do repositório (arquivo ignorado e `.exemplo` versionado); sem credenciais, inicia e não envia | `include/credenciais.exemplo.h` e `.gitignore`; `test_sem_credenciais_o_envio_fica_desligado` | Aprovado |
+| `IEnvioTelemetria` em `hal`, implementação HTTP em `drivers_esp32` e `EnvioSimulado` para os testes | `IEnvioTelemetria.h`, `EnvioHttpSupabase` e `EnvioSimulado` | Aprovado |
+| Montagem do lote testada: nomes das colunas, `numero_sequencia` crescente, tamanho máximo do lote e do JSON, `evento` só quando existe | 7 testes do JSON do lote; `test_registrar_numera_na_coleta_e_nunca_chama_a_rede`; `test_lotes_de_no_maximo_100_amostras` | Aprovado |
+| Criação da corrida no início e encerramento no fim, com o `corrida_id` em todos os lotes | `test_le_o_id_da_corrida_criada`, `test_corpos_da_criacao_e_do_encerramento`, `test_nova_corrida_limpa_buffer_numeracao_e_contadores`; `tarefaRede` no `main.cpp` | Aprovado |
+| Amostragem de cerca de 1 s e envio sem bloquear a navegação: tarefa concorrente, tempo limite configurável e fila com descarte da mais antiga e contador de perdas | `test_periodo_da_coleta_e_tempos_da_rede`, `test_integracao_servidor_lento_nao_atrasa_a_coleta_nem_duplica`, `test_a_trava_nunca_e_segurada_durante_a_rede`, `test_buffer_cheio_sobrescreve_o_mais_antigo_e_conta_a_perda` | Aprovado |
+| Reconexão do Wi-Fi com espera crescente, sem travar a tarefa | 5 testes do Wi-Fi | Aprovado |
+| Contrato do lote num arquivo de exemplo único, validado pelos testes do firmware e do backend ([#229](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/229)) | `test_contrato_lote_igual_ao_exemplo_do_backend` | Aprovado com a fixture do PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398) (veja abaixo); roda sozinho quando os dois estiverem na `main` |
+| Parâmetros (período, lote, tempo limite da rede, tamanho da fila) em arquivo de configuração, provisórios e documentados | `Configuracao.h`, `ConfiguracaoReenvio.h`, `ConfiguracaoRede.h` e README | Aprovado |
+
+| Teste obrigatório da #236 | Testes | Situação |
+|---|---|:-:|
+| Unitários da montagem do lote, da fila, do período e do comportamento sem credenciais | JSON do lote (7), *buffer* (7), período e tempos da rede (1) e credenciais (3) | Aprovado |
+| Integração com `EnvioSimulado`: coleta, fila, lote e envio numa corrida simulada; servidor com sucesso, erro e demora; navegação nunca espera | `test_integracao_servidor_lento_nao_atrasa_a_coleta_nem_duplica` e `test_integracao_corrida_pelo_json_com_rede_caindo_no_meio` | Aprovado |
+| Contrato: o lote do firmware é igual ao exemplo único, que o backend aceita | `test_contrato_lote_igual_ao_exemplo_do_backend` | Aprovado com a fixture do PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398) |
+| `pio test -e native` no CI, com pelo menos 80% das linhas dos arquivos novos | Suíte completa aprovada; arquivos novos entre 96% e 100% | Aprovado localmente; o CI roda no PR |
+| Execução registrada em `docs/07-testes/software.md` | Este registro | Aprovado |
 
 | Critério da #238 | Testes | Situação |
 |---|---|:-:|
@@ -2004,7 +2024,7 @@ pio test -e native -f test_reenvio_telemetria
 
 **Resultado:** 37 de 37 aprovados (32 unitários e 5 de integração).
 
-#### Contrato com o backend, Wi-Fi e credenciais
+#### Contrato com o backend, credenciais, tempos da rede e Wi-Fi
 
 ```bash
 pio test -e native -f test_envio_supabase
@@ -2016,10 +2036,12 @@ pio test -e native -f test_envio_supabase
 | Contrato igual ao exemplo do backend | 1 | Unitário | Compara o lote com `src/backend/tests/fixtures/lote-telemetria.json`. **Ignorado** nesta branch: o arquivo chega com a [#229](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/229) (PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398)) e o teste passa a rodar sozinho quando os dois estiverem juntos |
 | Respostas e corpos | 5 | Unitário | Contagens da resposta do lote; resposta sem as contagens recusada; `id` da corrida criada; corpos da criação e do encerramento; amostra montada a partir da pose |
 | Credenciais | 3 | Unitário | Sem credenciais, o envio fica desligado; só `https`, com certificado ou com a exceção de bancada; URL das funções |
+| Período da coleta e tempos da rede | 1 | Unitário | Coleta a 1 s, dentro dos 2 s do RNF05; vários ciclos de rede por período; um *buffer* cheio se esvazia em menos de um período (6 lotes de 100); uma chamada que esgota o tempo limite cabe no prazo do encerramento |
 | Wi-Fi | 5 | Unitário | Conecta na primeira tentativa; espera cada vez mais entre tentativas e volta a 1 s; queda com a rede conectada tenta de novo na hora e é contada; rede que volta sozinha durante a espera é aceita; relógio que dá a volta |
 | Corrida inteira pelo JSON | 1 | Integração | 120 amostras passando pelo `serializarLote` e pela leitura da resposta, com o servidor fora do ar da 40ª à 70ª e uma resposta perdida: o servidor termina com as 120, de 1 a 120, sem duplicata, e a corrida só é encerrada com tudo entregue |
+| Servidor lento | 1 | Integração | 60 amostras com o servidor respondendo em 200 ms, depois em 3 s (dentro do tempo limite), depois passando do tempo limite de 5 s (o robô desiste, mas o servidor grava), com `503` no meio. A coleta continua durante as chamadas lentas (25 amostras registradas com a rede em curso, nenhuma atrasada, nenhuma com a trava segura); o servidor termina com as 60, em ordem, e ignora 11 repetidas dos 2 tempos esgotados; a corrida só é encerrada com tudo entregue |
 
-**Resultado:** 21 de 21 aprovados e 1 ignorado (20 unitários e 1 de integração).
+**Resultado:** 23 de 23 aprovados e 1 ignorado (21 unitários e 2 de integração).
 
 ```text
 test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:633: test_nomes_do_estado_e_do_evento_batem_com_o_banco [PASSED]
@@ -2059,29 +2081,33 @@ test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:666: test_encerramento_
 test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:667: test_encerramento_com_credencial_recusada_pausa [PASSED]
 test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:668: test_a_trava_nunca_e_segurada_durante_a_rede [PASSED]
 test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:669: test_nova_corrida_limpa_buffer_numeracao_e_contadores [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:581: test_lote_com_uma_amostra_tem_os_nomes_das_colunas_e_as_unidades_do_banco [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:582: test_evento_so_aparece_quando_existe [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:583: test_lote_com_varias_amostras_em_ordem_e_json_valido [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:584: test_numeros_negativos_e_pequenos_com_tres_casas [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:585: test_lote_vazio_e_orientacao_invalida_nao_quebram_o_json [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:586: test_lote_que_nao_cabe_devolve_zero_e_texto_vazio [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:587: test_pior_amostra_e_pior_lote_cabem_no_espaco_reservado [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:257: test_contrato_lote_igual_ao_exemplo_do_backend [IGNORED]
-test/test_envio_supabase/test_envio_supabase.cpp:589: test_le_as_contagens_da_resposta_do_lote [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:590: test_resposta_do_lote_sem_as_contagens_e_recusada [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:591: test_le_o_id_da_corrida_criada [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:592: test_corpos_da_criacao_e_do_encerramento [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:593: test_amostra_montada_a_partir_da_pose [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:594: test_sem_credenciais_o_envio_fica_desligado [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:595: test_so_https_e_com_certificado_ou_excecao_de_bancada [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:596: test_url_das_funcoes [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:597: test_wifi_conecta_na_primeira_tentativa [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:598: test_wifi_espera_cada_vez_mais_entre_tentativas_e_volta_a_1s [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:599: test_wifi_que_cai_tenta_de_novo_na_hora_e_conta_a_queda [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:600: test_wifi_que_volta_sozinho_durante_a_espera_e_aceito [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:601: test_wifi_com_o_relogio_dando_a_volta [PASSED]
-test/test_envio_supabase/test_envio_supabase.cpp:602: test_integracao_corrida_pelo_json_com_rede_caindo_no_meio [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:764: test_lote_com_uma_amostra_tem_os_nomes_das_colunas_e_as_unidades_do_banco [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:765: test_evento_so_aparece_quando_existe [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:766: test_lote_com_varias_amostras_em_ordem_e_json_valido [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:767: test_numeros_negativos_e_pequenos_com_tres_casas [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:768: test_lote_vazio_e_orientacao_invalida_nao_quebram_o_json [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:769: test_lote_que_nao_cabe_devolve_zero_e_texto_vazio [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:770: test_pior_amostra_e_pior_lote_cabem_no_espaco_reservado [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:364: test_contrato_lote_igual_ao_exemplo_do_backend [IGNORED]
+test/test_envio_supabase/test_envio_supabase.cpp:772: test_le_as_contagens_da_resposta_do_lote [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:773: test_resposta_do_lote_sem_as_contagens_e_recusada [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:774: test_le_o_id_da_corrida_criada [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:775: test_corpos_da_criacao_e_do_encerramento [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:776: test_amostra_montada_a_partir_da_pose [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:777: test_sem_credenciais_o_envio_fica_desligado [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:778: test_so_https_e_com_certificado_ou_excecao_de_bancada [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:779: test_url_das_funcoes [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:780: test_periodo_da_coleta_e_tempos_da_rede [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:781: test_wifi_conecta_na_primeira_tentativa [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:782: test_wifi_espera_cada_vez_mais_entre_tentativas_e_volta_a_1s [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:783: test_wifi_que_cai_tenta_de_novo_na_hora_e_conta_a_queda [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:784: test_wifi_que_volta_sozinho_durante_a_espera_e_aceito [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:785: test_wifi_com_o_relogio_dando_a_volta [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:786: test_integracao_corrida_pelo_json_com_rede_caindo_no_meio [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:787: test_integracao_servidor_lento_nao_atrasa_a_coleta_nem_duplica [PASSED]
 ```
+
+**Contrato com o backend.** Para conferir o teste ignorado, a fixture `src/backend/tests/fixtures/lote-telemetria.json` do PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398) (commit `3bb9319`) foi copiada para uma cópia desta branch: `test_contrato_lote_igual_ao_exemplo_do_backend` **passou**, com as 5 amostras do exemplo (inclusive `colisao` e `objetivo_alcancado`) iguais campo a campo. Quando o [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398) e este PR estiverem na `main`, o teste passa a rodar no CI sem mudança.
 
 #### Cobertura, suíte completa e compilação da placa
 
@@ -2097,7 +2123,7 @@ test/test_envio_supabase/test_envio_supabase.cpp:602: test_integracao_corrida_pe
 | `lib/simulacao/src/TravaNula.h` e `lib/nucleo/src/AmostraTelemetria.h` | 18 | 100% |
 | **Total do firmware** (`lib/`) | 1475 | **98,6%** |
 
-Suíte completa do firmware nesta branch: **325 de 326 aprovados e 1 ignorado** (o contrato acima), em 21 suítes. `main.cpp`, `EnvioHttpSupabase.cpp`, `RedeWifiEsp32.h` e `TravaSecaoCritica.h` passaram pela verificação de sintaxe com os cabeçalhos do Arduino-ESP32 2.x e 3.x, com e sem `include/credenciais.h`; o build completo (`pio run -e esp32c3`) é conferido pelo CI do PR. O cliente HTTPS e o Wi-Fi não têm teste no computador, porque dependem do `HTTPClient` e do `WiFi` do ESP32.
+Suíte completa do firmware nesta branch: **327 de 328 aprovados e 1 ignorado** (o contrato acima), em 21 suítes. `main.cpp`, `EnvioHttpSupabase.cpp`, `RedeWifiEsp32.h` e `TravaSecaoCritica.h` passaram pela verificação de sintaxe com os cabeçalhos do Arduino-ESP32 2.x e 3.x, com e sem `include/credenciais.h`; o build completo (`pio run -e esp32c3`) é conferido pelo CI do PR. O cliente HTTPS e o Wi-Fi não têm teste no computador, porque dependem do `HTTPClient` e do `WiFi` do ESP32.
 
 #### Pendências desta etapa
 
