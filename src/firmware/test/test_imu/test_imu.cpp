@@ -7,6 +7,7 @@
 
 #include <cstdint>
 
+#include "AcompanhadorGiro.h"
 #include "ConfiguracaoImu.h"
 #include "ConversorGiro.h"
 #include "IImu.h"
@@ -85,6 +86,32 @@ void test_conversao_no_limite_da_faixa() {
 void test_faixa_do_robo_cobre_um_giro_rapido() {
   // Um giro de 90° em 0,3 s passa de 300 °/s: a faixa escolhida precisa medir isso sem saturar.
   TEST_ASSERT_TRUE(converterBrutoParaDecimosDps(INT16_MAX, FAIXA_GIRO) > 3000);
+}
+
+void test_valor_do_gyro_config_para_cada_faixa() {
+  // FS_SEL nos bits 4 e 3 do GYRO_CONFIG; os bits de autoteste (7 a 5) ficam em zero.
+  TEST_ASSERT_EQUAL_HEX8(0x00, valorGyroConfig(FaixaGiro::Dps250));
+  TEST_ASSERT_EQUAL_HEX8(0x08, valorGyroConfig(FaixaGiro::Dps500));
+  TEST_ASSERT_EQUAL_HEX8(0x10, valorGyroConfig(FaixaGiro::Dps1000));
+  TEST_ASSERT_EQUAL_HEX8(0x18, valorGyroConfig(FaixaGiro::Dps2000));
+  TEST_ASSERT_EQUAL_HEX8(0x08, valorGyroConfig(FAIXA_GIRO));  // a faixa do robô: ±500 °/s
+}
+
+void test_juntar_bytes_em_complemento_de_dois() {
+  // O MPU6050 manda o byte alto primeiro.
+  TEST_ASSERT_EQUAL_INT16(0x0102, juntarBytesGiro(0x01, 0x02));
+  TEST_ASSERT_EQUAL_INT16(-1, juntarBytesGiro(0xFF, 0xFF));
+  TEST_ASSERT_EQUAL_INT16(INT16_MIN, juntarBytesGiro(0x80, 0x00));
+  TEST_ASSERT_EQUAL_INT16(INT16_MAX, juntarBytesGiro(0x7F, 0xFF));
+  // 65,5 LSB = 1 °/s na faixa do robô: 0x0042 (66) vira 10 décimos.
+  TEST_ASSERT_EQUAL_INT16(10, converterBrutoParaDecimosDps(juntarBytesGiro(0x00, 0x42), FAIXA_GIRO));
+}
+
+void test_sensor_de_cabeca_para_baixo_inverte_o_sinal() {
+  TEST_ASSERT_EQUAL_INT16(900, ajustarSinalGiro(900, false));
+  TEST_ASSERT_EQUAL_INT16(-900, ajustarSinalGiro(900, true));
+  TEST_ASSERT_EQUAL_INT16(900, ajustarSinalGiro(-900, true));
+  TEST_ASSERT_EQUAL_INT16(INT16_MAX, ajustarSinalGiro(INT16_MIN, true));  // sem estourar
 }
 
 // ---------------------------------------------------------------- ImuSimulado
@@ -372,6 +399,132 @@ void test_integracao_leitura_com_falha_nao_soma_ao_angulo() {
   TEST_ASSERT_EQUAL_INT32(0, giro.anguloMiligraus());
 }
 
+// ---------------------------------------------------------------- AcompanhadorGiro (ciclo da tarefa da IMU)
+
+namespace {
+
+/// Roda `ciclos` ciclos de `DT_MS` no acompanhador.
+const LeituraGiro& rodarCiclos(AcompanhadorGiro& giro, int ciclos) {
+  for (int i = 0; i + 1 < ciclos; ++i) {
+    giro.ciclo(DT_MS);
+  }
+  return giro.ciclo(DT_MS);
+}
+
+}  // namespace
+
+void test_acompanhador_calibra_na_largada_e_so_entao_fica_valido() {
+  ImuSimulado imu;
+  imu.definirVies(15);
+  imu.definirRuidoAlternado(2);
+  AcompanhadorGiro giro(imu);
+  giro.iniciarCalibracao();
+
+  const LeituraGiro& durante = rodarCiclos(giro, AMOSTRAS_CALIBRACAO_GIRO - 1);
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrando, durante.calibracao);
+  TEST_ASSERT_FALSE(durante.valida);
+  TEST_ASSERT_EQUAL_INT32(0, durante.anguloMiligraus);
+
+  const LeituraGiro& calibrado = giro.ciclo(DT_MS);  // a amostra 200 fecha a calibração
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrado, calibrado.calibracao);
+  TEST_ASSERT_TRUE(calibrado.valida);
+  TEST_ASSERT_EQUAL_INT32(0, calibrado.anguloMiligraus);
+  TEST_ASSERT_EQUAL_UINT32(AMOSTRAS_CALIBRACAO_GIRO, imu.leiturasFeitas());
+}
+
+void test_acompanhador_integra_um_giro_de_90_graus_sem_o_vies() {
+  ImuSimulado imu;
+  imu.definirVies(-8);
+  AcompanhadorGiro giro(imu);
+  giro.iniciarCalibracao();
+  rodarCiclos(giro, AMOSTRAS_CALIBRACAO_GIRO);
+
+  imu.definirTaxa(900);  // 90 °/s para a esquerda, por 1 s
+  const LeituraGiro& leitura = rodarCiclos(giro, 100);
+  TEST_ASSERT_EQUAL_INT32(NOVENTA_GRAUS, leitura.anguloMiligraus);
+  TEST_ASSERT_EQUAL_INT16(900, leitura.taxaDecimosDps);  // a taxa publicada já vem sem o viés
+  TEST_ASSERT_TRUE(leitura.valida);
+
+  giro.zerarAngulo();
+  TEST_ASSERT_EQUAL_INT32(0, giro.ultima().anguloMiligraus);
+  imu.definirTaxa(-900);
+  TEST_ASSERT_EQUAL_INT32(-NOVENTA_GRAUS, rodarCiclos(giro, 100).anguloMiligraus);
+}
+
+void test_acompanhador_recomeca_a_calibracao_se_o_robo_se_mexer() {
+  ImuSimulado imu;
+  AcompanhadorGiro giro(imu);
+  giro.iniciarCalibracao();
+  imu.definirRuidoAlternado(VARIACAO_MAXIMA_CALIBRACAO_DECIMOS_DPS);  // variação de 2 × 5 °/s: o robô se mexeu
+  const LeituraGiro& recusada = rodarCiclos(giro, AMOSTRAS_CALIBRACAO_GIRO);
+  TEST_ASSERT_EQUAL_UINT32(1, recusada.calibracoesRecusadas);
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrando, recusada.calibracao);  // recomeçou sozinha
+  TEST_ASSERT_FALSE(recusada.valida);
+
+  imu.definirRuidoAlternado(0);  // o robô parou
+  const LeituraGiro& calibrado = rodarCiclos(giro, AMOSTRAS_CALIBRACAO_GIRO);
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrado, calibrado.calibracao);
+  TEST_ASSERT_TRUE(calibrado.valida);
+  TEST_ASSERT_EQUAL_UINT32(1, calibrado.calibracoesRecusadas);
+}
+
+void test_acompanhador_falhas_seguidas_invalidam_o_angulo() {
+  ImuSimulado imu;
+  AcompanhadorGiro giro(imu);
+  giro.iniciarCalibracao();
+  rodarCiclos(giro, AMOSTRAS_CALIBRACAO_GIRO);
+  imu.definirTaxa(900);
+  rodarCiclos(giro, 10);
+  TEST_ASSERT_EQUAL_INT32(9000, giro.ultima().anguloMiligraus);
+
+  imu.simularFalha(true);
+  const LeituraGiro& poucas = rodarCiclos(giro, FALHAS_SEGUIDAS_GIRO_INVALIDO - 1);
+  TEST_ASSERT_TRUE(poucas.valida);                       // falhas isoladas ainda não invalidam
+  TEST_ASSERT_EQUAL_INT32(9000, poucas.anguloMiligraus);  // e não somam nada ao ângulo
+  const LeituraGiro& muitas = giro.ciclo(DT_MS);
+  TEST_ASSERT_FALSE(muitas.valida);
+  TEST_ASSERT_EQUAL_UINT32(FALHAS_SEGUIDAS_GIRO_INVALIDO, muitas.falhasLeitura);
+
+  imu.simularFalha(false);  // o sensor voltou: a próxima leitura boa revalida
+  const LeituraGiro& voltou = giro.ciclo(DT_MS);
+  TEST_ASSERT_TRUE(voltou.valida);
+  TEST_ASSERT_EQUAL_INT32(9900, voltou.anguloMiligraus);
+}
+
+void test_acompanhador_sem_calibrar_nao_e_valido_mas_integra() {
+  ImuSimulado imu;
+  imu.definirTaxa(100);
+  AcompanhadorGiro giro(imu);  // sem iniciarCalibracao(): viés zero
+  const LeituraGiro& leitura = rodarCiclos(giro, 100);
+  TEST_ASSERT_FALSE(leitura.valida);
+  TEST_ASSERT_EQUAL(EstadoCalibracao::NaoCalibrado, leitura.calibracao);
+  TEST_ASSERT_EQUAL_INT32(10000, leitura.anguloMiligraus);
+}
+
+void test_acompanhador_falha_durante_a_calibracao_nao_conta_amostra() {
+  ImuSimulado imu;
+  AcompanhadorGiro giro(imu);
+  giro.iniciarCalibracao();
+  rodarCiclos(giro, 100);
+  imu.simularFalha(true);
+  rodarCiclos(giro, 3);
+  imu.simularFalha(false);
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrando, rodarCiclos(giro, AMOSTRAS_CALIBRACAO_GIRO - 101).calibracao);
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrado, giro.ciclo(DT_MS).calibracao);
+  TEST_ASSERT_EQUAL_UINT32(3, giro.ultima().falhasLeitura);
+}
+
+void test_acompanhador_taxa_publicada_nao_estoura_com_o_vies() {
+  ImuSimulado imu;
+  imu.definirVies(-40);
+  AcompanhadorGiro giro(imu);
+  giro.iniciarCalibracao();
+  rodarCiclos(giro, AMOSTRAS_CALIBRACAO_GIRO);
+  imu.definirVies(0);
+  imu.definirTaxa(INT16_MAX);  // leitura saturada; menos o viés de −4 °/s passaria do limite
+  TEST_ASSERT_EQUAL_INT16(INT16_MAX, giro.ciclo(DT_MS).taxaDecimosDps);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_conversao_um_grau_por_segundo_em_cada_faixa);
@@ -379,6 +532,9 @@ int main(int, char**) {
   RUN_TEST(test_conversao_arredonda_para_o_mais_proximo);
   RUN_TEST(test_conversao_no_limite_da_faixa);
   RUN_TEST(test_faixa_do_robo_cobre_um_giro_rapido);
+  RUN_TEST(test_valor_do_gyro_config_para_cada_faixa);
+  RUN_TEST(test_juntar_bytes_em_complemento_de_dois);
+  RUN_TEST(test_sensor_de_cabeca_para_baixo_inverte_o_sinal);
   RUN_TEST(test_imu_simulada_soma_taxa_e_vies);
   RUN_TEST(test_imu_simulada_ruido_alterna_o_sinal);
   RUN_TEST(test_imu_simulada_em_falha_nao_altera_a_saida);
@@ -403,5 +559,12 @@ int main(int, char**) {
   RUN_TEST(test_integracao_giro_de_90_graus_com_vies_e_ruido);
   RUN_TEST(test_integracao_giro_de_180_graus_para_a_direita);
   RUN_TEST(test_integracao_leitura_com_falha_nao_soma_ao_angulo);
+  RUN_TEST(test_acompanhador_calibra_na_largada_e_so_entao_fica_valido);
+  RUN_TEST(test_acompanhador_integra_um_giro_de_90_graus_sem_o_vies);
+  RUN_TEST(test_acompanhador_recomeca_a_calibracao_se_o_robo_se_mexer);
+  RUN_TEST(test_acompanhador_falhas_seguidas_invalidam_o_angulo);
+  RUN_TEST(test_acompanhador_sem_calibrar_nao_e_valido_mas_integra);
+  RUN_TEST(test_acompanhador_falha_durante_a_calibracao_nao_conta_amostra);
+  RUN_TEST(test_acompanhador_taxa_publicada_nao_estoura_com_o_vies);
   return UNITY_END();
 }
