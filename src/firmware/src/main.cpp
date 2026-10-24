@@ -5,6 +5,8 @@
 /// diagrama de atividades. Os encoders físicos de quadratura são decodificados por
 /// interrupção de hardware no ESP32-C3, alimentam a odometria (pose na malha) e são reportados na
 /// telemetria. Os 3 sensores de distância VL53L0X são lidos pelo I²C na tarefa de navegação.
+/// Enquanto os encoders não são instalados (`ENCODERS_INSTALADOS` em `ConfiguracaoDeslocamento.h`),
+/// o deslocamento é estimado pela potência dos motores e corrigido pelos ToF (#380).
 /// Os motores só são liberados depois do autoteste do boot (#50) encontrar os 4 dispositivos do I²C.
 
 #include <Arduino.h>
@@ -20,7 +22,9 @@
 #include "AutotesteBoot.h"
 #include "BarramentoI2cEsp32.h"
 #include "Configuracao.h"
+#include "ConfiguracaoDeslocamento.h"
 #include "ConversorDeslocamento.h"
+#include "DeslocamentoEstimado.h"
 #include "DetectorObjetivo.h"
 #include "EncoderEsp32.h"
 #include "MedidorDeslocamento.h"
@@ -46,11 +50,51 @@ static micromouse::EncoderEsp32 encoderDir(micromouse::pinos::ENCODER_DIR_A,
                                            micromouse::pinos::ENCODER_DIR_B,
                                            true);
 
+/// Motores de tração pelo DRV8833 (IN1/IN2 no motor esquerdo, IN3/IN4 no direito). O direito fica
+/// invertido, como o encoder, pela montagem espelhada; confirme na bancada que
+/// `definirPotencia({300, 300})` faz as duas rodas andarem para a frente.
+static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
+                                          micromouse::pinos::MOTOR_ESQ_IN2,
+                                          micromouse::pinos::MOTOR_DIR_IN3,
+                                          micromouse::pinos::MOTOR_DIR_IN4,
+                                          false,
+                                          true);
+
+/// Deslocamento sem encoder (#380): estima o avanço pela potência comandada e o corrige pelos ToF.
+/// Quem acionar as rodas (o `ControleMovimento`, na #184) deve usar `motoresTracao`, para o
+/// estimador saber a potência; com os encoders instalados, a estimativa sai e a trava envolve o
+/// próprio driver.
+///
+/// A estimativa fica colada no driver, para ver só o que chega de fato às rodas. Os outros
+/// decoradores a envolvem, nesta ordem: `MotoresComTrava` (#50) → `MotoresComProtecao` (#341) →
+/// `MotoresComEstimativa` → `MotoresDrv8833`. Assim um comando recusado pela trava ou pela proteção
+/// chega ao estimador como freio.
+static micromouse::DeslocamentoEstimado deslocamento(motores);
+static micromouse::IMotores& motoresEstimativa =
+    micromouse::ENCODERS_INSTALADOS ? static_cast<micromouse::IMotores&>(motores) : deslocamento.motores();
+
+/// Trava dos motores (#50): começa travada e só é liberada com o autoteste do boot aprovado.
+static micromouse::MotoresComTrava motoresComTrava(motoresEstimativa);
+
+/// Motores que a navegação aciona: sempre a camada de fora, nunca o driver direto, para a trava
+/// valer. Cada camada tem o próprio nome e esta referência aponta para a de fora. Com a trava por
+/// fora, a proteção (#341) recebe freio enquanto o robô não foi liberado e não acusa um motor
+/// travado falso.
+static micromouse::IMotores& motoresTracao = motoresComTrava;
+
+/// Encoders usados pela odometria e pela telemetria: os reais, se instalados; senão, os estimados.
+/// A troca é só aqui: a `Odometria` e o `MedidorDeslocamento` não mudam.
+static micromouse::IEncoder& rodaEsq =
+    micromouse::ENCODERS_INSTALADOS ? static_cast<micromouse::IEncoder&>(encoderEsq) : deslocamento.encoderEsquerdo();
+static micromouse::IEncoder& rodaDir =
+    micromouse::ENCODERS_INSTALADOS ? static_cast<micromouse::IEncoder&>(encoderDir) : deslocamento.encoderDireito();
+
 static micromouse::ConversorDeslocamento conversorDeslocamento;
-static micromouse::MedidorDeslocamento medidorDeslocamento(encoderEsq, encoderDir, conversorDeslocamento);
+static micromouse::MedidorDeslocamento medidorDeslocamento(rodaEsq, rodaDir, conversorDeslocamento);
 
 /// Pose (célula e direção) estimada pela odometria diferencial. A tarefa de navegação a atualiza a
-/// cada 10 ms e a telemetria a lê, então todo acesso passa pela seção crítica `travaOdometria`.
+/// cada 10 ms e a telemetria a lê, então todo acesso passa pela seção crítica `travaOdometria`. A
+/// mesma trava protege o estimador do deslocamento, que as duas tarefas também usam.
 static micromouse::Odometria odometria;
 
 /// Detector de chegada à célula objetivo.
@@ -62,27 +106,6 @@ static micromouse::Odometria odometria;
 /// assim que o ciclo de navegação assumir o controle do laço de percepção/decisão.
 static micromouse::DetectorObjetivo detectorObjetivo(micromouse::DimensaoMapa::Labirinto4x4);
 static portMUX_TYPE travaOdometria = portMUX_INITIALIZER_UNLOCKED;
-
-/// Motores de tração pelo DRV8833 (IN1/IN2 no motor esquerdo, IN3/IN4 no direito). O direito fica
-/// invertido, como o encoder, pela montagem espelhada; confirme na bancada que
-/// `definirPotencia({300, 300})` faz as duas rodas andarem para a frente. O `ControleMovimento`
-/// (#191) entra na tarefa de navegação junto com os sensores de distância.
-static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
-                                          micromouse::pinos::MOTOR_ESQ_IN2,
-                                          micromouse::pinos::MOTOR_DIR_IN3,
-                                          micromouse::pinos::MOTOR_DIR_IN4,
-                                          false,
-                                          true);
-
-/// Trava dos motores (#50): começa travada e só é liberada com o autoteste do boot aprovado.
-static micromouse::MotoresComTrava motoresComTrava(motores);
-
-/// Motores que a navegação aciona: sempre a camada de fora, nunca o driver direto, para a trava
-/// valer. Cada camada tem o próprio nome e esta referência aponta para a de fora. Ordem combinada
-/// quando as outras camadas entrarem: `MotoresComTrava` (#50) → `MotoresComProtecao` (#341) →
-/// `MotoresComEstimativa` (#380) → `MotoresDrv8833`. Com a trava por fora, a proteção recebe freio
-/// enquanto o robô não foi liberado e não acusa um motor travado falso.
-static micromouse::IMotores& motoresTracao = motoresComTrava;
 
 /// Resultado do autoteste do boot, para a telemetria repetir em todo pacote. Só o `setup()` escreve,
 /// antes de criar as tarefas; depois é só lido, então não precisa de seção crítica.
@@ -125,6 +148,8 @@ static portMUX_TYPE travaTof = portMUX_INITIALIZER_UNLOCKED;
 /// Prioridade 2 (maior que a da telemetria), para que o envio de dados nunca
 /// atrase o controle do robô.
 static void tarefaNavegacao(void*) {
+  // Instante da amostra mais antiga da última leitura usada: se não mudou, a leitura é a mesma.
+  uint32_t instanteUltimaLeituraUsada = 0;
   for (;;) {
     // Sensores de distância: a leitura não espera medida nova, só junta as últimas amostras. Fica
     // antes da detecção do objetivo para a telemetria continuar recebendo o ToF depois da chegada.
@@ -135,14 +160,29 @@ static void tarefaNavegacao(void*) {
     ultimaLeituraTof = leituraTof;
     portEXIT_CRITICAL(&travaTof);
 
+    const uint32_t instanteLeitura = millis() - leituraTof.idadeMs;
+    const bool leituraNova = leituraTof.valida && instanteLeitura != instanteUltimaLeituraUsada;
+    if (leituraNova) {
+      instanteUltimaLeituraUsada = instanteLeitura;
+    }
+
     bool alcancou = false;
-    // Odometria e detecção de chegada executam na seção crítica travaOdometria para sincronizar com tarefaTelemetria.
+    // Odometria e detecção de chegada executam na seção crítica travaOdometria para sincronizar com
+    // tarefaTelemetria. O intervalo curto (10 ms) mantém cada atualização com giro ou avanço, não os dois.
     portENTER_CRITICAL(&travaOdometria);
-    odometria.atualizar(encoderEsq, encoderDir);
+    if (micromouse::ENCODERS_INSTALADOS) {
+      odometria.atualizar(rodaEsq, rodaDir);
+    } else {
+      // Estima o avanço dos 10 ms e corrige a posição pela leitura nova do ToF, se houver.
+      deslocamento.ciclo(10, odometria, leituraNova ? &leituraTof.distancias : nullptr);
+    }
     const micromouse::Pose pose = odometria.pose();
-    const bool poseValida = odometria.posicaoValida();
+    // No modo estimado, uma pose sem correção recente não serve para declarar a chegada (#380).
+    const bool poseValida = odometria.posicaoValida() &&
+                            (micromouse::ENCODERS_INSTALADOS || deslocamento.poseConfiavel());
     if (poseValida) {
-      // Chegada detectada pela posição na malha: para os motores imediatamente e congela o mapa final (HU-07 / #189)
+      // Chegada detectada pela posição na malha: para os motores imediatamente e congela o mapa
+      // final (HU-07 / #189). Freia por `motoresTracao`, para o estimador saber que o robô parou.
       alcancou = detectorObjetivo.processarChegada(pose, motoresTracao, &armazenamentoMapa);
     } else {
       alcancou = detectorObjetivo.objetivoAlcancado();
@@ -164,20 +204,25 @@ static void tarefaNavegacao(void*) {
 /// Prioridade 1. Transmite as leituras dos encoders, pose da odometria e eventos pontuais em formato JSON
 /// estruturado e aceita os comandos 'Z', para zerar os encoders e voltar a odometria à pose atual, e
 /// 'B', para repetir o relatório do boot (a linha do boot se perde se o monitor abrir depois).
+///
+/// No modo sem encoder, `pose_valida` também fica `false` depois de o robô andar mais que
+/// `DISTANCIA_MAXIMA_SEM_CORRECAO_MM` sem correção pelo ToF, e `deslocamento` diz qual fonte está
+/// em uso (`"estimado"` ou `"encoder"`).
 static void tarefaTelemetria(void*) {
   static uint32_t sequencia = 0;
 
   for (;;) {
-    // Leitura dos encoders
+    // Encoders (reais ou estimados) e pose: uma cópia feita na seção crítica, para tudo ser da
+    // mesma atualização.
+    portENTER_CRITICAL(&travaOdometria);
     const micromouse::DeslocamentoRodas d = medidorDeslocamento.medir();
     const int32_t medio = medidorDeslocamento.deslocamentoMedioMm();
-    const int32_t pulsosEsq = encoderEsq.lerContagem();
-    const int32_t pulsosDir = encoderDir.lerContagem();
-
-    // Pose da odometria e evento pontual consumidos de forma atômica na seção crítica
-    portENTER_CRITICAL(&travaOdometria);
+    const int32_t pulsosEsq = rodaEsq.lerContagem();
+    const int32_t pulsosDir = rodaDir.lerContagem();
     const micromouse::Pose pose = odometria.pose();
-    const bool poseValida = odometria.posicaoValida();
+    const bool poseConfiavel = micromouse::ENCODERS_INSTALADOS || deslocamento.poseConfiavel();
+    const bool poseValida = odometria.posicaoValida() && poseConfiavel;
+    const uint32_t semCorrecaoMm = deslocamento.distanciaSemCorrecaoMm();
     const bool dispararEvento = detectorObjetivo.consumirEventoChegada();
     portEXIT_CRITICAL(&travaOdometria);
 
@@ -202,6 +247,8 @@ static void tarefaTelemetria(void*) {
     pacote.tofDirMm = leituraTof.distancias.direitaMm;
     pacote.tofValida = leituraTof.valida;
     pacote.tofIdadeMs = leituraTof.idadeMs;
+    pacote.modoDeslocamento = micromouse::ENCODERS_INSTALADOS ? "encoder" : "estimado";
+    pacote.semCorrecaoMm = micromouse::ENCODERS_INSTALADOS ? 0 : semCorrecaoMm;
     pacote.bootOk = estadoBoot.ok;
     pacote.falhasBoot = estadoBoot.falhas;
     pacote.bootMs = estadoBoot.duracaoMs;
@@ -217,9 +264,15 @@ static void tarefaTelemetria(void*) {
       const char c = static_cast<char>(Serial.read());
       if (c == 'Z' || c == 'z') {
         // Os encoders voltam a zero: a odometria mantém a pose e passa a contar a partir de zero.
+        // No modo estimado, o robô também volta ao centro da célula e a pose volta a ser confiável
+        // (na bancada, 'Z' é usado com o robô posicionado à mão).
         portENTER_CRITICAL(&travaOdometria);
-        medidorDeslocamento.zerar();
-        odometria.reiniciar(odometria.pose(), 0, 0);
+        if (micromouse::ENCODERS_INSTALADOS) {
+          medidorDeslocamento.zerar();
+          odometria.reiniciar(odometria.pose(), 0, 0);
+        } else {
+          deslocamento.reiniciar(odometria, odometria.pose());
+        }
         detectorObjetivo.resetar();
         portEXIT_CRITICAL(&travaOdometria);
         Serial.println("{\"status\":\"encoders_zerados\"}");
@@ -248,8 +301,11 @@ void setup() {
   // Configuração provisória para bancada (#189): fixa Labirinto4x4.
   // Em 8x4 e 12x4 a corrida deve receber a dimensão por comando antes de iniciar.
   armazenamentoMapa.iniciarCorrida(micromouse::DimensaoMapa::Labirinto4x4);
-  encoderEsq.iniciar();
-  encoderDir.iniciar();
+  motoresTracao.parar();
+  if (micromouse::ENCODERS_INSTALADOS) {
+    encoderEsq.iniciar();
+    encoderDir.iniciar();
+  }
 
   // O barramento I²C é dos 3 VL53L0X e do MPU6050; o driver dos ToF recebe ele já iniciado.
   // Quando o `BarramentoI2c` do #403 (com mutex) entrar, `barramentoI2c.iniciar(SDA, SCL)` toma o

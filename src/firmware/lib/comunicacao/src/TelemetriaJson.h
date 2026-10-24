@@ -21,6 +21,8 @@
 /// - `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`: última leitura dos 3 VL53L0X, em mm (#344)
 /// - `tof_valida`: se a leitura dos 3 sensores é válida (`ISensorDistancia::lerDistanciasLaterais`)
 /// - `tof_idade_ms`: idade da amostra mais antiga da leitura (`ISensorDistancia::idadeUltimaLeituraMs`)
+/// - `deslocamento`: fonte do deslocamento, `"encoder"` ou `"estimado"` (sem encoder, #380)
+/// - `sem_correcao_mm`: distância andada desde a última correção pelo ToF no modo estimado (#380)
 /// - `boot_ok`, `boot_falhas`, `boot_ms`: resultado do autoteste do boot (#50), repetido em todo pacote
 ///   porque a linha do relatório do boot se perde se o computador ainda não estiver lendo a USB
 
@@ -61,6 +63,10 @@ struct PacoteTelemetria {
   uint16_t tofDirMm = 0;          ///< Sensor direito, em mm (`tof_dir_mm`)
   bool tofValida = false;         ///< Leitura dos 3 sensores válida (`tof_valida`)
   uint32_t tofIdadeMs = 0;        ///< Idade da leitura, em ms (`tof_idade_ms`)
+
+  // Campos de diagnóstico do deslocamento sem encoder (#380):
+  const char* modoDeslocamento = "encoder";  ///< `"encoder"` ou `"estimado"` (`deslocamento`)
+  uint32_t semCorrecaoMm = 0;     ///< Distância desde a última correção pelo ToF (`sem_correcao_mm`)
 
   // Resultado do autoteste do boot (#50):
   bool bootOk = true;                  ///< Autoteste aprovado e motores liberados (`boot_ok`)
