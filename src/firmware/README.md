@@ -33,7 +33,7 @@ src/firmware/
 | `atuacao` | Atuação | Controle dos motores, correção de trajetória e trava dos motores (`MotoresComTrava`) |
 | `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `SensorDistanciaSimulado`, um `ISensorDistancia` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `SensorDistanciaSimulado`, `TofSimulado`, os 3 VL53L0X no labirinto, com amostras brutas pelo `CombinadorTof` real, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, `MotoresSimulados`, um `IMotores` que guarda o último comando, `BarramentoI2cSimulado`, um `IBarramentoI2c` com os dispositivos escolhidos pelo teste, e `ImuSimulado`, um `IImu` com taxa, viés, ruído e falha definidos pelo teste, sem hardware |
-| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X e varredura pelo I²C, MPU6050, barramento I²C, encoders, DRV8833, WiFi) |
+| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X e varredura pelo I²C, MPU6050, barramento I²C com mutex, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
 
@@ -110,7 +110,17 @@ A rotina unificada atende a todos os critérios de pronto da issue:
 1. **Viés do giroscópio:** calculado pela média aritmética de amostras com o robô parado; a rotina é recusada/abortada se o robô se mover durante a calibração (`CalibradorGiro`).
 2. **Desvio dos ToF:** calculado e guardado por sensor (frente, esquerda e direita) contra referências conhecidas, aplicado diretamente nas leituras com saturação (`CalibradorTof`).
 3. **Orçamento de 1 segundo (RNF-08):** duração medida e controlada pela `RotinaCalibracao`; caso a calibração ultrapasse 1000 ms, o estado é marcado como `TempoExcedido`.
-4. **Testes no computador:** testável sem hardware usando `ImuSimulado` e `LidarSimulado`.
+4. **Testes no computador:** testável sem hardware usando `ImuSimulado` e `SensorDistanciaSimulado`/`TofSimulado`.
+
+**Tudo ou nada.** A rotina só entrega resultado em `Sucesso`. Em qualquer outro estado, `desviosTof()` e `viesGiroDecimosDps()` devolvem zero e `corrigirTof()`/`corrigirGiro()` devolvem a leitura como veio: um ToF calibrado enquanto o giroscópio acusava movimento não é confiável.
+
+### Na placa (`main.cpp`)
+
+1. No `setup()`, depois do autoteste aprovado e da IMU iniciada, `calibrarSensores()` roda a `RotinaCalibracao` a cada 10 ms até ela terminar (no máximo 1 s) e escreve `{"status":"calibracao","estado":"sucesso","duracao_ms":...,"no_prazo":true}` no log. O robô precisa estar parado na célula de partida.
+2. **Giroscópio:** com `Sucesso`, o viés vai para o `AcompanhadorGiro` (`definirVies`) e o ângulo já vale. Sem `Sucesso`, a tarefa da IMU calibra o viés sozinha nos primeiros 2 s (`AMOSTRAS_CALIBRACAO_GIRO` de `ConfiguracaoImu.h`), como antes.
+3. **ToF:** a tarefa de navegação aplica `corrigirTof()` a toda leitura válida; a telemetria e o deslocamento já recebem a leitura corrigida.
+4. **Referências da largada** (`REFERENCIAS_TOF_NA_LARGADA`): paredes dos dois lados a 54 mm da face do sensor e **frente sem referência** (`SEM_REFERENCIA_TOF_MM`), porque a frente da célula de partida é o caminho do labirinto. Um lado sem referência fica fora da calibração (desvio zero, variação ignorada). Para calibrar o ToF frontal, ponha uma parede a uma distância conhecida e use `iniciar(referencias)`.
+5. **Desvio máximo** (`DESVIO_MAXIMO_TOF_MM`, 30 mm): um desvio maior é quase sempre referência errada (o robô não estava onde se esperava). A calibração é descartada (`DesvioForaDaFaixa`) e as leituras seguem sem correção.
 
 ```cpp
 RotinaCalibracao rotina;  // ConfiguracaoRotinaCalibracao padrão
@@ -127,9 +137,9 @@ if (resultado == EstadoRotinaCalibracao::Sucesso) {
 
 | Componente | Responsabilidade | Comportamento em caso de movimento |
 |---|---|---|
-| `CalibradorTof` | Desvio por lado: `média arredondada − referência` (mm) | Se `maior − menor > variacaoMaximaMm`, estado `Recusada` e mantém desvios anteriores |
+| `CalibradorTof` | Desvio por lado: `média arredondada − referência` (mm) | Se `maior − menor > variacaoMaximaMm`, estado `Recusada` e mantém desvios anteriores; desvio acima de `desvioMaximoMm`, `ForaDaFaixa` |
 | `CalibradorGiro` | Viés do giroscópio Z: `média arredondada das amostras` (décimos de °/s) | Se `maior − menor > variacaoMaximaDecimosDps`, estado `Recusada` e mantém viés anterior |
-| `RotinaCalibracao` | Orquestração simultânea dos sensores e controle da duração | Estado `RecusadaPorMovimento` se qualquer sensor acusar movimento; `TempoExcedido` se passar de 1 s |
+| `RotinaCalibracao` | Orquestração simultânea dos sensores e controle da duração | Estado `RecusadaPorMovimento` se qualquer sensor acusar movimento; `TempoExcedido` se passar de 1 s; `DesvioForaDaFaixa` se a referência dos ToF estiver errada |
 
 ### Valores nominais e provisórios (`ConfiguracaoCalibracao.h`)
 
@@ -139,14 +149,16 @@ if (resultado == EstadoRotinaCalibracao::Sucesso) {
 | Fatia prevista ToF | `ORCAMENTO_CALIBRACAO_TOF_MS` | **400 ms** | 10 amostras × ~33 ms ≈ 330 ms |
 | Fatia prevista Giro | `ORCAMENTO_CALIBRACAO_GIRO_MS` | **500 ms** | 50 amostras × 10 ms = 500 ms |
 | Amostras ToF | `AMOSTRAS_CALIBRACAO_TOF` | **10** | Período de ~33 ms do VL53L0X |
-| Amostras Giro | `AMOSTRAS_CALIBRACAO_GIRO` | **50** | Período de 10 ms da IMU |
+| Amostras Giro | `AMOSTRAS_CALIBRACAO_BOOT_GIRO` | **50** | Período de 10 ms da IMU |
 | Variação máx. ToF | `VARIACAO_MAXIMA_CALIBRACAO_TOF_MM` | **8 mm** | Acima disso assume oscilação ou robô mexendo |
 | Variação máx. Giro | `VARIACAO_MAXIMA_CALIBRACAO_GIRO_DECIMOS_DPS` | **50** (5 °/s) | Acima disso assume robô em movimento |
 | Distância referência | `DISTANCIA_REFERENCIA_TOF_MM` | **54 mm** | Geometria nominal da célula com sensores recuados |
+| Desvio máximo ToF | `DESVIO_MAXIMO_TOF_MM` | **30 mm** | Acima disso a referência provavelmente está errada |
 
 Testes:
 - `pio test -e native -f test_calibracao_tof` (testes unitários dos ToF)
 - `pio test -e native -f test_rotina_calibracao` (testes do giroscópio, orquestração e RNF-08 com `ImuSimulado`)
+- `pio test -e native -f test_integracao_calibracao` (integração: ToF desviado → calibração → mapa do 4×4 idêntico ao labirinto; viés do giroscópio → ângulo parado em zero e giro de 90°)
 
 ## Percepção ToF (VL53L0X) e classificação de paredes
 
@@ -488,7 +500,7 @@ if (uso.conseguiu()) {
 }
 ```
 
-**Na largada.** Nos primeiros 2 s (200 leituras), o robô precisa ficar parado: a média vira o viés. A mensagem `{"status":"giroscopio_calibrado"}` sai no log quando a calibração termina. Ao iniciar, o log mostra `imu_iniciada` com o `who_am_i` (0x68 no MPU6050) ou `falha_imu` se o sensor não respondeu.
+**Na largada.** A calibração do boot (`lib/calibracao`, 50 leituras em 0,5 s) dá o viés; se ela falhar, nos primeiros 2 s (200 leituras) a tarefa da IMU calibra sozinha. Em ambos os casos o robô precisa ficar parado: a média vira o viés. A mensagem `{"status":"giroscopio_calibrado"}` sai no log quando a calibração termina. Ao iniciar, o log mostra `imu_iniciada` com o `who_am_i` (0x68 no MPU6050) ou `falha_imu` se o sensor não respondeu.
 
 **Valores provisórios**, para conferir na bancada:
 

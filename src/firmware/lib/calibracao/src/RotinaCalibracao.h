@@ -21,8 +21,13 @@ enum class EstadoRotinaCalibracao : uint8_t {
   Sucesso,               ///< Calibração concluída com sucesso dentro de 1 s (RNF-08).
   RecusadaPorMovimento,  ///< Robô se mexeu durante a calibração (variação excessiva no ToF ou giro).
   TempoExcedido,         ///< Duração estourou o orçamento de 1 s (RNF-08).
-  FalhaSensor            ///< Sensor não respondeu ou leitura inválida durante a calibração.
+  FalhaSensor,           ///< Sensor não respondeu ou leitura inválida durante a calibração.
+  DesvioForaDaFaixa      ///< Algum desvio de ToF passou do máximo: referência provavelmente errada.
 };
+
+/// Nome do estado para o log e a telemetria: `nao_iniciada`, `em_andamento`, `sucesso`,
+/// `recusada_por_movimento`, `tempo_excedido`, `falha_sensor` ou `desvio_fora_da_faixa`.
+const char* nomeEstadoRotina(EstadoRotinaCalibracao estado);
 
 /// Orquestra a autocalibração simultânea dos sensores de distância (VL53L0X) e inerciais (MPU6050).
 ///
@@ -64,6 +69,8 @@ class RotinaCalibracao {
 
   /// Duração total medida da rotina, em ms.
   uint32_t duracaoMedidaMs() const { return duracaoMedidaMs_; }
+  /// `true` se a duração medida coube no orçamento do RNF-08 (1 s).
+  bool dentroDoOrcamento() const { return duracaoMedidaMs_ <= config_.orcamentoTotalMs; }
 
   /// Acesso ao calibrador dos sensores ToF.
   const CalibradorTof& calibradorTof() const { return calibradorTof_; }
@@ -71,23 +78,24 @@ class RotinaCalibracao {
   /// Acesso ao calibrador do giroscópio.
   const CalibradorGiro& calibradorGiro() const { return calibradorGiro_; }
 
-  /// Desvios dos sensores ToF em mm.
-  DesviosTof desviosTof() const { return calibradorTof_.desvios(); }
-
-  /// Viés do giroscópio em décimos de °/s.
-  int16_t viesGiroDecimosDps() const { return calibradorGiro_.viesDecimosDps(); }
-
-  /// Aplica a correção de desvio a uma leitura bruta de ToF.
+  /// Desvios dos sensores ToF em mm. Só valem depois de `Sucesso`: a rotina é tudo ou nada, então
+  /// qualquer outro estado devolve zero (um ToF calibrado enquanto o giroscópio acusava movimento
+  /// não é confiável).
+  DesviosTof desviosTof() const { return sucesso() ? calibradorTof_.desvios() : DesviosTof{}; }
+  /// Viés do giroscópio em décimos de °/s. Só vale depois de `Sucesso`; antes disso, zero.
+  int16_t viesGiroDecimosDps() const { return sucesso() ? calibradorGiro_.viesDecimosDps() : 0; }
+  /// Aplica a correção de desvio a uma leitura bruta de ToF. Sem `Sucesso`, devolve a leitura como veio.
   DistanciasLaterais corrigirTof(const DistanciasLaterais& bruta) const {
-    return calibradorTof_.corrigir(bruta);
+    return sucesso() ? calibradorTof_.corrigir(bruta) : bruta;
   }
-
-  /// Aplica a correção de viés à taxa de giro bruta.
+  /// Aplica a correção de viés à taxa de giro bruta. Sem `Sucesso`, devolve a taxa como veio.
   int16_t corrigirGiro(int16_t taxaBrutaDecimosDps) const {
-    return calibradorGiro_.corrigir(taxaBrutaDecimosDps);
+    return sucesso() ? calibradorGiro_.corrigir(taxaBrutaDecimosDps) : taxaBrutaDecimosDps;
   }
 
  private:
+  bool sucesso() const { return estado_ == EstadoRotinaCalibracao::Sucesso; }
+
   ConfiguracaoRotinaCalibracao config_;
   EstadoRotinaCalibracao estado_ = EstadoRotinaCalibracao::NaoIniciada;
   CalibradorTof calibradorTof_;

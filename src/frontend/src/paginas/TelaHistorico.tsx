@@ -15,10 +15,13 @@ interface TelaHistoricoProps {
  * corridas, das mais recentes para as mais antigas, com filtro por labirinto.
  *
  * Consulta dados reais da tabela `corridas` no Supabase via `useCorridas` (HU-10 / Issue #235).
+ * O filtro escolhido vai para a consulta ao banco (#234); o filtro abaixo, no navegador, só
+ * garante o resultado quando as corridas vêm por props ou o tipo não tem labirinto no banco.
  */
 export function TelaHistorico({ corridas: corridasProp, labirintos }: TelaHistoricoProps) {
   const [filtro, setFiltro] = useState<Filtro>('todos');
-  const hookCorridas = useCorridas();
+  const labirintoId = filtro === 'todos' ? null : (labirintos.find((l) => l.tipo === filtro)?.id ?? null);
+  const hookCorridas = useCorridas(labirintoId);
 
   const corridas = corridasProp ?? hookCorridas.corridas;
   const { carregando, erro, recarregar } = hookCorridas;

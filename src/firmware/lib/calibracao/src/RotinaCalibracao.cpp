@@ -2,6 +2,26 @@
 
 namespace micromouse {
 
+const char* nomeEstadoRotina(EstadoRotinaCalibracao estado) {
+  switch (estado) {
+    case EstadoRotinaCalibracao::NaoIniciada:
+      return "nao_iniciada";
+    case EstadoRotinaCalibracao::EmAndamento:
+      return "em_andamento";
+    case EstadoRotinaCalibracao::Sucesso:
+      return "sucesso";
+    case EstadoRotinaCalibracao::RecusadaPorMovimento:
+      return "recusada_por_movimento";
+    case EstadoRotinaCalibracao::TempoExcedido:
+      return "tempo_excedido";
+    case EstadoRotinaCalibracao::FalhaSensor:
+      return "falha_sensor";
+    case EstadoRotinaCalibracao::DesvioForaDaFaixa:
+      return "desvio_fora_da_faixa";
+  }
+  return "?";
+}
+
 RotinaCalibracao::RotinaCalibracao(const ConfiguracaoRotinaCalibracao& config)
     : config_(config), calibradorTof_(config.tof), calibradorGiro_(config.giro) {}
 
@@ -51,6 +71,12 @@ EstadoRotinaCalibracao RotinaCalibracao::atualizar(const DistanciasLaterais& dis
   if (calibradorTof_.estado() == EstadoCalibracaoTof::Recusada ||
       calibradorGiro_.estado() == EstadoCalibracaoGiro::Recusada) {
     estado_ = EstadoRotinaCalibracao::RecusadaPorMovimento;
+    return estado_;
+  }
+
+  // Se um desvio de ToF passou do máximo, a referência está errada: descarta a calibração
+  if (calibradorTof_.estado() == EstadoCalibracaoTof::ForaDaFaixa) {
+    estado_ = EstadoRotinaCalibracao::DesvioForaDaFaixa;
     return estado_;
   }
 

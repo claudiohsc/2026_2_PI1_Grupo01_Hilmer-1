@@ -275,6 +275,75 @@ void test_rotina_calibracao_iniciar_com_referencias_customizadas() {
   TEST_ASSERT_EQUAL_UINT16(80, rotina.calibradorTof().referencias().direitaMm);
 }
 
+void test_rotina_descarta_a_calibracao_se_o_desvio_do_tof_passa_do_maximo() {
+  RotinaCalibracao rotina(configRotinaRapida());
+  SensorDistanciaSimulado lidar;
+  ImuSimulado imu;
+  lidar.definirLeituraFixa({54, 54, 54 + DESVIO_MAXIMO_TOF_MM + 5});  // referência errada na direita
+
+  const EstadoRotinaCalibracao st = rotina.executar(lidar, imu, 10);
+
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoRotinaCalibracao::DesvioForaDaFaixa), static_cast<int>(st));
+  TEST_ASSERT_EQUAL_INT16(0, rotina.desviosTof().direitaMm);  // nada foi adotado
+}
+
+void test_rotina_na_largada_calibra_so_os_lados_com_parede() {
+  RotinaCalibracao rotina(configRotinaRapida());
+  SensorDistanciaSimulado lidar;
+  ImuSimulado imu;
+  lidar.definirLeituraFixa({600, 60, 50});  // frente aberta
+  imu.definirVies(12);
+
+  rotina.iniciar(REFERENCIAS_TOF_NA_LARGADA);
+  while (rotina.estado() == EstadoRotinaCalibracao::EmAndamento) {
+    DistanciasLaterais d;
+    lidar.lerDistanciasLaterais(d);
+    int16_t taxa = 0;
+    imu.lerTaxaGiroZ(taxa);
+    rotina.atualizar(d, true, taxa, true, 10);
+  }
+
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoRotinaCalibracao::Sucesso), static_cast<int>(rotina.estado()));
+  TEST_ASSERT_EQUAL_INT16(0, rotina.desviosTof().frenteMm);
+  TEST_ASSERT_EQUAL_INT16(6, rotina.desviosTof().esquerdaMm);
+  TEST_ASSERT_EQUAL_INT16(-4, rotina.desviosTof().direitaMm);
+  TEST_ASSERT_EQUAL_INT16(12, rotina.viesGiroDecimosDps());
+}
+
+void test_rotina_informa_se_coube_no_orcamento_de_1_s() {
+  RotinaCalibracao rotina(configRotinaRapida());
+  SensorDistanciaSimulado lidar;
+  ImuSimulado imu;
+  lidar.definirLeituraFixa({54, 54, 54});
+
+  rotina.executar(lidar, imu, 10);
+
+  TEST_ASSERT_TRUE(rotina.dentroDoOrcamento());
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(ORCAMENTO_CALIBRACAO_MS, rotina.duracaoMedidaMs());
+}
+
+void test_rotina_com_passo_lento_estoura_o_orcamento_e_diz_que_nao_coube() {
+  RotinaCalibracao rotina(configRotinaRapida());
+  SensorDistanciaSimulado lidar;
+  ImuSimulado imu;
+  lidar.definirLeituraFixa({54, 54, 54});
+
+  const EstadoRotinaCalibracao st = rotina.executar(lidar, imu, 200);  // 10 amostras levariam 2 s
+
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoRotinaCalibracao::TempoExcedido), static_cast<int>(st));
+  TEST_ASSERT_FALSE(rotina.dentroDoOrcamento());
+}
+
+void test_nomes_dos_estados_da_rotina() {
+  TEST_ASSERT_EQUAL_STRING("nao_iniciada", nomeEstadoRotina(EstadoRotinaCalibracao::NaoIniciada));
+  TEST_ASSERT_EQUAL_STRING("em_andamento", nomeEstadoRotina(EstadoRotinaCalibracao::EmAndamento));
+  TEST_ASSERT_EQUAL_STRING("sucesso", nomeEstadoRotina(EstadoRotinaCalibracao::Sucesso));
+  TEST_ASSERT_EQUAL_STRING("recusada_por_movimento", nomeEstadoRotina(EstadoRotinaCalibracao::RecusadaPorMovimento));
+  TEST_ASSERT_EQUAL_STRING("tempo_excedido", nomeEstadoRotina(EstadoRotinaCalibracao::TempoExcedido));
+  TEST_ASSERT_EQUAL_STRING("falha_sensor", nomeEstadoRotina(EstadoRotinaCalibracao::FalhaSensor));
+  TEST_ASSERT_EQUAL_STRING("desvio_fora_da_faixa", nomeEstadoRotina(EstadoRotinaCalibracao::DesvioForaDaFaixa));
+}
+
 int main() {
   UNITY_BEGIN();
 
@@ -295,6 +364,11 @@ int main() {
   RUN_TEST(test_rotina_calibracao_recusa_quando_robo_se_move_no_tof);
   RUN_TEST(test_rotina_calibracao_aborta_em_caso_de_falha_de_sensor);
   RUN_TEST(test_rotina_calibracao_iniciar_com_referencias_customizadas);
+  RUN_TEST(test_rotina_descarta_a_calibracao_se_o_desvio_do_tof_passa_do_maximo);
+  RUN_TEST(test_rotina_na_largada_calibra_so_os_lados_com_parede);
+  RUN_TEST(test_rotina_informa_se_coube_no_orcamento_de_1_s);
+  RUN_TEST(test_rotina_com_passo_lento_estoura_o_orcamento_e_diz_que_nao_coube);
+  RUN_TEST(test_nomes_dos_estados_da_rotina);
 
   return UNITY_END();
 }
