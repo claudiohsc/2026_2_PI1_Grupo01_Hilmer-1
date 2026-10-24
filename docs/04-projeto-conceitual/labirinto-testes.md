@@ -201,9 +201,9 @@ A quantidade final deve ser ajustada ao número definitivo de paredes e ao méto
 
 As dimensões indicadas são nominais ou preliminares conforme identificado em cada seção. A fabricação deve considerar as variações reais do material e da ferramenta de corte.
 
-## 10. Desenhos técnicos necessários
+## 10. Desenhos técnicos
 
-Para liberar o projeto para fabricação, preparar os seguintes desenhos:
+Para liberar o projeto para fabricação, os desenhos necessários são:
 
 - **Desenho da base:** contorno de 720 × 720 mm, espessura e sistema de fixação.
 - **Desenho da grade:** linhas de referência para as 16 células, com passo nominal de 180 mm.
@@ -212,22 +212,56 @@ Para liberar o projeto para fabricação, preparar os seguintes desenhos:
 - **Desenho do Modelo 1:** posições, larguras e profundidades dos rasgos.
 - **Desenho do Modelo 2:** posições, diâmetros e profundidades dos furos, incluindo o detalhe das cavilhas.
 
+### 10.1 Modelo 1 — rasgos
+
+![Base com rasgos — vista geral](../figs/labirinto-modelo1-rasgos-1.png)
+**Figura 1 – Modelo 1: base com rasgos (folha 1/3)**
+
+![Modelo 1 — folha 2](../figs/labirinto-modelo1-rasgos-2.png)
+**Figura 2 – Modelo 1: desenho técnico (folha 2/3)**
+
+![Modelo 1 — folha 3](../figs/labirinto-modelo1-rasgos-3.png)
+**Figura 3 – Modelo 1: desenho técnico (folha 3/3)**
+
+### 10.2 Modelo 2 — cavilhas
+
+![Base de fixação por cavilhas](../figs/labirinto-modelo2-cavilhas-1.png)
+**Figura 4 – Modelo 2: base de fixação (folha 1/4)**
+
+![Modelo 2 — folha 2](../figs/labirinto-modelo2-cavilhas-2.png)
+**Figura 5 – Modelo 2: desenho técnico (folha 2/4)**
+
+![Modelo 2 — folha 3](../figs/labirinto-modelo2-cavilhas-3.png)
+**Figura 6 – Modelo 2: desenho técnico (folha 3/4)**
+
+![Modelo 2 — folha 4](../figs/labirinto-modelo2-cavilhas-4.png)
+**Figura 7 – Modelo 2: desenho técnico (folha 4/4)**
+
+### 10.3 Arquivos CAD e PDF
+
+Os arquivos de projeto ficam em [`mec/`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/documentacao/mec):
+
+| Arquivo | Descrição |
+|---|---|
+| [`micromouse_modelo1_rasgos.step`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/mec/micromouse_modelo1_rasgos.step) | CAD — Modelo 1 (rasgos) |
+| [`micromouse_modelo1_rasgos-desenho-v1.pdf`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/mec/micromouse_modelo1_rasgos-desenho-v1.pdf) | Desenho técnico — Modelo 1 |
+| [`micromouse_modelo2_cavilhas-desenho-v1.pdf`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/mec/micromouse_modelo2_cavilhas-desenho-v1.pdf) | Desenho técnico — Modelo 2 |
+
+> **Nota:** o CAD do Modelo 2 (`.step`) ainda não foi incluído no repositório; apenas o desenho em PDF está disponível.
+
 ## 11. Lista preliminar de materiais
 
 ### Modelo 1
 
-- 1 tábua de compensadp que possibilite a fabricação da base 720 × 720 × 12 mm;
+- 1 tábua de compensado que possibilite a fabricação da base 720 × 720 × 12 mm;
 - 1 tábua de compensado para fabricação de todas as paredes;
 - Material adequado para usinagem dos rasgos.
 
 ### Modelo 2
 
-- 1 tábua de compensadp que possibilite a fabricação da base 720 × 720 × 12 mm;
+- 1 tábua de compensado que possibilite a fabricação da base 720 × 720 × 15 mm;
 - 1 tábua de compensado para fabricação de todas as paredes;
-- Material adequado para usinagem dos rasgos;
 - Cavilhas de madeira de 4 mm de diâmetro e 14 mm de comprimento, em quantidade preliminar de 56 unidades, mais reserva.
-
-
 
 Especificações antigas de uma base retangular, de outra quantidade de células ou de outro comprimento de parede não devem ser usadas para fabricar esta versão.
 
