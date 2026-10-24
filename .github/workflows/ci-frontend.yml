@@ -1,0 +1,57 @@
+name: CI Frontend
+
+# Sem filtro de caminhos: o check precisa reportar em todo PR para a main, senão a proteção de branch trava PRs que não mexem no frontend.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+    working-directory: src/frontend
+
+jobs:
+  testes:
+    name: Testes do frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+      - run: npm ci
+      - name: Rodar os testes com cobertura
+        run: |
+          set -o pipefail
+          npm run test:cobertura 2>&1 | tee "$RUNNER_TEMP/testes-frontend.txt"
+      - name: Resumo dos testes
+        if: always()
+        run: |
+          {
+            echo '### Testes do frontend (Vitest)'
+            echo '```'
+            grep -E '(Test Files|Tests|Duration)' "$RUNNER_TEMP/testes-frontend.txt" || echo 'Os testes não chegaram ao fim; veja o log do passo anterior.'
+            echo '```'
+            if grep -q 'Coverage report from v8' "$RUNNER_TEMP/testes-frontend.txt"; then
+              echo '#### Cobertura dos testes'
+              echo '```'
+              sed -n '/Coverage report from v8/,$p' "$RUNNER_TEMP/testes-frontend.txt"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Checar tipos e gerar build
+        run: npm run build
+
