@@ -4,7 +4,8 @@
 /// Navegação e telemetria rodam em tarefas separadas e concorrentes, como no
 /// diagrama de atividades. Os encoders físicos de quadratura são decodificados por
 /// interrupção de hardware no ESP32-C3, alimentam a odometria (pose na malha) e são reportados na
-/// telemetria.
+/// telemetria. Uma terceira tarefa, a de rede, envia a telemetria ao Supabase sem nunca fazer a
+/// navegação esperar (#238).
 
 #include <Arduino.h>
 
@@ -16,14 +17,32 @@
 
 #include "ArmazenamentoMapa.h"
 #include "Configuracao.h"
+#include "ConfiguracaoRede.h"
+#include "ContratoTelemetria.h"
+#include "ControladorEnvio.h"
 #include "ConversorDeslocamento.h"
+#include "CredenciaisSupabase.h"
 #include "DetectorObjetivo.h"
 #include "EncoderEsp32.h"
+#include "EnvioHttpSupabase.h"
 #include "MedidorDeslocamento.h"
 #include "MotoresDrv8833.h"
 #include "Odometria.h"
 #include "Pinos.h"
+#include "PoliticaReenvio.h"
+#include "ReconexaoWifi.h"
+#include "RedeWifiEsp32.h"
 #include "TelemetriaJson.h"
+#include "TravaSecaoCritica.h"
+
+// Credenciais do Wi-Fi e do Supabase: ficam em `include/credenciais.h`, que o Git ignora (o modelo é
+// `include/credenciais.exemplo.h`). Sem o arquivo, o firmware compila e funciona sem enviar nada.
+#if __has_include("credenciais.h")
+#include "credenciais.h"
+#define MICROMOUSE_TEM_CREDENCIAIS 1
+#else
+#define MICROMOUSE_TEM_CREDENCIAIS 0
+#endif
 
 /// Dono do mapa da corrida. Fica fora das tarefas para sobreviver ao reinício delas (HU-04).
 /// A navegação recebe `armazenamentoMapa.mapa()` para registrar paredes; a telemetria, a versão
@@ -66,6 +85,161 @@ static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
                                           micromouse::pinos::MOTOR_DIR_IN4,
                                           false,
                                           true);
+
+// ---------------------------------------------------------------- envio da telemetria (#238, #236)
+
+/// Credenciais do envio, lidas de `include/credenciais.h` (vazias sem o arquivo).
+static micromouse::CredenciaisSupabase lerCredenciais() {
+  micromouse::CredenciaisSupabase c;
+#if MICROMOUSE_TEM_CREDENCIAIS
+  c.ssidWifi = CREDENCIAL_WIFI_SSID;
+  c.senhaWifi = CREDENCIAL_WIFI_SENHA;
+  c.urlProjeto = CREDENCIAL_SUPABASE_URL;
+  c.chaveAnon = CREDENCIAL_SUPABASE_ANON;
+  c.tokenDispositivo = CREDENCIAL_DEVICE_TOKEN;
+  c.certificadoRaiz = CREDENCIAL_CERTIFICADO_RAIZ;
+  c.semValidarCertificado = CREDENCIAL_SEM_VALIDAR_CERTIFICADO != 0;
+#endif
+  return c;
+}
+static const micromouse::CredenciaisSupabase credenciais = lerCredenciais();
+
+/// Wi-Fi, cliente HTTPS e o buffer com reenvio. Só a tarefa de rede faz chamadas de rede; a coleta
+/// (tarefa de telemetria) só chama `controladorEnvio.registrar()`, que nunca usa a rede.
+static micromouse::RedeWifiEsp32 redeWifi(credenciais.ssidWifi, credenciais.senhaWifi);
+static micromouse::ReconexaoWifi reconexaoWifi(redeWifi);
+static micromouse::EnvioHttpSupabase clienteSupabase(credenciais);
+static micromouse::TravaSecaoCritica travaBufferEnvio;
+static micromouse::ControladorEnvio controladorEnvio(clienteSupabase, travaBufferEnvio);
+
+/// O que a coleta e a tarefa de rede combinam sobre a corrida, protegido por `travaCorrida`.
+struct EstadoCorridaEnvio {
+  bool ativa = false;               ///< A corrida existe no servidor: a coleta pode registrar.
+  uint32_t inicioMs = 0;            ///< `millis()` da criação da corrida.
+  bool encerramentoPedido = false;  ///< A coleta registrou a última amostra (objetivo ou tempo).
+  bool concluida = false;           ///< Chegou ao objetivo.
+};
+static EstadoCorridaEnvio estadoCorrida;
+static portMUX_TYPE travaCorrida = portMUX_INITIALIZER_UNLOCKED;
+
+static EstadoCorridaEnvio lerEstadoCorrida() {
+  portENTER_CRITICAL(&travaCorrida);
+  const EstadoCorridaEnvio copia = estadoCorrida;
+  portEXIT_CRITICAL(&travaCorrida);
+  return copia;
+}
+
+/// `true` se `agoraMs` já alcançou `alvoMs`, correto mesmo quando o contador de ms dá a volta.
+static bool chegouAoInstante(uint32_t agoraMs, uint32_t alvoMs) {
+  return static_cast<int32_t>(agoraMs - alvoMs) >= 0;
+}
+
+/// Coleta: chamada pela tarefa de telemetria a cada `PERIODO_TELEMETRIA_MS`. Guarda a amostra no
+/// buffer, com o número de sequência dado agora (e que nunca muda num reenvio). A chegada ao objetivo
+/// ou o fim do tempo (10 min) registram a última amostra e pedem o encerramento da corrida.
+static void coletarAmostra(const micromouse::Pose& pose, bool chegouAoObjetivo) {
+  const EstadoCorridaEnvio corrida = lerEstadoCorrida();
+  if (!corrida.ativa || corrida.encerramentoPedido) {
+    return;
+  }
+  const uint32_t decorridoMs = static_cast<uint32_t>(millis() - corrida.inicioMs);
+  const bool acabouOTempo = decorridoMs >= micromouse::LIMITE_TEMPO_CORRIDA_MS;
+  const bool ultima = chegouAoObjetivo || acabouOTempo;
+  const micromouse::AmostraTelemetria amostra = micromouse::montarAmostra(
+      pose, decorridoMs, 0,  // velocidade: 0 até a estimativa sem encoder (#380) entrar na telemetria
+      ultima ? micromouse::EstadoCorrida::Parado : micromouse::EstadoCorrida::Explorando,
+      chegouAoObjetivo ? micromouse::EventoTelemetria::ObjetivoAlcancado : micromouse::EventoTelemetria::Nenhum);
+  controladorEnvio.registrar(amostra);
+  if (ultima) {
+    portENTER_CRITICAL(&travaCorrida);
+    estadoCorrida.encerramentoPedido = true;
+    estadoCorrida.concluida = chegouAoObjetivo;
+    portEXIT_CRITICAL(&travaCorrida);
+  }
+}
+
+/// Uma linha de log com os contadores do envio, para a bancada e o dashboard.
+static void registrarContadoresEnvio() {
+  const micromouse::ContadoresEnvio& c = controladorEnvio.contadores();
+  Serial.printf(
+      "{\"status\":\"envio\",\"ocupacao\":%u,\"perdidas\":%lu,\"confirmadas\":%lu,\"existentes\":%lu,"
+      "\"descartadas\":%lu,\"tentativas\":%lu,\"falhas\":%lu,\"reenvios\":%lu,\"wifi_quedas\":%lu,"
+      "\"pausado\":%s}\n",
+      static_cast<unsigned>(controladorEnvio.ocupacao()), static_cast<unsigned long>(controladorEnvio.amostrasPerdidas()),
+      static_cast<unsigned long>(c.amostrasConfirmadas), static_cast<unsigned long>(c.amostrasJaExistentes),
+      static_cast<unsigned long>(c.amostrasDescartadas), static_cast<unsigned long>(c.tentativas),
+      static_cast<unsigned long>(c.falhas), static_cast<unsigned long>(c.reenvios),
+      static_cast<unsigned long>(reconexaoWifi.quedas()), controladorEnvio.pausado() ? "true" : "false");
+}
+
+/// Tarefa de rede: Wi-Fi, criação da corrida, envio dos lotes e encerramento.
+///
+/// Prioridade 1, a menor, com pilha maior por causa do TLS. As chamadas HTTPS bloqueiam esta tarefa
+/// por até `TEMPO_LIMITE_REDE_MS`, nunca a navegação: a coleta só deixa a amostra no buffer.
+static void tarefaRede(void*) {
+  if (!micromouse::credenciaisValidas(credenciais)) {
+    Serial.println("{\"status\":\"envio_desligado\",\"motivo\":\"sem_credenciais\"}");
+    vTaskDelete(nullptr);
+    return;
+  }
+  if (credenciais.semValidarCertificado) {
+    Serial.println("{\"status\":\"aviso\",\"motivo\":\"https_sem_validar_certificado\"}");
+  }
+  redeWifi.iniciar();
+  clienteSupabase.iniciar();
+
+  micromouse::PoliticaReenvio esperaCriacao;  // 1 s, 2 s, 4 s... até 30 s entre tentativas de criar a corrida
+  uint32_t proximaCriacaoMs = millis();
+  uint32_t proximoLogMs = millis() + micromouse::PERIODO_LOG_ENVIO_MS;
+  bool corridaCriada = false;
+  bool avisouPausa = false;
+  bool avisouEncerrada = false;
+
+  for (;;) {
+    const uint32_t agora = millis();
+    if (reconexaoWifi.ciclo(agora)) {
+      if (!corridaCriada) {
+        if (chegouAoInstante(agora, proximaCriacaoMs)) {
+          uint32_t corridaId = 0;
+          const micromouse::ResultadoEnvio r =
+              clienteSupabase.criarCorrida(micromouse::LABIRINTO_CORRIDA_PADRAO, corridaId);
+          if (r.codigoHttp >= 200 && r.codigoHttp < 300) {
+            controladorEnvio.iniciarCorrida(corridaId);
+            corridaCriada = true;
+            portENTER_CRITICAL(&travaCorrida);
+            estadoCorrida.ativa = true;
+            estadoCorrida.inicioMs = agora;
+            portEXIT_CRITICAL(&travaCorrida);
+            Serial.printf("{\"status\":\"corrida_criada\",\"corrida_id\":%lu}\n", static_cast<unsigned long>(corridaId));
+          } else {
+            proximaCriacaoMs = agora + esperaCriacao.registrarFalha();
+            Serial.printf("{\"status\":\"falha_criar_corrida\",\"codigo\":%d}\n", r.codigoHttp);
+          }
+        }
+      } else {
+        const EstadoCorridaEnvio corrida = lerEstadoCorrida();
+        if (corrida.encerramentoPedido && !controladorEnvio.encerramentoSolicitado()) {
+          clienteSupabase.definirResultadoCorrida(corrida.concluida);
+          controladorEnvio.solicitarEncerramento(agora);  // sai só depois de o buffer esvaziar
+        }
+        const micromouse::ResultadoCiclo r = controladorEnvio.ciclo(agora);
+        if (r == micromouse::ResultadoCiclo::Pausado && !avisouPausa) {
+          avisouPausa = true;  // 401/403: a chave ou o token estão errados; não adianta insistir
+          Serial.println("{\"status\":\"envio_pausado\",\"motivo\":\"credenciais_recusadas\"}");
+        }
+        if (controladorEnvio.encerrada() && !avisouEncerrada) {
+          avisouEncerrada = true;
+          Serial.println("{\"status\":\"corrida_encerrada\"}");
+        }
+      }
+    }
+    if (chegouAoInstante(agora, proximoLogMs)) {
+      proximoLogMs = agora + micromouse::PERIODO_LOG_ENVIO_MS;
+      registrarContadoresEnvio();
+    }
+    vTaskDelay(pdMS_TO_TICKS(micromouse::PERIODO_CICLO_REDE_MS));
+  }
+}
 
 /// Tarefa de navegação: ciclo percepção → decisão → atuação, a cada 10 ms.
 ///
@@ -131,6 +305,9 @@ static void tarefaTelemetria(void*) {
     pacote.tensaoBateria = 0.0f;  // Provisório até integração de leitura analógica da bateria
     pacote.evento = dispararEvento ? "objetivo_alcancado" : nullptr;
 
+    // Envio ao Supabase: a amostra vai para o buffer; quem envia é a tarefa de rede.
+    coletarAmostra(pose, dispararEvento);
+
     char buffer[256];
     if (micromouse::TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)) > 0) {
       Serial.println(buffer);
@@ -154,7 +331,8 @@ static void tarefaTelemetria(void*) {
   }
 }
 
-/// Inicializa o log serial pela USB nativa, os encoders e cria as duas tarefas.
+/// Inicializa o log serial pela USB nativa e os encoders, e cria as tarefas de navegação, telemetria
+/// e rede.
 void setup() {
   Serial.begin(115200);
   // Sem um computador conectado, a escrita na USB CDC esperaria o tempo limite a cada chamada e
@@ -171,6 +349,7 @@ void setup() {
 
   xTaskCreate(tarefaNavegacao, "navegacao", 4096, nullptr, 2, nullptr);
   xTaskCreate(tarefaTelemetria, "telemetria", 4096, nullptr, 1, nullptr);
+  xTaskCreate(tarefaRede, "rede", 10240, nullptr, 1, nullptr);
 }
 
 /// Laço principal do Arduino. Fica ocioso: o trabalho acontece nas tarefas.

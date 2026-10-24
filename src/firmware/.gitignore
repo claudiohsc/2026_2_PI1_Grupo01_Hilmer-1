@@ -1,2 +1,4 @@
 .pio/
 cobertura/
+# Credenciais do envio ao Supabase (o modelo versionado é include/credenciais.exemplo.h)
+include/credenciais.h
