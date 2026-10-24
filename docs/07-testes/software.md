@@ -1745,8 +1745,6 @@ pio run -e esp32c3
 
 - Integração com a `Odometria` (a célula troca 90 mm antes do centro): o mapa e o `darPasso` devem ser chamados com o robô perto do centro da célula. Fica para a integração do Épico 02, como registrado na issue.
 
----
-
 ### Sprint 5 · Driver dos 3 sensores VL53L0X
 
 | Item | Valor |
@@ -1889,3 +1887,204 @@ O menu `scripts/bancada_tof.py` foi executado contra uma placa simulada (porta s
 - **Bancada ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)):** rodar `./scripts/bancada_tof.py` com os sensores montados e registrar aqui o relatório: fiação de cada XSHUT, endereços, taxa, tempo da leitura, erro contra a régua em pelo menos 5 distâncias e comportamento fora da faixa.
 - **Valores provisórios:** trocar os de `ConfiguracaoTof.h` pelos medidos na bancada.
 - **Hardware:** confirmar com a eletrônica que o módulo aceita o XSHUT em 3,3 V e que os pinos de *strapping* (GPIO2, GPIO8 e GPIO9) não impedem o boot com os sensores ligados.
+
+### Sprint 5 · Percepção para ToF: limiares, filtro e geometria dos sensores
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#379 Percepção para ToF: limiares, filtro e geometria dos sensores](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) |
+| História de usuário | HU-02 · Percepção e classificação parede/livre ([#43](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/43)) |
+| Código testado | `src/firmware/lib/percepcao` (branch `feat/379-percepcao-tof`) |
+| Data da execução | 23/10/2026 |
+| Executado por | Rafael Sant'Ana |
+| Documentação do código | [Percepção: classificação de paredes](../04-projeto-conceitual/firmware.md#percepcao-classificacao-de-paredes) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04 LTS, x86_64), PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1, `gcovr` 8.6 e GCC 13.x.
+
+#### Testes unitários e de integração da percepção
+
+```bash
+pio test -e native -f test_percepcao
+```
+
+| Caso de teste | O que verifica | Resultado |
+|---|---|:-:|
+| `test_classificador_parede_proxima` | Amostras próximas (< 140/180 mm) são classificadas como `Parede` nas 3 direções | Aprovado |
+| `test_classificador_passagem_livre` | Amostras distantes (> 140/180 mm) são classificadas como `Livre` nas 3 direções | Aprovado |
+| `test_classificador_valor_no_limiar` | Valida condição de borda estrita ($\le \text{limiar}$ é `Parede`, $> \text{limiar}$ é `Livre`) | Aprovado |
+| `test_classificador_limiar_configuravel` | Alteração e consulta dinâmica do limiar de detecção em tempo de execução | Aprovado |
+| `test_classificador_leituras_com_ruido` | Atenuação e descarte de ruído pontual em lote de 5 amostras | Aprovado |
+| `test_classificador_vetor_vazio` | Fail-safe: vetor nulo ou vazio retorna `Desconhecido` nas 3 direções | Aprovado |
+| `test_classificador_limiares_independentes_por_lado` | Configuração e aplicação de limiares distintos para frente, esquerda e direita | Aprovado |
+| `test_classificador_tratamento_abaixo_do_minimo` | Detecção explícita e saturação defensiva de leituras < 30 mm para o piso de 30 mm (`Parede`) | Aprovado |
+| `test_classificador_tratamento_fora_de_alcance` | Detecção explícita e saturação defensiva de leituras > 1200 mm ou código 8190 mm para o teto de 1200 mm (`Livre`) | Aprovado |
+| `test_classificador_filtro_mediana_rejeita_outliers` | Rejeição estrita de spikes de 8190 mm diante de parede e quedas espúrias para 0 mm em corredor livre | Aprovado |
+| `test_classificador_filtro_media_aritmetica` | Funcionamento do filtro alternativo por média aritmética parametrizável | Aprovado |
+| `test_classificador_labirinto_simulado_4x4_com_ruido` | Varredura de 100% das células do labirinto 4×4 com injeção de ruído e leituras espúrias | Aprovado |
+| `test_classificador_labirinto_simulado_8x4_com_ruido` | Varredura de 100% das células do labirinto 8×4 com injeção de ruído e leituras espúrias | Aprovado |
+| `test_classificador_labirinto_simulado_12x4_com_ruido` | Varredura de 100% das células do labirinto 12×4 com injeção de ruído e leituras espúrias | Aprovado |
+
+```text
+native         test_percepcao  PASSED    00:00:00.784
+================= 14 test cases: 14 succeeded in 00:00:00.784 =================
+```
+
+#### Suíte completa com cobertura e build da placa
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --txt --fail-under-line 80
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Todos os testes do firmware | **270 de 270 aprovados** |
+| Cobertura das linhas de `lib/` | **96%** (1087 de 1123); `ClassificadorParede.cpp` com **97%** |
+| Compilação para o ESP32-C3 | **Sucesso** (Flash: 20.1%, RAM: 4.5%) |
+
+#### Pendências desta etapa
+
+- Validação física dos offsets reais dos sensores e limiares calibrados na bancada de ensaios com o chassi montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
+
+### Sprint 5 · Testes do frontend (Vitest e Testing Library) e CI
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#394 Testes do frontend (Vitest e Testing Library) e CI do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394) |
+| Histórias de usuário | HU-14 · Supervisionar corrida pelo dashboard ([#48](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/48)), HU-10 · Histórico de corridas ([#44](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/44)), RNF-03 |
+| Código testado | `src/frontend` (branch `feat/394-testes-frontend`) |
+| Data da execução | 23/10/2026 |
+| Executado por | Rafael Lima e Eduardo Viana |
+| Documentação do código | [Software: testes do frontend e cliente simulado](../04-projeto-conceitual/software.md#infraestrutura-de-testes-automatizados-e-cliente-supabase-simulado-394) e [README do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/frontend#testes) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+|---|---|
+| Node.js e npm | Node.js v22+ (LTS), npm 11+ |
+| Framework de testes | Vitest 5.0.5 |
+| Bibliotecas de teste | `@testing-library/react` 16.3.3, `@testing-library/jest-dom` 7.0.1, `@testing-library/user-event` 14.6.8 |
+| Ambiente de emulação DOM | `jsdom` 29.1.1 |
+| Provedor de cobertura | `@vitest/coverage-v8` 5.0.5 |
+| Ferramentas de build | Vite 6.4.4 e TypeScript 5.6.3 (`tsc --noEmit`) |
+| Sistema operacional | Linux (Ubuntu 24.04 LTS) |
+
+#### Critérios de pronto da #394
+
+- [x] Vitest e Testing Library configurados em `src/frontend` (`npm test`).
+- [x] Cliente Supabase simulado reutilizável, com consulta de `corridas` e canal Realtime.
+- [x] Testes unitários de `formatacao`, `labirinto` e do hook `useReproducaoCorrida`.
+- [x] Um teste de integração: a tela de histórico renderiza as corridas do cliente simulado.
+- [x] Workflow `.github/workflows/ci-frontend.yml` (check "Testes do frontend": `npm ci`, `npm test` com cobertura e `npm run build`), sem filtro de caminhos.
+- [x] README do frontend com a seção "Testes".
+
+#### Cliente Supabase simulado em memória (`src/test/supabaseSimulado.ts`)
+
+Para garantir que os testes rodem em milissegundos, de forma determinística, sem depender de internet nem expor ou consumir recursos do banco de produção do Supabase, foi construído um cliente simulado reutilizável (`criarClienteSupabaseSimulado`). 
+
+O cliente oferece:
+1. **Padrão Query Builder compatível com `supabase-js`:** permite chamadas encadeadas como `.from('corridas').select('*').order('data_hora_inicio', { ascending: false }).eq(...).limit(...)`. O objeto retornado implementa a interface `PromiseLike`, resolvendo via `await` para `{ data, error }`.
+2. **Canais Realtime:** implementação completa de `.channel(nome).on('postgres_changes', filtro, callback).subscribe()`, permitindo aos testes emitir eventos assíncronos (`cliente.emitirRealtime('telemetria', 'INSERT', leitura)` ou via `.insert()`) e acionar reativamente os hooks do dashboard.
+3. **Controle de testes:** métodos `definirTabela()`, `definirErro()`, `obterDados()` e `limpar()`, facilitando a simulação de falhas de rede e cenários anômalos.
+
+A própria infraestrutura do cliente simulado foi validada com 6 testes unitários em `src/test/supabaseSimulado.test.ts`.
+
+#### Casos de teste e execução da suíte (`npm test`)
+
+Comando executado em `src/frontend`:
+
+```bash
+npm test
+```
+
+| Suíte / Arquivo | Casos | O que verifica | Resultado |
+|---|:---:|---|:---:|
+| `supabaseSimulado.test.ts` | 6 | Consulta e ordenação decrescente de corridas; filtros `eq`, `neq` e `limit`; injeção de dados e simulação de erros de banco; canais Realtime e notificação de eventos; inserção reativa com emissão automática; desinscrição e remoção de canais | **Aprovado (6/6)** |
+| `formatacao.test.ts` | 15 | Constantes de negócio (`LIMITE_TEMPO_S`, `TENSAO_CHEIA_V`, etc.); nomes de labirinto no cabeçalho e histórico (`nomeLabirinto`, `nomeLabirintoHistorico`); formatação de cronômetro `mm:ss.mmm` com valores zero e negativos; formatação inteira `m:ss`; formatação de velocidade em `m/s`; cálculo linear de carga da LiPo 2S entre 6.6V e 8.4V com saturação; notas de 1ª (10), 2ª (7.5) e 3ª (5) tentativa; ordinais femininos; formatação de datas pt-BR; rótulos completos de tentativas | **Aprovado (15/15)** |
+| `labirinto.test.ts` | 9 | Deslocamentos cardeais (`DESLOCAMENTO`); parsing de matrizes ASCII (`lerLabirintoAscii`) com cantos, paredes horizontais e verticais; detecção de dimensões inválidas com lançamento de erro; leitura pontual de paredes (`parede`); busca de células (`buscarCelula`); orientação do passo (`orientacaoDoPasso`); algoritmo de exploração até o objetivo; algoritmo de retorno de becos sem saída; mapa de células conhecidas (`mapaConhecido`) com preservação de paredes exploradas e `null` nas demais | **Aprovado (9/9)** |
+| `useReproducaoCorrida.test.ts` | 6 | Estado inicial `aguardando` com tempo 0 e sem telemetria exposta; transição para `em_execucao` via `iniciar()`; avanço temporal acelerado (4×) e entrega gradual de leituras com fake timers; transição para `concluido` ao atingir `objetivo_alcancado`; transição para `nao_concluido` ao estourar o limite de 600 s (10:00); restauração completa via `reiniciar()` | **Aprovado (6/6)** |
+| `TelaHistorico.test.tsx` (Integração) | 4 | **Renderização inicial:** exibição da mensagem de carregamento e posterior renderização das corridas mockadas do Supabase nas 7 colunas com cálculo de carga e notas; **Filtro interativo:** filtragem por labirinto 4×4 e retorno a todos os labirintos; **Atualização sob demanda:** clique no botão "Atualizar" reflete novas corridas inseridas no cliente simulado; **Tratamento de erro:** exibição do alerta acessível com `role="alert"` e botão "Tentar novamente" em caso de falha de conexão simulada | **Aprovado (4/4)** |
+| **Total consolidado** | **40** | **Todas as suítes unitárias, de integração e de simulação** | **40 aprovados, 0 falhas** |
+
+Saída da execução do Vitest:
+
+```text
+ RUN  v5.0.5 src/frontend
+
+ ✓ src/lib/labirinto.test.ts (9 tests) 10ms
+ ✓ src/lib/formatacao.test.ts (15 tests) 6ms
+ ✓ src/hooks/useReproducaoCorrida.test.ts (6 tests) 26ms
+ ✓ src/test/supabaseSimulado.test.ts (6 tests) 59ms
+ ✓ src/paginas/TelaHistorico.test.tsx (4 tests) 192ms
+
+ Test Files  5 passed (5)
+      Tests  40 passed (40)
+   Start at  17:47:03
+   Duration  1.29s (environment 75%, setup 12%, tests 6%, transform 4%, import 2%, worker 1%)
+```
+
+#### Suíte com cobertura de código (`npm run test:cobertura`)
+
+Comando executado:
+
+```bash
+npm run test:cobertura
+```
+
+O relatório gerado pelo motor V8 confirmou **100% de cobertura** nos módulos utilitários e no hook testados, superando com folga a meta de 80%:
+
+```text
+ % Coverage report from v8
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+-------------------|---------|----------|---------|---------|-------------------
+ src/hooks         |         |          |         |         |                   
+  ...caoCorrida.ts |     100 |      100 |     100 |     100 |                   
+ src/lib           |         |          |         |         |                   
+  formatacao.ts    |     100 |      100 |     100 |     100 |                   
+  labirinto.ts     |     100 |      100 |     100 |     100 |                   
+ src/paginas       |         |          |         |         |                   
+  ...Historico.tsx |    92.3 |      100 |   85.71 |    90.9 | 57                
+ src/componentes   |         |          |         |         |                   
+  ...Historico.tsx |     100 |    46.15 |     100 |     100 | 45-65             
+  BadgeDesafio.tsx |     100 |       50 |     100 |     100 | 29-33             
+  ...Labirinto.tsx |     100 |      100 |     100 |     100 |                   
+-------------------|---------|----------|---------|---------|-------------------
+```
+
+#### Verificação de tipagem e build (`npm run build`)
+
+A checagem de tipos estáticos com TypeScript (`tsc --noEmit`) e a compilação do bundle de produção do Vite foram executadas com sucesso, confirmando que os arquivos de teste respeitam as regras estritas de tipagem (`noUnusedLocals`, `strict: true`):
+
+```text
+> micromouse-dashboard@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v6.4.4 building for production...
+✓ 717 modules transformed.
+dist/index.html                              0.60 kB │ gzip:   0.37 kB
+dist/assets/index-BkxvmZS-.css               8.65 kB │ gzip:   2.36 kB
+dist/assets/index-Cuq3WBMg.js              163.12 kB │ gzip:  53.09 kB
+dist/assets/GraficoVelocidade-CnwW5whP.js  395.18 kB │ gzip: 108.76 kB
+✓ built in 2.91s
+```
+
+#### Workflow de Integração Contínua (`.github/workflows/ci-frontend.yml`)
+
+Foi configurado o workflow do GitHub Actions com as seguintes características:
+- **Gatilhos:** disparado em todo `pull_request` e `push` direcionados à branch `main`, além de acionamento manual (`workflow_dispatch`).
+- **Sem filtro de caminhos:** atende à política de proteção de branch do repositório, garantindo que o check obrigatório `"Testes do frontend"` sempre reporte status em qualquer PR.
+- **Passos automatizados:**
+  1. `actions/checkout@v4` e `actions/setup-node@v4` com cache de dependências do npm baseado no `package-lock.json`.
+  2. `npm ci` para instalação reprodutível e limpa.
+  3. `npm run test:cobertura` com exportação do resumo de execução e tabela de cobertura para o `$GITHUB_STEP_SUMMARY`.
+  4. `npm run build` para garantir a integridade dos tipos e do empacotamento final.
+
+#### Pendências e próximas etapas
+
+A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários e de integração das seguintes tarefas do dashboard:
+- [#231 Dashboard ao vivo com Supabase Realtime](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/231): utilizará o canal Realtime do cliente simulado para validar a recepção de telemetria.
+- [#234 Filtro de histórico](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234): expandirá os testes de filtros e paginação da tela de histórico.
+- [#239 Exibição de mapa e percurso](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239): utilizará os testes de parsing e células de `labirinto.ts` integrados à grade visual.
+- [#242 Estado "Aguardando Largada"](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242): utilizará o hook `useReproducaoCorrida` e os estados do painel.
