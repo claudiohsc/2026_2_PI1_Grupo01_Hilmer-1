@@ -39,6 +39,15 @@ constexpr uint16_t VARIACAO_MAXIMA_CALIBRACAO_DECIMOS_DPS = 50;
 /// para o ruído do sensor parado não virar deriva do ângulo.
 constexpr uint16_t ZONA_MORTA_GIRO_DECIMOS_DPS = 3;
 
+/// `true` se o MPU6050 estiver montado de cabeça para baixo no chassi: o driver inverte o sinal da
+/// taxa para manter a convenção de `IImu` (positivo = giro para a esquerda). Confirme na bancada:
+/// girando o robô para a esquerda com a mão, a taxa lida tem que ser positiva.
+constexpr bool INVERTER_GIRO_Z = false;
+
+/// Falhas de leitura seguidas a partir das quais o ângulo de giro deixa de ser confiável: 5 × 10 ms
+/// = 50 ms sem leitura, um giro de 300 °/s já andaria 15° sem ser contado.
+constexpr uint8_t FALHAS_SEGUIDAS_GIRO_INVALIDO = 5;
+
 /// Parâmetros do `IntegradorGiro`, com os valores acima como padrão.
 struct ConfiguracaoIntegradorGiro {
   uint16_t amostrasCalibracao = AMOSTRAS_CALIBRACAO_GIRO;

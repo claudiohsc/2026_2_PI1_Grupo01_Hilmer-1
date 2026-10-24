@@ -4,7 +4,7 @@
 /// @brief Conversão da leitura bruta do giroscópio do MPU6050 para décimos de °/s.
 ///
 /// Fica fora do driver para ser testada no computador: o driver só lê os dois bytes do eixo Z
-/// e chama `converterBrutoParaDecimosDps`.
+/// e chama `juntarBytesGiro`, `converterBrutoParaDecimosDps` e `ajustarSinalGiro`.
 
 #include <stdint.h>
 
@@ -29,6 +29,22 @@ constexpr int16_t converterBrutoParaDecimosDps(int16_t bruto, FaixaGiro faixa) {
   const int32_t divisor = sensibilidadeGiroDecimaLsb(faixa);
   const int32_t metade = divisor / 2;
   return static_cast<int16_t>(numerador >= 0 ? (numerador + metade) / divisor : (numerador - metade) / divisor);
+}
+
+/// Valor do registrador GYRO_CONFIG do MPU6050 para a faixa: o campo FS_SEL fica nos bits 4 e 3
+/// (0x00, 0x08, 0x10 e 0x18), e os bits de autoteste ficam em zero.
+constexpr uint8_t valorGyroConfig(FaixaGiro faixa) { return static_cast<uint8_t>(static_cast<uint8_t>(faixa) << 3); }
+
+/// Junta os dois bytes lidos do MPU6050 (o mais significativo vem primeiro) num inteiro de 16 bits
+/// com sinal, em complemento de dois.
+constexpr int16_t juntarBytesGiro(uint8_t alto, uint8_t baixo) {
+  return static_cast<int16_t>(static_cast<uint16_t>((static_cast<uint16_t>(alto) << 8) | baixo));
+}
+
+/// Troca o sinal da taxa quando o sensor está montado de cabeça para baixo, sem estourar o
+/// `int16_t` (o menor valor vira o maior).
+constexpr int16_t ajustarSinalGiro(int16_t taxaDecimosDps, bool inverter) {
+  return !inverter ? taxaDecimosDps : taxaDecimosDps == INT16_MIN ? INT16_MAX : static_cast<int16_t>(-taxaDecimosDps);
 }
 
 }  // namespace micromouse

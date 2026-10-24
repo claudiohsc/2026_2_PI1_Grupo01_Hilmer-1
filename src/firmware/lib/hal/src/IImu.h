@@ -22,7 +22,7 @@ namespace micromouse {
 ///
 /// Implementações:
 /// - `ImuSimulado` (`lib/simulacao`): taxa definida pelo teste, com viés e ruído, sem hardware.
-/// - Driver do MPU6050 por I²C (`lib/drivers_esp32`): a ser criado (#378).
+/// - `ImuMpu6050` (`lib/drivers_esp32`): o MPU6050 pelo I²C, compartilhado com os ToF (#378).
 class IImu {
  public:
   virtual ~IImu() = default;
