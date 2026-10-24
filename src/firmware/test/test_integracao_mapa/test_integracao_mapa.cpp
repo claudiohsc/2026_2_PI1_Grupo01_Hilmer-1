@@ -3,7 +3,7 @@
 /// final deve ser idêntico ao labirinto (critério de pronto da #177).
 /// Roda no computador: `pio test -e native -f test_integracao_mapa`.
 ///
-/// Cadeia testada, sem hardware: `LabirintoSimulado` → `LidarSimulado` → `ClassificadorParede`
+/// Cadeia testada, sem hardware: `LabirintoSimulado` → `SensorDistanciaSimulado` → `ClassificadorParede`
 /// → `AtualizadorMapa` → `Mapa`.
 
 #include <unity.h>
@@ -12,7 +12,7 @@
 #include "ClassificadorParede.h"
 #include "Direcao.h"
 #include "LabirintoSimulado.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 #include "Mapa.h"
 #include "../test_labirinto_simulado/LabirintosExemplo.h"
 
@@ -72,7 +72,7 @@ class ExploradorSimulado {
   }
 
   Mapa& mapa_;
-  LidarSimulado lidar_;
+  SensorDistanciaSimulado lidar_;
   ClassificadorParede classificador_;
   bool visitada_[MAX_LINHAS_LABIRINTO][MAX_COLUNAS_LABIRINTO] = {};
   uint8_t visitadas_ = 0;
@@ -143,7 +143,7 @@ void test_uma_celula_registra_so_as_tres_paredes_que_o_sensor_ve() {
   LabirintoSimulado labirinto;
   labirinto.carregar(exemplos::LABIRINTO_4X4);
   Mapa mapa(DimensaoMapa::Labirinto4x4);
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   lidar.usarLabirinto(labirinto);
   ClassificadorParede classificador;
 

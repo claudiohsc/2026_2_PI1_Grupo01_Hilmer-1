@@ -11,7 +11,7 @@
 #include "ConfiguracaoProtecaoMotor.h"
 #include "ControleMovimento.h"
 #include "IMotores.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 #include "MotoresComProtecao.h"
 #include "MotoresSimulados.h"
 #include "SinaisDrv8833.h"
@@ -193,7 +193,7 @@ void test_configuracao_da_protecao_passa_pelo_decorador() {
 /// Robô preso numa parede falsa: o controle manda potência de cruzeiro pelo decorador, a leitura não
 /// muda, e o decorador freia e segura o freio mesmo com o controle mandando andar de novo.
 void test_integracao_controle_com_robo_preso() {
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   MotoresSimulados driver;
   MotoresComProtecao motores(driver);
   ControleMovimento controle;

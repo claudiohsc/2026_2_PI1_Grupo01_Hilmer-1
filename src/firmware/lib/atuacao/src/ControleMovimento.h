@@ -8,7 +8,7 @@
 
 #include "ConfiguracaoControle.h"
 #include "ControladorCentralizacao.h"
-#include "ILidar.h"
+#include "ISensorDistancia.h"
 #include "IMotores.h"
 #include "PerfilParadaFrontal.h"
 #include "Tipos.h"
@@ -53,7 +53,7 @@ class ControleMovimento {
   /// Lê o LiDAR, calcula e aplica nos motores: `parar()` nos estados parados e
   /// `definirPotencia()` nos demais.
   /// @return O estado depois da atualização.
-  EstadoMovimento atualizar(ILidar& lidar, IMotores& motores, uint32_t dtMs);
+  EstadoMovimento atualizar(ISensorDistancia& lidar, IMotores& motores, uint32_t dtMs);
 
   /// Estado depois da última atualização.
   EstadoMovimento estado() const { return estado_; }
