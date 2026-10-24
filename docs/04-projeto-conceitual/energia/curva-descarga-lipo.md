@@ -43,7 +43,7 @@ $$V_{\text{pack}}(t) = 2 \cdot V_{\text{cel}}(Q_{\text{d}}(t))$$
 
 ## 3. Simulação Teórica Computacional
 
-O script de engenharia em Python [`scripts/curva_descarga_lipo.py`](../../../scripts/curva_descarga_lipo.py) simula o comportamento da bateria sob dois regimes operacionais:
+O script de engenharia em Python [`scripts/curva_descarga_lipo.py`](../../scripts/curva_descarga_lipo.py) simula o comportamento da bateria sob dois regimes operacionais:
 1. **Regime Nominal de Corrida ($426\text{ mA}$):** Robô em exploração contínua com motores N20 acionados ($6{,}0\text{ V}$ via `U4`), placa `ESP32-C3 Super Mini` com rádio ativo ($5{,}0\text{ V}$ via `U2`) e barramento I²C de sensores com 3× ToF `VL53L0X` e IMU `MPU6050` ($3{,}3\text{ V}$ via `U5`).
 2. **Regime de Baixo Consumo / Standby ($150\text{ mA}$):** Robô estático aguardando partida ou processando telemetria.
 

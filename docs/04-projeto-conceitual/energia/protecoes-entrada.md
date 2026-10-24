@@ -136,10 +136,10 @@ Homologa-se o fusível rearmável **Bourns Multifuse® MF-R185** (versão radial
 
 ## 5. Esquemático Elétrico no KiCad e Pinagem de Integração
 
-O circuito completo de proteção foi desenhado de forma modular no arquivo nativo do KiCad [**`hw/protecao_entrada.kicad_sch`**](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/main/hw/protecao_entrada.kicad_sch), estruturado para instanciação como folha hierárquica ou bloco de proteção na placa-mãe.
+O circuito completo de proteção foi desenhado de forma modular no arquivo nativo do KiCad [**`hw/protecao_entrada.kicad_sch`**](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/hw/protecao_entrada.kicad_sch), estruturado para instanciação como folha hierárquica ou bloco de proteção na placa-mãe.
 
 > **Nota sobre a Organização Modular do Esquemático (`Micromouse.kicad_sch`):**  
-> Na folha principal do esquemático ([`hw/Micromouse.pdf`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/main/hw/Micromouse.pdf)), o estágio de entrada é representado com o conector da bateria (`BT1`), o fusível rearmável PPTC (`F1` — Bourns MF-R185) e a chave geral (`SW1`), enquanto o bloco ativo contra inversão de polaridade composto pelo P-MOSFET `Q1` (`AO3407A`), diodo Zener `D_Z1` (`BZT52C12`) e resistor `R_G1` (`100 kΩ`) encontra-se detalhado no subesquemático dedicado `hw/protecao_entrada.kicad_sch` para integração modular na PCB.
+> Na folha principal do esquemático ([`hw/Micromouse.pdf`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/hw/Micromouse.pdf)), o estágio de entrada é representado com o conector da bateria (`BT1`), o fusível rearmável PPTC (`F1` — Bourns MF-R185) e a chave geral (`SW1`), enquanto o bloco ativo contra inversão de polaridade composto pelo P-MOSFET `Q1` (`AO3407A`), diodo Zener `D_Z1` (`BZT52C12`) e resistor `R_G1` (`100 kΩ`) encontra-se detalhado no subesquemático dedicado `hw/protecao_entrada.kicad_sch` para integração modular na PCB.
 
 <figure markdown>
 
