@@ -1744,3 +1744,62 @@ pio run -e esp32c3
 #### Pendências desta etapa
 
 - Integração com a `Odometria` (a célula troca 90 mm antes do centro): o mapa e o `darPasso` devem ser chamados com o robô perto do centro da célula. Fica para a integração do Épico 02, como registrado na issue.
+
+### Sprint 5 · Percepção para ToF: limiares, filtro e geometria dos sensores
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#379 Percepção para ToF: limiares, filtro e geometria dos sensores](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) |
+| História de usuário | HU-02 · Percepção e classificação parede/livre ([#43](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/43)) |
+| Código testado | `src/firmware/lib/percepcao` (branch `feat/379-percepcao-tof`) |
+| Data da execução | 23/10/2026 |
+| Executado por | Rafael Sant'Ana |
+| Documentação do código | [Percepção: classificação de paredes](../04-projeto-conceitual/firmware.md#percepcao-classificacao-de-paredes) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04 LTS, x86_64), PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1, `gcovr` 8.6 e GCC 13.x.
+
+#### Testes unitários e de integração da percepção
+
+```bash
+pio test -e native -f test_percepcao
+```
+
+| Caso de teste | O que verifica | Resultado |
+|---|---|:-:|
+| `test_classificador_parede_proxima` | Amostras próximas (< 140/180 mm) são classificadas como `Parede` nas 3 direções | Aprovado |
+| `test_classificador_passagem_livre` | Amostras distantes (> 140/180 mm) são classificadas como `Livre` nas 3 direções | Aprovado |
+| `test_classificador_valor_no_limiar` | Valida condição de borda estrita ($\le \text{limiar}$ é `Parede`, $> \text{limiar}$ é `Livre`) | Aprovado |
+| `test_classificador_limiar_configuravel` | Alteração e consulta dinâmica do limiar de detecção em tempo de execução | Aprovado |
+| `test_classificador_leituras_com_ruido` | Atenuação e descarte de ruído pontual em lote de 5 amostras | Aprovado |
+| `test_classificador_vetor_vazio` | Fail-safe: vetor nulo ou vazio retorna `Desconhecido` nas 3 direções | Aprovado |
+| `test_classificador_limiares_independentes_por_lado` | Configuração e aplicação de limiares distintos para frente, esquerda e direita | Aprovado |
+| `test_classificador_tratamento_abaixo_do_minimo` | Detecção explícita e saturação defensiva de leituras < 30 mm para o piso de 30 mm (`Parede`) | Aprovado |
+| `test_classificador_tratamento_fora_de_alcance` | Detecção explícita e saturação defensiva de leituras > 1200 mm ou código 8190 mm para o teto de 1200 mm (`Livre`) | Aprovado |
+| `test_classificador_filtro_mediana_rejeita_outliers` | Rejeição estrita de spikes de 8190 mm diante de parede e quedas espúrias para 0 mm em corredor livre | Aprovado |
+| `test_classificador_filtro_media_aritmetica` | Funcionamento do filtro alternativo por média aritmética parametrizável | Aprovado |
+| `test_classificador_labirinto_simulado_4x4_com_ruido` | Varredura de 100% das células do labirinto 4×4 com injeção de ruído e leituras espúrias | Aprovado |
+| `test_classificador_labirinto_simulado_8x4_com_ruido` | Varredura de 100% das células do labirinto 8×4 com injeção de ruído e leituras espúrias | Aprovado |
+| `test_classificador_labirinto_simulado_12x4_com_ruido` | Varredura de 100% das células do labirinto 12×4 com injeção de ruído e leituras espúrias | Aprovado |
+
+```text
+native         test_percepcao  PASSED    00:00:00.784
+================= 14 test cases: 14 succeeded in 00:00:00.784 =================
+```
+
+#### Suíte completa com cobertura e build da placa
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --txt --fail-under-line 80
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Todos os testes do firmware | **270 de 270 aprovados** |
+| Cobertura das linhas de `lib/` | **96%** (1087 de 1123); `ClassificadorParede.cpp` com **97%** |
+| Compilação para o ESP32-C3 | **Sucesso** (Flash: 20.1%, RAM: 4.5%) |
+
+#### Pendências desta etapa
+
+- Validação física dos offsets reais dos sensores e limiares calibrados na bancada de ensaios com o chassi montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
