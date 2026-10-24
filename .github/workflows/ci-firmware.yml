@@ -68,3 +68,18 @@ jobs:
           restore-keys: pio-esp32c3-${{ runner.os }}-
       - run: pip install platformio==6.2.0
       - run: pio run -e esp32c3
+      # Firmware de bancada: não vai para o robô, mas precisa continuar compilando com o driver.
+      - run: pio run -e bancada_tof
+
+  scripts:
+    name: Scripts de bancada
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Só a biblioteca padrão: os testes trocam a porta serial (pyserial) por um falso.
+      - name: Testar os scripts de bancada
+        run: python -m unittest discover -s scripts/testes -v
