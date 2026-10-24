@@ -163,7 +163,7 @@ Campos diagnósticos adicionais (`esq_pulsos`, `dir_pulsos`, `esq_mm`, `dir_mm`,
 
 ## Envio da telemetria ao Supabase
 
-A telemetria vai ao Supabase pelas Edge Functions, por HTTPS, sem perder amostras quando o Wi-Fi cai e sem duplicá-las quando ele volta (#238). O robô nunca escreve direto nas tabelas: a chave `anon` só lê.
+A telemetria vai ao Supabase pelas Edge Functions, por HTTPS, a cada 1 s e sem atrasar a navegação (#236), sem perder amostras quando o Wi-Fi cai e sem duplicá-las quando ele volta (#238). O robô nunca escreve direto nas tabelas: a chave `anon` só lê.
 
 ```mermaid
 flowchart LR
