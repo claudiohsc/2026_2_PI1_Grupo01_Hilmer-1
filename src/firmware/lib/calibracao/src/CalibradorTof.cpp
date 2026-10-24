@@ -46,12 +46,18 @@ uint16_t CalibradorTof::mediaArredondada(uint32_t soma, uint16_t quantidade) {
   return static_cast<uint16_t>((soma + metade) / quantidade);
 }
 
-bool CalibradorTof::ladoVariouDemais(const AcumuladorLado& lado) const {
+bool CalibradorTof::ladoVariouDemais(const AcumuladorLado& lado, uint16_t referenciaMm) const {
+  if (referenciaMm == SEM_REFERENCIA_TOF_MM) {
+    return false;  // lado fora da calibração: a variação dele não conta
+  }
   const uint16_t variacao = static_cast<uint16_t>(lado.maior - lado.menor);
   return variacao > config_.variacaoMaximaMm;
 }
 
 int16_t CalibradorTof::desvioDoLado(const AcumuladorLado& lado, uint16_t referenciaMm) const {
+  if (referenciaMm == SEM_REFERENCIA_TOF_MM) {
+    return 0;
+  }
   const int32_t media = mediaArredondada(lado.soma, lado.amostras);
   return static_cast<int16_t>(media - static_cast<int32_t>(referenciaMm));
 }
@@ -83,14 +89,21 @@ EstadoCalibracaoTof CalibradorTof::adicionarAmostra(const DistanciasLaterais& le
     return estado_;
   }
 
-  if (ladoVariouDemais(frente_) || ladoVariouDemais(esquerda_) || ladoVariouDemais(direita_)) {
+  if (ladoVariouDemais(frente_, referencias_.frenteMm) || ladoVariouDemais(esquerda_, referencias_.esquerdaMm) ||
+      ladoVariouDemais(direita_, referencias_.direitaMm)) {
     estado_ = EstadoCalibracaoTof::Recusada;
     return estado_;
   }
 
-  desvios_.frenteMm = desvioDoLado(frente_, referencias_.frenteMm);
-  desvios_.esquerdaMm = desvioDoLado(esquerda_, referencias_.esquerdaMm);
-  desvios_.direitaMm = desvioDoLado(direita_, referencias_.direitaMm);
+  const DesviosTof novos = {desvioDoLado(frente_, referencias_.frenteMm),
+                            desvioDoLado(esquerda_, referencias_.esquerdaMm),
+                            desvioDoLado(direita_, referencias_.direitaMm)};
+  if (foraDaFaixa(novos.frenteMm) || foraDaFaixa(novos.esquerdaMm) || foraDaFaixa(novos.direitaMm)) {
+    estado_ = EstadoCalibracaoTof::ForaDaFaixa;
+    return estado_;
+  }
+
+  desvios_ = novos;
   estado_ = EstadoCalibracaoTof::Calibrado;
   return estado_;
 }

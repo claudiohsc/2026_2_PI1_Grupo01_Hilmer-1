@@ -15,7 +15,8 @@ enum class EstadoCalibracaoTof : uint8_t {
   NaoCalibrado,  ///< Nenhuma calibração feita: os desvios usados são zero.
   Calibrando,    ///< Recebendo amostras; ainda faltam algumas.
   Calibrado,     ///< Desvios medidos e em uso.
-  Recusada       ///< Algum lado variou demais (robô se mexeu): os desvios anteriores foram mantidos.
+  Recusada,      ///< Algum lado variou demais (robô se mexeu): os desvios anteriores foram mantidos.
+  ForaDaFaixa    ///< Algum desvio passou de `desvioMaximoMm` (referência provavelmente errada): os desvios anteriores foram mantidos.
 };
 
 /// Desvio de cada sensor, em mm: `média das amostras − distância de referência`.
@@ -31,7 +32,9 @@ struct DesviosTof {
 /// 1. **Calibração:** `iniciar()` e `adicionarAmostra()` a cada leitura válida. Ao fim de
 ///    `amostras` leituras, o desvio de cada lado é a média arredondada menos a referência. Se em
 ///    qualquer lado a maior e a menor amostra diferirem mais que `variacaoMaximaMm`, a calibração
-///    é recusada e os desvios anteriores continuam.
+///    é recusada e os desvios anteriores continuam. Um desvio acima de `desvioMaximoMm` também
+///    descarta a calibração (`ForaDaFaixa`): é sinal de referência errada. Lado com referência
+///    `SEM_REFERENCIA_TOF_MM` fica fora da conta e mantém desvio zero.
 /// 2. **Aplicação:** `corrigir(bruta)` devolve `bruta − desvio` por lado, saturado em `uint16_t`.
 ///
 /// Só usa inteiros (ESP32-C3 sem FPU). Não depende do driver: quem chama alimenta as amostras
@@ -91,7 +94,10 @@ class CalibradorTof {
   static uint16_t mediaArredondada(uint32_t soma, uint16_t quantidade);
   static uint16_t subtrairSaturado(uint16_t bruta, int16_t desvioMm);
   void reiniciarAcumuladores();
-  bool ladoVariouDemais(const AcumuladorLado& lado) const;
+  bool foraDaFaixa(int16_t desvioMm) const {
+    return desvioMm > static_cast<int16_t>(config_.desvioMaximoMm) || desvioMm < -static_cast<int16_t>(config_.desvioMaximoMm);
+  }
+  bool ladoVariouDemais(const AcumuladorLado& lado, uint16_t referenciaMm) const;
   int16_t desvioDoLado(const AcumuladorLado& lado, uint16_t referenciaMm) const;
 
   ConfiguracaoCalibracaoTof config_;

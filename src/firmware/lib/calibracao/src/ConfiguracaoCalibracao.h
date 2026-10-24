@@ -35,17 +35,33 @@ constexpr uint16_t VARIACAO_MAXIMA_CALIBRACAO_TOF_MM = 8;
 /// 54 mm, o mesmo da percepção (#379). Ajuste se a referência da bancada for outra.
 constexpr uint16_t DISTANCIA_REFERENCIA_TOF_MM = 54;
 
+/// Referência `0`: o lado não tem distância conhecida e fica fora da calibração (desvio zero).
+constexpr uint16_t SEM_REFERENCIA_TOF_MM = 0;
+
+/// Maior desvio aceito de um sensor, em mm. O offset de um VL53L0X fica em dezenas de mm; um
+/// desvio maior quase sempre é referência errada (por exemplo, o robô não estava diante da parede
+/// esperada), e corrigir por ele estragaria as leituras. Acima disso a calibração é descartada.
+constexpr uint16_t DESVIO_MAXIMO_TOF_MM = 30;
+
 /// Distâncias de referência usadas na calibração (frente, esquerda, direita), em mm.
+/// `SEM_REFERENCIA_TOF_MM` (0) tira o lado da calibração.
 struct ReferenciasTof {
   uint16_t frenteMm = DISTANCIA_REFERENCIA_TOF_MM;
   uint16_t esquerdaMm = DISTANCIA_REFERENCIA_TOF_MM;
   uint16_t direitaMm = DISTANCIA_REFERENCIA_TOF_MM;
 };
 
+/// Referências da calibração no boot, com o robô na célula de partida: paredes dos dois lados
+/// (54 mm da face de cada sensor) e **frente sem referência**, porque a frente da célula de partida
+/// é o caminho do labirinto, sem parede a uma distância conhecida.
+constexpr ReferenciasTof REFERENCIAS_TOF_NA_LARGADA = {SEM_REFERENCIA_TOF_MM, DISTANCIA_REFERENCIA_TOF_MM,
+                                                       DISTANCIA_REFERENCIA_TOF_MM};
+
 /// Parâmetros do `CalibradorTof`. Os testes alteram os campos para cobrir outros cenários.
 struct ConfiguracaoCalibracaoTof {
   uint16_t amostras = AMOSTRAS_CALIBRACAO_TOF;
   uint16_t variacaoMaximaMm = VARIACAO_MAXIMA_CALIBRACAO_TOF_MM;
+  uint16_t desvioMaximoMm = DESVIO_MAXIMO_TOF_MM;
   ReferenciasTof referencias = {};
 };
 
@@ -55,7 +71,7 @@ constexpr uint32_t ORCAMENTO_CALIBRACAO_GIRO_MS = 500;
 /// Amostras da calibração do giroscópio dentro da rotina de 1 s. Com intervalo de 10 ms
 /// (o mesmo ciclo da IMU), 50 amostras levam 500 ms, cabendo com folga em
 /// `ORCAMENTO_CALIBRACAO_MS` (1 s).
-constexpr uint16_t AMOSTRAS_CALIBRACAO_GIRO = 50;
+constexpr uint16_t AMOSTRAS_CALIBRACAO_BOOT_GIRO = 50;
 
 /// Maior diferença entre a maior e a menor amostra da taxa de giro, em décimos de °/s.
 /// Acima dela, o robô provavelmente se mexeu e a calibração é recusada.
@@ -69,7 +85,7 @@ constexpr uint32_t PERIODO_AMOSTRAGEM_TOF_MS = 33;
 
 /// Parâmetros do `CalibradorGiro`.
 struct ConfiguracaoCalibracaoGiro {
-  uint16_t amostras = AMOSTRAS_CALIBRACAO_GIRO;
+  uint16_t amostras = AMOSTRAS_CALIBRACAO_BOOT_GIRO;
   uint16_t variacaoMaximaDecimosDps = VARIACAO_MAXIMA_CALIBRACAO_GIRO_DECIMOS_DPS;
 };
 

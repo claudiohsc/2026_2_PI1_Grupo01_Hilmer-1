@@ -156,6 +156,64 @@ void test_com_leituras_simuladas_do_lidar() {
   TEST_ASSERT_EQUAL_UINT16(54, corrigida.direitaMm);
 }
 
+void test_lado_sem_referencia_fica_fora_da_calibracao() {
+  // Célula de partida: parede dos dois lados e a frente aberta (sem distância conhecida).
+  ConfiguracaoCalibracaoTof c = configRapido();
+  c.referencias = REFERENCIAS_TOF_NA_LARGADA;
+  CalibradorTof calibrador(c);
+  calibrador.iniciar();
+  alimentar(calibrador, {600, 60, 50}, 4);  // frente aberta; esquerda +6, direita −4
+
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoCalibracaoTof::Calibrado), static_cast<int>(calibrador.estado()));
+  TEST_ASSERT_EQUAL_INT16(0, calibrador.desvios().frenteMm);
+  TEST_ASSERT_EQUAL_INT16(6, calibrador.desvios().esquerdaMm);
+  TEST_ASSERT_EQUAL_INT16(-4, calibrador.desvios().direitaMm);
+  // A frente passa como veio: sem referência, nada a corrigir.
+  TEST_ASSERT_EQUAL_UINT16(600, calibrador.corrigir({600, 60, 50}).frenteMm);
+}
+
+void test_variacao_do_lado_sem_referencia_nao_recusa_a_calibracao() {
+  ConfiguracaoCalibracaoTof c = configRapido();
+  c.referencias = REFERENCIAS_TOF_NA_LARGADA;
+  CalibradorTof calibrador(c);
+  calibrador.iniciar();
+  const uint16_t frentes[4] = {300, 700, 450, 900};  // a frente oscila muito, mas não conta
+  for (uint16_t frente : frentes) {
+    calibrador.adicionarAmostra({frente, 54, 54});
+  }
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoCalibracaoTof::Calibrado), static_cast<int>(calibrador.estado()));
+}
+
+void test_desvio_acima_do_maximo_descarta_a_calibracao() {
+  CalibradorTof calibrador(configRapido());
+  calibrador.iniciar();
+  alimentar(calibrador, {54, 54, 54}, 4);  // primeira calibração boa: desvios zero
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoCalibracaoTof::Calibrado), static_cast<int>(calibrador.estado()));
+
+  calibrador.iniciar();
+  alimentar(calibrador, {54, 54 + DESVIO_MAXIMO_TOF_MM + 1, 54}, 4);  // referência errada: +31 mm
+
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoCalibracaoTof::ForaDaFaixa), static_cast<int>(calibrador.estado()));
+  TEST_ASSERT_EQUAL_INT16(0, calibrador.desvios().esquerdaMm);  // os desvios anteriores continuam
+}
+
+void test_desvio_exatamente_no_maximo_e_aceito_nos_dois_sinais() {
+  CalibradorTof calibrador(configRapido());
+  calibrador.iniciar();
+  alimentar(calibrador, {54 + DESVIO_MAXIMO_TOF_MM, 54 - DESVIO_MAXIMO_TOF_MM, 54}, 4);
+
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoCalibracaoTof::Calibrado), static_cast<int>(calibrador.estado()));
+  TEST_ASSERT_EQUAL_INT16(static_cast<int16_t>(DESVIO_MAXIMO_TOF_MM), calibrador.desvios().frenteMm);
+  TEST_ASSERT_EQUAL_INT16(-static_cast<int16_t>(DESVIO_MAXIMO_TOF_MM), calibrador.desvios().esquerdaMm);
+}
+
+void test_desvio_negativo_acima_do_maximo_tambem_descarta() {
+  CalibradorTof calibrador(configRapido());
+  calibrador.iniciar();
+  alimentar(calibrador, {54, 54, 54 - DESVIO_MAXIMO_TOF_MM - 1}, 4);
+  TEST_ASSERT_EQUAL(static_cast<int>(EstadoCalibracaoTof::ForaDaFaixa), static_cast<int>(calibrador.estado()));
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_comeca_nao_calibrado_e_desvios_zero);
@@ -168,5 +226,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_amostra_fora_de_calibrando_e_ignorada);
   RUN_TEST(test_orcamento_tof_cabe_no_rnf08);
   RUN_TEST(test_com_leituras_simuladas_do_lidar);
+  RUN_TEST(test_lado_sem_referencia_fica_fora_da_calibracao);
+  RUN_TEST(test_variacao_do_lado_sem_referencia_nao_recusa_a_calibracao);
+  RUN_TEST(test_desvio_acima_do_maximo_descarta_a_calibracao);
+  RUN_TEST(test_desvio_exatamente_no_maximo_e_aceito_nos_dois_sinais);
+  RUN_TEST(test_desvio_negativo_acima_do_maximo_tambem_descarta);
   return UNITY_END();
 }

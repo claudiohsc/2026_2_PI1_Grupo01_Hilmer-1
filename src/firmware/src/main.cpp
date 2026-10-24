@@ -4,10 +4,10 @@
 /// Navegação e telemetria rodam em tarefas separadas e concorrentes, como no
 /// diagrama de atividades. Os encoders físicos de quadratura são decodificados por
 /// interrupção de hardware no ESP32-C3, alimentam a odometria (pose na malha) e são reportados na
-/// telemetria. Os 3 sensores de distância VL53L0X são lidos pelo I²C na tarefa de navegação.
-/// O giroscópio do MPU6050 é lido por uma tarefa própria, em intervalo fixo, pelo
-/// barramento I²C compartilhado. Enquanto os encoders não são instalados (`ENCODERS_INSTALADOS` em
-/// `ConfiguracaoDeslocamento.h`), o deslocamento é estimado pela potência dos motores e corrigido pelos ToF (#380).
+/// telemetria. Os 3 sensores de distância VL53L0X são lidos pelo I²C na tarefa de navegação, e o
+/// giroscópio do MPU6050 por uma tarefa própria, em intervalo fixo, no mesmo barramento (com mutex).
+/// Enquanto os encoders não são instalados (`ENCODERS_INSTALADOS` em `ConfiguracaoDeslocamento.h`),
+/// o deslocamento é estimado pela potência dos motores e corrigido pelos ToF (#380).
 /// Os motores só são liberados depois do autoteste do boot (#50) encontrar os 4 dispositivos do I²C.
 
 #include <Arduino.h>
@@ -38,6 +38,7 @@
 #include "Odometria.h"
 #include "Pinos.h"
 #include "RelatorioBoot.h"
+#include "RotinaCalibracao.h"
 #include "TelemetriaJson.h"
 #include "TofVl53l0x.h"
 
@@ -168,13 +169,52 @@ static portMUX_TYPE travaGiro = portMUX_INITIALIZER_UNLOCKED;
   return copia;
 }
 
+/// Calibração do boot (#240, RNF-08): desvio de cada ToF e viés do giroscópio, em até 1 s, com o robô
+/// parado na célula de partida. O `corrigirTof` é aplicado a toda leitura dos ToF (navegação) e o viés
+/// vai para o `acompanhadorGiro`. Falhou, o robô segue sem correção de ToF e a tarefa da IMU calibra o
+/// viés sozinha.
+static micromouse::RotinaCalibracao rotinaCalibracao;
+
+/// Roda a `RotinaCalibracao` com os sensores reais, a cada 10 ms, até ela terminar (sucesso, falha ou
+/// 1 s). Só pode ser chamada no `setup()`, antes de criar as tarefas, porque usa o ToF e a IMU sem
+/// outra tarefa disputando o I²C. Conta como amostra de ToF só a leitura com medida nova.
+static micromouse::EstadoRotinaCalibracao calibrarSensores() {
+  rotinaCalibracao.iniciar(micromouse::REFERENCIAS_TOF_NA_LARGADA);
+  uint32_t anteriorMs = millis();
+  uint32_t instanteUltimaLeituraTof = 0;
+  bool leuTof = false;
+  while (rotinaCalibracao.estado() == micromouse::EstadoRotinaCalibracao::EmAndamento) {
+    delay(micromouse::PERIODO_AMOSTRAGEM_GIRO_MS);
+    const uint32_t agoraMs = millis();
+
+    int16_t taxaGiro = 0;
+    const bool giroValido = imu.lerTaxaGiroZ(taxaGiro);
+
+    micromouse::DistanciasLaterais distancias = {0, 0, 0};
+    const bool tofLido = tof.lerDistanciasLaterais(distancias);
+    const uint32_t instanteLeitura = agoraMs - tof.idadeUltimaLeituraMs();
+    const bool tofNovo = tofLido && (!leuTof || instanteLeitura != instanteUltimaLeituraTof);
+    if (tofNovo) {
+      leuTof = true;
+      instanteUltimaLeituraTof = instanteLeitura;
+    }
+
+    rotinaCalibracao.atualizar(distancias, tofNovo, taxaGiro, giroValido, agoraMs - anteriorMs);
+    anteriorMs = agoraMs;
+  }
+  return rotinaCalibracao.estado();
+}
+
 /// Tarefa da IMU: lê o giroscópio a cada `PERIODO_LEITURA_IMU_MS` (10 ms), em intervalo fixo.
 ///
 /// Prioridade 3, a maior: a leitura é curta (menos de 1 ms) e o ângulo só fica certo se o intervalo
-/// entre leituras não variar. Nos primeiros 2 s calibra o viés, com o robô parado na largada; se o
-/// robô se mexer, a calibração recomeça sozinha.
+/// entre leituras não variar. Se a calibração do boot (`calibrarSensores`) não deu o viés, calibra
+/// por conta própria nos primeiros 2 s, com o robô parado na largada; se o robô se mexer, a
+/// calibração recomeça sozinha.
 static void tarefaImu(void*) {
-  acompanhadorGiro.iniciarCalibracao();
+  if (acompanhadorGiro.estadoCalibracao() != micromouse::EstadoCalibracao::Calibrado) {
+    acompanhadorGiro.iniciarCalibracao();
+  }
   bool calibradoAnunciado = false;
   TickType_t ultimoInstante = xTaskGetTickCount();
   for (;;) {
@@ -204,8 +244,17 @@ static void tarefaNavegacao(void*) {
   for (;;) {
     // Sensores de distância: a leitura não espera medida nova, só junta as últimas amostras. Fica
     // antes da detecção do objetivo para a telemetria continuar recebendo o ToF depois da chegada.
+    // A tarefa da IMU usa o mesmo I²C: a leitura só acontece com o barramento segurado. Se ele não
+    // vier a tempo, o ciclo segue sem leitura nova do ToF.
     LeituraTofTelemetria leituraTof;
-    leituraTof.valida = tof.lerDistanciasLaterais(leituraTof.distancias);
+    {
+      micromouse::BarramentoI2c::Uso uso(barramentoI2c);
+      leituraTof.valida = uso.conseguiu() && tof.lerDistanciasLaterais(leituraTof.distancias);
+    }
+    if (leituraTof.valida) {
+      // Desvio de cada sensor medido na calibração do boot (zero se ela não aconteceu).
+      leituraTof.distancias = rotinaCalibracao.corrigirTof(leituraTof.distancias);
+    }
     leituraTof.idadeMs = tof.idadeUltimaLeituraMs();
     portENTER_CRITICAL(&travaTof);
     ultimaLeituraTof = leituraTof;
@@ -336,9 +385,10 @@ static void tarefaTelemetria(void*) {
   }
 }
 
-/// Sequência de boot da Rev 2.0 (#50): motores freados e travados, sensores de distância com os
-/// endereços novos, autoteste do I²C, inicialização da IMU e criação das tarefas. As tarefas sobem
-/// mesmo com falha, para a telemetria continuar informando o que falhou.
+/// Sequência de boot da Rev 2.0 (#50): motores freados e travados, barramento I²C, sensores de
+/// distância com os endereços novos, autoteste do I²C e, só com ele aprovado, motores liberados;
+/// depois a IMU (#378) e as tarefas. As tarefas sobem mesmo com falha, para a telemetria continuar
+/// informando o que falhou.
 void setup() {
   // Primeira linha: freia os motores antes de qualquer outra coisa, porque o GPIO20/21 (IN3/IN4)
   // recebe um tranco da ROM durante o reset.
@@ -358,11 +408,12 @@ void setup() {
     encoderDir.iniciar();
   }
 
-  // O barramento I²C é dos 3 VL53L0X e do MPU6050; o driver dos ToF recebe ele já iniciado.
-  // Quando o `BarramentoI2c` do #403 (com mutex) entrar, `barramentoI2c.iniciar(SDA, SCL)` toma o
-  // lugar deste `Wire.begin`. O `tof.iniciar()` e o autoteste podem continuar sem o mutex porque
-  // rodam aqui, antes dos `xTaskCreate` (inclusive o da IMU).
-  Wire.begin(micromouse::pinos::I2C_SDA, micromouse::pinos::I2C_SCL);
+  // O barramento I²C é dos 3 VL53L0X e do MPU6050: `barramentoI2c.iniciar` cria o mutex e inicia o
+  // `Wire`. O `tof.iniciar()` e o autoteste usam o `Wire` sem o mutex porque rodam aqui, antes dos
+  // `xTaskCreate` (inclusive o da IMU). Se falhar, o autoteste aponta os dispositivos sem resposta.
+  if (!barramentoI2c.iniciar(micromouse::pinos::I2C_SDA, micromouse::pinos::I2C_SCL)) {
+    Serial.println("{\"status\":\"falha_barramento_i2c\"}");
+  }
   tof.iniciar();  // o autoteste abaixo diz qual sensor falhou
 
   // Autoteste: os 3 ToF em 0x30, 0x31 e 0x32, o MPU6050 em 0x68 e ninguém no 0x29.
@@ -383,14 +434,25 @@ void setup() {
   estadoBoot.duracaoMs = millis();
   imprimirRelatorioBoot();
 
-  // Barramento I²C (ToF e IMU) e o MPU6050. Sem a IMU o firmware segue, sem ângulo de giro válido.
-  if (!barramentoI2c.iniciar(micromouse::pinos::I2C_SDA, micromouse::pinos::I2C_SCL)) {
-    Serial.println("{\"status\":\"falha_barramento_i2c\"}");
-  }
-  if (imu.iniciar()) {
+  // MPU6050 (#378). Sem a IMU o firmware segue, sem ângulo de giro válido.
+  const bool imuIniciada = imu.iniciar();
+  if (imuIniciada) {
     Serial.printf("{\"status\":\"imu_iniciada\",\"who_am_i\":\"0x%02X\"}\n", imu.identificacao());
   } else {
     Serial.println("{\"status\":\"falha_imu\"}");
+  }
+
+  // Calibração dos ToF e do giroscópio (#240, RNF-08), com o robô parado na célula de partida. Só
+  // com o autoteste aprovado e a IMU de pé: sem isso, não há o que calibrar.
+  if (estadoBoot.ok && imuIniciada) {
+    const micromouse::EstadoRotinaCalibracao calibracao = calibrarSensores();
+    if (calibracao == micromouse::EstadoRotinaCalibracao::Sucesso) {
+      acompanhadorGiro.definirVies(rotinaCalibracao.viesGiroDecimosDps());
+    }
+    Serial.printf("{\"status\":\"calibracao\",\"estado\":\"%s\",\"duracao_ms\":%lu,\"no_prazo\":%s}\n",
+                  micromouse::nomeEstadoRotina(calibracao),
+                  static_cast<unsigned long>(rotinaCalibracao.duracaoMedidaMs()),
+                  rotinaCalibracao.dentroDoOrcamento() ? "true" : "false");
   }
 
   xTaskCreate(tarefaImu, "imu", 3072, nullptr, 3, nullptr);
