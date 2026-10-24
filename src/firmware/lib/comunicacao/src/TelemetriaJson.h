@@ -19,8 +19,8 @@
 /// - `esq_mm`, `dir_mm`, `medio_mm`: deslocamento linear percorrido em milímetros
 /// - `pose_valida`: flag de integridade da pose na malha discreta
 /// - `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`: última leitura dos 3 VL53L0X, em mm (#344)
-/// - `tof_valida`: se a leitura dos 3 sensores é válida (`ILidar::lerDistanciasLaterais`)
-/// - `tof_idade_ms`: idade da amostra mais antiga da leitura (`ILidar::idadeUltimaLeituraMs`)
+/// - `tof_valida`: se a leitura dos 3 sensores é válida (`ISensorDistancia::lerDistanciasLaterais`)
+/// - `tof_idade_ms`: idade da amostra mais antiga da leitura (`ISensorDistancia::idadeUltimaLeituraMs`)
 /// - `boot_ok`, `boot_falhas`, `boot_ms`: resultado do autoteste do boot (#50), repetido em todo pacote
 ///   porque a linha do relatório do boot se perde se o computador ainda não estiver lendo a USB
 

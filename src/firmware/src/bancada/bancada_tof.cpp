@@ -158,6 +158,9 @@ void imprimirLeitura() {
                 static_cast<unsigned long>(agoraMs), valida ? "true" : "false",
                 idade == CombinadorTof::IDADE_DESCONHECIDA ? -1L : static_cast<long>(idade),
                 static_cast<unsigned long>(duracaoUs));
+  // O que a interface entrega à percepção, já limitado à faixa (só vale com "valida": true).
+  Serial.printf(",\"limitada\":{\"frente\":%u,\"esquerda\":%u,\"direita\":%u}", distancias.frenteMm,
+                distancias.esquerdaMm, distancias.direitaMm);
   for (uint8_t i = 0; i < 3; i++) {
     const AmostraTof& amostra = tof.amostra(LADOS[i]);
     Serial.printf(",\"%s\":{\"mm\":%u,\"estado\":\"%s\",\"idade_ms\":%lu}", NOMES[i],

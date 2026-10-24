@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file LidarUart.h
-/// @brief Driver do LiDAR 360° lido por UART: implementa `ILidar` sem depender do Arduino.
+/// @brief Driver do LiDAR 360° lido por UART: implementa `ISensorDistancia` sem depender do Arduino.
 
 #include <stdint.h>
 
@@ -9,7 +9,7 @@
 #include "ConfiguracaoLidar.h"
 #include "IDecodificadorLidar.h"
 #include "IFonteBytes.h"
-#include "ILidar.h"
+#include "ISensorDistancia.h"
 
 namespace micromouse {
 
@@ -35,9 +35,9 @@ namespace micromouse {
 /// DecodificadorLd06 decodificador;
 /// fonte.iniciar(DecodificadorLd06::BAUD_PADRAO, PINO_RX, PINO_TX);  // o LiDAR saiu da Rev 2.0: não há mais pinos dele em Pinos.h
 /// LidarUart lidar(fonte, decodificador, agoraMs);
-/// ILidar& sensor = lidar;
+/// ISensorDistancia& sensor = lidar;
 /// @endcode
-class LidarUart : public ILidar {
+class LidarUart : public ISensorDistancia {
  public:
   /// Função que devolve o tempo em ms desde a partida (no ESP32, um invólucro de `millis()`).
   using FuncaoRelogioMs = uint32_t (*)();
@@ -49,7 +49,7 @@ class LidarUart : public ILidar {
   LidarUart(IFonteBytes& fonte, IDecodificadorLidar& decodificador, FuncaoRelogioMs agoraMs,
             const ConfiguracaoLidar& config = ConfiguracaoLidar{});
 
-  /// @copydoc ILidar::lerDistanciasLaterais
+  /// @copydoc ISensorDistancia::lerDistanciasLaterais
   bool lerDistanciasLaterais(DistanciasLaterais& saida) override;
 
  private:

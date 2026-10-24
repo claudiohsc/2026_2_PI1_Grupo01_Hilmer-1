@@ -24,11 +24,12 @@ constexpr uint32_t TEMPO_MEDICAO_TOF_US = 33000;
 constexpr uint32_t PERIODO_MEDICAO_TOF_MS = 0;
 
 /// Menor distância, em mm, considerada medida válida. Abaixo disso o VL53L0X perde a precisão
-/// (o datasheet garante a medida a partir de cerca de 30 mm).
+/// (o datasheet garante a medida a partir de cerca de 30 mm), e a leitura sai limitada a este valor.
 constexpr uint16_t DISTANCIA_MINIMA_VALIDA_TOF_MM = 30;
 
 /// Maior distância, em mm, considerada medida válida: o alcance do modo padrão em ambiente interno.
-/// Sem alvo no alcance, o sensor devolve 8190 ou 8191 mm, que caem acima deste limite.
+/// Sem alvo no alcance, o sensor devolve 8190 ou 8191 mm, que caem acima deste limite. Acima dele,
+/// a leitura sai limitada a este valor (lado livre).
 constexpr uint16_t DISTANCIA_MAXIMA_VALIDA_TOF_MM = 1200;
 
 /// Idade máxima, em ms, da amostra mais antiga dos 3 sensores. Passando disso, a leitura falha:

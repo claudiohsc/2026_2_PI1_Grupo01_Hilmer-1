@@ -1,5 +1,5 @@
 /// @file test_labirinto_simulado.cpp
-/// @brief Testes unitários do `LabirintoSimulado` e do modo labirinto do `LidarSimulado`.
+/// @brief Testes unitários do `LabirintoSimulado` e do modo labirinto do `SensorDistanciaSimulado`.
 /// Roda no computador: `pio test -e native -f test_labirinto_simulado`.
 
 #include <string.h>
@@ -8,7 +8,7 @@
 #include "Direcao.h"
 #include "LabirintoSimulado.h"
 #include "LabirintosExemplo.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 
 using namespace micromouse;
 
@@ -45,7 +45,7 @@ void verificarDistancias(const LabirintoSimulado& labirinto, Pose pose, uint16_t
   TEST_ASSERT_EQUAL_UINT16(direita, d.direitaMm);
 }
 
-void verificarLeitura(LidarSimulado& lidar, uint16_t frente, uint16_t esquerda, uint16_t direita) {
+void verificarLeitura(SensorDistanciaSimulado& lidar, uint16_t frente, uint16_t esquerda, uint16_t direita) {
   DistanciasLaterais d = {};
   TEST_ASSERT_TRUE(lidar.lerDistanciasLaterais(d));
   TEST_ASSERT_EQUAL_UINT16(frente, d.frenteMm);
@@ -394,12 +394,12 @@ void test_distancias_fora_do_labirinto_ou_sem_carga_falham() {
   TEST_ASSERT_EQUAL_UINT16(3, d.direitaMm);
 }
 
-// ---- LidarSimulado no modo labirinto
+// ---- SensorDistanciaSimulado no modo labirinto
 
 void test_lidar_posicionado_le_o_que_o_labirinto_mostra() {
   LabirintoSimulado labirinto;
   carregarExemplo(labirinto, exemplos::LABIRINTO_4X4);
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   lidar.usarLabirinto(labirinto);
 
   lidar.posicionar({{0, 0}, Direcao::Norte});
@@ -413,7 +413,7 @@ void test_lidar_posicionado_le_o_que_o_labirinto_mostra() {
   verificarLeitura(lidar, 270, 270, 90);
 
   // Pela interface, como a lógica do firmware usa.
-  ILidar& sensor = lidar;
+  ISensorDistancia& sensor = lidar;
   DistanciasLaterais d = {};
   TEST_ASSERT_TRUE(sensor.lerDistanciasLaterais(d));
   TEST_ASSERT_EQUAL_UINT16(270, d.frenteMm);
@@ -422,7 +422,7 @@ void test_lidar_posicionado_le_o_que_o_labirinto_mostra() {
 void test_lidar_no_labirinto_respeita_falha_e_fila() {
   LabirintoSimulado labirinto;
   carregarExemplo(labirinto, exemplos::LABIRINTO_4X4);
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   lidar.definirLeituraFixa({500, 500, 500});
   lidar.usarLabirinto(labirinto);
   DistanciasLaterais d = {};
