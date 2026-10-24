@@ -989,6 +989,82 @@ Os ganhos, as potências e as distâncias de desaceleração estão em `Configur
 
 **Pendências:** o critério 3 da HU-12 (teste de bancada no labirinto sem contato com as paredes) depende do chassi montado e da pista 4×4. O `ControleMovimento` ainda não está na tarefa de navegação: entra junto com os sensores de distância e a navegação ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)).
 
+## Atuação: controle de rumo pelo giroscópio e giros em malha fechada
+
+Na Rev 2.0 do hardware, os encoders físicos de roda ainda não estão disponíveis. O ângulo de guinada (*yaw*) medido e integrado a partir da IMU MPU6050 passa a ser a principal fonte de orientação do micromouse ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)). O sistema utiliza essa orientação em malha fechada para duas finalidades essenciais:
+1. **Giros de 90° e 180° no próprio eixo** (`ControleGiro`): manobras precisas no centro das células com rampa de potência e tolerância angular configurável.
+2. **Correção de desvio de rumo durante o avanço** (`ControleMovimento`): manutenção de trajetórias retilíneas em trechos abertos e amortecimento de oscilações em corredores com paredes.
+
+Ambos os mecanismos compensam o escorregamento dos pneus, assimetrias mecânicas entre motores e irregularidades do piso, atendendo diretamente à [HU-11](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF-11 / RNF-02).
+
+```mermaid
+flowchart TD
+    imu["IMU MPU6050 (ou ImuSimulado)<br/>taxa de giro Z (°/s)"] --> integrador["IntegradorGiro / AcompanhadorGiro<br/>calibração do viés e integração do yaw"]
+    integrador --> leitura["LeituraGiro<br/>ângulo acumulado em mili-graus"]
+
+    subgraph ModoGiro["Manobras de rotação"]
+        leitura --> controleGiro["ControleGiro<br/>giros de ±90° e ±180°"]
+        targetGiro["Alvo angular<br/>(±90 000 ou ±180 000 m°)"] --> controleGiro
+        controleGiro --> rampa["Rampa proporcional<br/>com zona morta (150 a 350)"]
+    end
+
+    subgraph ModoAvanco["Avanço em linha reta"]
+        leitura --> controleMov["ControleMovimento<br/>correção de rumo (PD)"]
+        targetRumo["Rumo alvo (m°)<br/>definirRumoAlvo()"] --> controleMov
+        sensoresDist["Sensores de distância<br/>lateral e frontal"] --> controleMov
+    end
+
+    rampa --> motores["IMotores (MotoresDrv8833 / MotoresSimulados)<br/>potência das rodas"]
+    controleMov --> motores
+```
+
+**Figura 16.** Controle de orientação em malha fechada: o ângulo de guinada (*yaw*) integrado da IMU orienta tanto os giros no próprio eixo (`ControleGiro`) quanto a manutenção da trajetória retilínea durante o avanço (`ControleMovimento`), compensando o deslizamento de rodas e irregularidades do piso (HU-11).
+
+### Giros de 90° e 180° em malha fechada (`ControleGiro`)
+
+* **Erro angular:** $e = \theta_{\text{alvo}} - \theta_{\text{atual}}$, calculado a cada ciclo de 10 ms em mili-graus (onde 1 000 m° = 1° e 90 000 m° = 90°).
+* **Rampa de potência proporcional:** para erros grandes ($|e| \ge 50^\circ$), o controlador aplica a potência máxima (`potenciaMaxima = 350`). Conforme o robô se aproxima do alvo, a potência reduz proporcionalmente até a potência mínima (`potenciaMinima = 150`), valor calibrado para superar a zona morta de atrito estático dos motores N20 sem gerar sobre-elevação excessiva.
+* **Tolerância configurável e estabilização:** quando o erro absoluto $|e| \le \text{toleranciaMiligraus}$ (padrão de $\pm 2,0^\circ$), um contador de ciclos é incrementado. O giro só é considerado concluído (`EstadoGiro::Concluido`) se permanecer na faixa por `ciclosEstabilizacao` consecutivos (3 ciclos = 30 ms), evitando falsos positivos por cruzamento em alta velocidade. Ao concluir, os motores são imediatamente freados.
+* **Tratamento de ultrapassagem (*overshoot*):** se a inércia levar o robô além do alvo angular ($e < 0$), o sinal da potência diferencial é invertido automaticamente para trazê-lo de volta à faixa de tolerância.
+* **Fail-safe de bloqueio (*timeout*):** se o robô colidir ou ficar preso durante a rotação e não atingir a meta em `tempoMaximoGiroMs` (2 500 ms), o controlador transiciona para `EstadoGiro::Timeout` e freia os motores.
+
+### Retidão do avanço e correção de rumo (`ControleMovimento`)
+
+* **Desvio de rumo:** $e_{\text{rumo}} = \text{rumoAlvo} - \theta_{\text{atual}}$. Padrão inicial: 0 m° (o rumo da largada). Pode ser redefinido com `definirRumoAlvo(alvo)` após cada curva.
+* **Correção PD de rumo:** termo proporcional baseado no desvio ($K_p = 80$, ou 8,0 de potência por grau) somado a um termo derivativo filtrado ($K_d = 20$) que amortece variações bruscas de velocidade angular.
+* **Avanço sem paredes laterais (`SemReferencia`):** em cruzamentos, salas abertas ou células sem paredes dos lados, a centralização lateral não tem referência ($0$). Nesses trechos, a correção de rumo do giroscópio assume o controle exclusivo das rodas, mantendo o robô em linha reta sem deriva.
+* **Avanço em corredores com paredes:** a correção total é a soma da centralização lateral (alinhamento ao centro do corredor) com a correção de rumo (amortecimento de atitude angular).
+* **Proteção contra reversão de roda:** a correção total é rigorosamente limitada a 60% da potência base (`correcaoMaximaPercentualDaBase`), garantindo que nenhuma roda gire para trás durante o deslocamento para a frente.
+
+### Parâmetros provisórios de configuração
+
+Todos os parâmetros foram ajustados em simulação física de dinâmica diferencial (`test_controle_giroscopio`) e documentados com comentários Doxygen:
+
+| Parâmetro | Constante / Campo | Valor provisório | Origem / Justificativa |
+|---|---|---|---|
+| Tolerância do giro | `ConfiguracaoGiro::toleranciaMiligraus` | **2 000 m° (2,0°)** | Erro angular admissível para o robô sair alinhado na célula seguinte |
+| Potência máxima de giro | `ConfiguracaoGiro::potenciaMaxima` | **350** | Limita a aceleração angular para evitar derrapagem violenta |
+| Potência mínima de giro | `ConfiguracaoGiro::potenciaMinima` | **150** | Vence a zona morta de atrito estático dos micromotores N20 |
+| Ganho proporcional do giro | `ConfiguracaoGiro::ganhoProporcionalDecimos` | **40 (4,0 pot/°)** | Desacelera a rotação conforme o robô se aproxima do alvo angular |
+| Timeout do giro | `ConfiguracaoGiro::tempoMaximoGiroMs` | **2 500 ms** | Fail-safe caso o robô colida ou fique preso durante a rotação |
+| Ciclos de estabilização | `ConfiguracaoGiro::ciclosEstabilizacao` | **3 ciclos (30 ms)** | Impede falsos positivos causados por simples cruzamento rápido da meta |
+| Ganho proporcional de rumo | `ConfiguracaoControle::ganhoRumoProporcionalDecimos` | **80 (8,0 pot/°)** | Corrige desvios angulares durante o avanço retilíneo |
+| Ganho derivativo de rumo | `ConfiguracaoControle::ganhoRumoDerivativoDecimos` | **20 (2,0 pot/(°/s))** | Amortece a taxa de rotação para evitar serpentear no corredor |
+| Correção máxima de rumo | `ConfiguracaoControle::correcaoRumoMaxima` | **200** | Limita a autoridade de correção angular sobre os motores |
+
+### Interface das Classes
+
+* **`ControleGiro::iniciar(anguloRelativoMiligraus, anguloAtualMiligraus)`:** inicia o controle em malha fechada calculando o alvo absoluto.
+* **`ControleGiro::iniciarGiro90Esquerda(anguloAtual)` / `iniciarGiro90Direita(anguloAtual)`:** atalhos para manobras de 90° (+90 000 m° e −90 000 m°).
+* **`ControleGiro::iniciarGiro180(anguloAtual, paraEsquerda)`:** manobra de meia volta (±180 000 m°).
+* **`ControleGiro::atualizar(anguloAtual, motores, dtMs)` / `atualizar(const LeituraGiro&, motores, dtMs)`:** calcula potências e comanda os atuadores; freia e retorna `EstadoGiro::Concluido` ao estabilizar dentro da tolerância.
+* **`ControleGiro::cancelar()`:** interrompe imediatamente o giro e coloca o estado em `Inativo`.
+* **`ControleMovimento::definirRumoAlvo(alvoMiligraus)`:** define a orientação alvo de avanço em linha reta.
+* **`ControleMovimento::reiniciar(novoRumoAlvoMiligraus)`:** destrava a parada frontal e fixa a nova referência angular de rumo.
+* **`ControleMovimento::desvioRumoMiligraus()`** e **`correcaoRumo()`:** telemetria e diagnóstico do controle angular.
+
+**Rastreabilidade:** `lib/atuacao` (`ControleGiro`, `ControleMovimento`, `ConfiguracaoGiro`) atende à tarefa [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190), associada à [HU-11](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF-11 / RNF-02).
+
 ## Testes
 
 Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. Cada módulo tem sua pasta `test/test_<modulo>/`.
@@ -1136,6 +1212,20 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | | `test_travar_freia_na_hora_e_parar_sempre_passa` | `travar()` freia na hora; `parar()` sempre chega ao driver |
 | | `test_sequencia_do_boot_so_libera_os_motores_com_tudo_presente` | Como no `main.cpp`: sem a IMU os motores não andam; com tudo presente, andam |
 | `test_telemetria_json/test_telemetria_json.cpp` | `test_serializa_resultado_do_boot` | Campos `boot_ok`, `boot_falhas` e `boot_ms` |
+| `test_controle_giroscopio/test_controle_giroscopio.cpp` | `test_giro_90_esquerda_conclui_na_tolerancia` | Giro de 90° à esquerda atinge o alvo dentro da tolerância |
+| | `test_giro_90_direita_conclui_na_tolerancia` | Giro de 90° à direita atinge o alvo dentro da tolerância |
+| | `test_giro_180_esquerda_conclui_na_tolerancia` | Giro de 180° fecha dentro da tolerância |
+| | `test_tolerancia_configuravel_afeta_precisao` | Tolerância estrita (0,5°) vs tolerância ampla (5,0°) |
+| | `test_deslizamento_de_rodas_compensa_e_atinge_90_graus` | Malha fechada compensa 40% de tração e conclui em 90° |
+| | `test_giro_com_giroscopio_simulado_vies_e_calibracao` | Integração com `ImuSimulado` e calibração de viés sem deriva |
+| | `test_rampa_de_potencia_reduz_ao_aproximar_do_alvo` | Rampa proporcional até a potência mínima (150) |
+| | `test_overshoot_inverte_potencia_para_corrigir` | Inversão dos motores em caso de ultrapassagem angular |
+| | `test_timeout_em_caso_de_bloqueio` | Bloqueio mecânico dispara timeout de segurança (2 500 ms) |
+| | `test_avanco_sem_desvio_de_rumo` | Avanço alinhado ao rumo alvo não aplica correção |
+| | `test_avanco_desvio_direita_vira_para_esquerda` | Desvio angular à direita gera correção para a esquerda |
+| | `test_avanco_sem_paredes_laterais_mantem_linha_reta_por_giroscopio` | Sem paredes laterais, giroscópio mantém a retidão do avanço |
+| | `test_avanco_compensa_deslizamento_assimetrico` | Malha fechada compensa assimetria contínua de tração |
+| | `test_avanco_derivada_amortece_rotacao_rapida` | Termo derivativo amortece variações bruscas de atitude |
 
 Para rodar, dentro de `src/firmware`:
 
@@ -1185,6 +1275,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/tof` (`CombinadorTof`), `TofVl53l0x`, `ISensorDistancia::idadeUltimaLeituraMs`, endereços em `Pinos.h`, firmware e menu de bancada | [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344) Driver dos 3 sensores VL53L0X | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
 | `lib/inicializacao` (`AutotesteBoot`, `RelatorioBoot`), `IBarramentoI2c`, `BarramentoI2cEsp32`, `MotoresComTrava` | [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) |
 | `lib/hal` (`IImu`), `lib/simulacao` (`ImuSimulado`), `lib/imu` (`IntegradorGiro`, `ConversorGiro`, `AcompanhadorGiro`), `ImuMpu6050`, `BarramentoI2c`, tarefa da IMU no `main.cpp` | [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) Driver do MPU6050 e ângulo de giro | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
+| `lib/atuacao` (`ControleGiro`, `ControleMovimento`, `ConfiguracaoGiro`) | [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190) Controle de rumo pelo giroscópio: giros de 90° e retidão do avanço | [HU-11](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF11, RNF-02) |
 
 ## Próximos passos
 
@@ -1214,3 +1305,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | 1.0 | 23/10/2026 | Atualização para a Rev 2.0 do hardware: seção nova, pinagem conferida com o esquemático, sensores de distância VL53L0X no lugar do LiDAR, pastas e próximos passos; criação deste histórico ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)) | Ana Carolina Fialho | — |
 | 1.1 | 24/10/2026 | Driver dos 3 VL53L0X: ligação, endereços, regra de validade com fora da faixa limitado, bancada e seus testes no CI, `TofSimulado` e integração com o mapa; interface renomeada para `ISensorDistancia` ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) | Marllon Fausto | — |
 | 1.2 | 24/10/2026 | Boot do sistema: autoteste do I²C, trava dos motores e relatório do boot; camadas dos motores com nome próprio e ordem combinada com as #341 e #380; integração do I²C com o #403 ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) | Marllon Fausto | — |
+| 1.3 | 24/10/2026 | Controle de rumo pelo giroscópio e giros de 90° e 180° em malha fechada ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)) | Rafael Lima | — |
