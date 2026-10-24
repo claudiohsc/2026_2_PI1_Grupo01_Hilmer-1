@@ -19,6 +19,7 @@ src/firmware/
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
 | `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar`, `IEncoder` e `IMotores`) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` para os 3 sensores ToF (VL53L0X) com limiares por lado, filtro digital e saturação defensiva (#379) |
+| `calibracao` | Calibração | Desvio de cada VL53L0X contra distância conhecida (`CalibradorTof`); parâmetros e orçamento em `ConfiguracaoCalibracao.h` (#240, metade ToF). Giro + rotina unificada de 1 s ficam na outra metade da issue |
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula) e armazenamento em memória |
@@ -30,7 +31,7 @@ src/firmware/
 
 ## Regras de dependência
 
-- As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
+- As camadas de lógica (`nucleo`, `percepcao`, `calibracao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
 - O acesso ao hardware passa pelas interfaces de `hal`. Os drivers reais ficam em `drivers_esp32`, e `src/main.cpp` liga cada driver à sua interface.
 - Para testar a lógica sem sensor, use o `LidarSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência, `simularFalha(true)` faz o sensor parar de responder e, com um `LabirintoSimulado`, `posicionar` faz a leitura vir da posição do robô (veja [Labirinto simulado](#labirinto-simulado)).
 - Evite alocação dinâmica na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo (`MAX_LINHAS_LABIRINTO` × `MAX_COLUNAS_LABIRINTO`) bastam.
@@ -94,6 +95,43 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `temParede(celula, direcao)` | `true` se há parede naquele lado; célula fora do labirinto conta como parede |
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
 | `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
+
+## Calibração dos ToF (`CalibradorTof`)
+
+A camada `lib/calibracao` estima o desvio de cada VL53L0X (frente, esquerda, direita) com o robô parado diante de distâncias conhecidas e aplica esse desvio nas leituras seguintes ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240), HU-13 / RF-13). Esta é a **metade ToF** da issue; o viés do giroscópio, a orquestração unificada e a medição do orçamento de 1 s (RNF-08) ficam para a outra metade.
+
+O calibrador **não depende do driver** dos VL53L0X ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): quem chama alimenta `DistanciasLaterais` (via `ILidar` / `LidarSimulado` nos testes, ou o driver real depois do merge da #344).
+
+```cpp
+CalibradorTof calibrador;  // ConfiguracaoCalibracaoTof padrão
+calibrador.iniciar();
+while (calibrador.estado() == EstadoCalibracaoTof::Calibrando) {
+  DistanciasLaterais leitura;
+  if (sensor.lerDistanciasLaterais(leitura)) {
+    calibrador.adicionarAmostra(leitura);
+  }
+}
+DistanciasLaterais corrigida = calibrador.corrigir(leituraBruta);  // bruta − desvio
+```
+
+| Conceito | Comportamento |
+|---|---|
+| Desvio por lado | `média arredondada das amostras − distância de referência` (mm) |
+| `corrigir` | `bruta − desvio`, saturado em `uint16_t` (não fica negativo) |
+| Recusa | Se em algum lado `maior − menor > variacaoMaximaMm`, estado `Recusada` e os desvios anteriores permanecem |
+| Orçamento (parcial) | Fatia ToF prevista: 10 amostras × ~33 ms ≈ 330 ms dentro de `ORCAMENTO_CALIBRACAO_TOF_MS` (400 ms); o total de 1 s e a medição de duração são da metade do giro |
+
+### Valores provisórios (`ConfiguracaoCalibracao.h`)
+
+| Parâmetro | Constante | Valor | Nota |
+|---|---|---|---|
+| Orçamento total | `ORCAMENTO_CALIBRACAO_MS` | **1000 ms** | RNF-08; enforcement na rotina unificada (outra metade) |
+| Fatia ToF | `ORCAMENTO_CALIBRACAO_TOF_MS` | **400 ms** | Margem para o giro no mesmo segundo |
+| Amostras | `AMOSTRAS_CALIBRACAO_TOF` | **10** | ~330 ms com período de medição ~33 ms |
+| Variação máxima | `VARIACAO_MAXIMA_CALIBRACAO_TOF_MM` | **8 mm** | Acima disso, assume movimento/oscilação e recusa |
+| Referência | `DISTANCIA_REFERENCIA_TOF_MM` | **54 mm** | Mesma geometria da percepção (#379); ajustar na bancada (#175) |
+
+Testes: `pio test -e native -f test_calibracao_tof`.
 
 ## Percepção ToF (VL53L0X) e classificação de paredes
 
