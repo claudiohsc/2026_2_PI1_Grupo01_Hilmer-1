@@ -79,6 +79,20 @@ struct ConfiguracaoControle {
   /// Sem leitura válida do LiDAR por este tempo, o robô freia (fail-safe). Antes disso, segue
   /// em linha reta na potência mínima, sem correção.
   uint32_t tempoMaximoSemLeituraMs = 500;
+
+  /// Ganho proporcional do controle de rumo pelo giroscópio (#190), em décimos.
+  /// Potência por grau de desvio angular: (80 = 8,0 de potência por grau de desvio).
+  int16_t ganhoRumoProporcionalDecimos = 80;
+
+  /// Ganho derivativo do controle de rumo pelo giroscópio (#190), em décimos.
+  /// Amortece a velocidade angular durante o avanço em linha reta.
+  int16_t ganhoRumoDerivativoDecimos = 20;
+
+  /// Limite máximo da correção de rumo aplicada aos motores, em unidades de potência.
+  int16_t correcaoRumoMaxima = 200;
+
+  /// Ativa ou desativa a correção de rumo pelo giroscópio durante o avanço (#190).
+  bool habilitarCorrecaoRumo = true;
 };
 
 }  // namespace micromouse
