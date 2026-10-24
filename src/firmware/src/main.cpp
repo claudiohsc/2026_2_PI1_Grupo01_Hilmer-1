@@ -20,6 +20,7 @@
 #include "DetectorObjetivo.h"
 #include "EncoderEsp32.h"
 #include "MedidorDeslocamento.h"
+#include "MotoresComProtecao.h"
 #include "MotoresDrv8833.h"
 #include "Odometria.h"
 #include "Pinos.h"
@@ -67,12 +68,34 @@ static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
                                           false,
                                           true);
 
+/// Os motores vistos pelo resto do firmware: todo comando passa pela proteção contra motor travado
+/// (#341). Use sempre `motoresProtegidos`, e nunca `motores` direto, para a proteção ver a potência.
+static micromouse::MotoresComProtecao motoresProtegidos(motores);
+
+/// Medidas que dizem se o robô se mexeu, para a proteção dos motores: o ToF frontal e a taxa do
+/// giroscópio. Ainda não há sensor de distância (#344) nem giroscópio (#378) no `main.cpp`, então a
+/// leitura frontal vai inválida e a proteção não conclui nada: ela **não freia por engano**, mas
+/// também não protege. Ao ligar os sensores, preencha os três campos aqui; o giroscópio é
+/// obrigatório, senão um giro no lugar (ToF frontal parado) seria lido como motor travado.
+static micromouse::MedidasProtecao medidasDaProtecao() {
+  return micromouse::MedidasProtecao{false, 0, 0};
+}
+
 /// Tarefa de navegação: ciclo percepção → decisão → atuação, a cada 10 ms.
 ///
 /// Prioridade 2 (maior que a da telemetria), para que o envio de dados nunca
 /// atrase o controle do robô.
 static void tarefaNavegacao(void*) {
+  constexpr uint32_t PERIODO_NAVEGACAO_MS = 10;
   for (;;) {
+    // Proteção dos motores: com potência alta por 500 ms sem o robô se mexer, freia e segura o freio
+    // até a navegação liberar (`motoresProtegidos.liberar()`).
+    const uint32_t cortesAntes = motoresProtegidos.cortes();
+    motoresProtegidos.atualizarProtecao(medidasDaProtecao(), PERIODO_NAVEGACAO_MS);
+    if (motoresProtegidos.cortes() != cortesAntes) {
+      Serial.println("{\"status\":\"motor_travado\"}");
+    }
+
     bool alcancou = false;
     // Odometria e detecção de chegada executam na seção crítica travaOdometria para sincronizar com tarefaTelemetria.
     portENTER_CRITICAL(&travaOdometria);
@@ -81,19 +104,19 @@ static void tarefaNavegacao(void*) {
     const bool poseValida = odometria.posicaoValida();
     if (poseValida) {
       // Chegada detectada pela posição na malha: para os motores imediatamente e congela o mapa final (HU-07 / #189)
-      alcancou = detectorObjetivo.processarChegada(pose, motores, &armazenamentoMapa);
+      alcancou = detectorObjetivo.processarChegada(pose, motoresProtegidos, &armazenamentoMapa);
     } else {
       alcancou = detectorObjetivo.objetivoAlcancado();
     }
     portEXIT_CRITICAL(&travaOdometria);
 
     if (alcancou) {
-      vTaskDelay(pdMS_TO_TICKS(10));
+      vTaskDelay(pdMS_TO_TICKS(PERIODO_NAVEGACAO_MS));
       continue;
     }
 
     // Ciclo percepção, decisão e atuação: percepção, mapeamento, navegação e atuação entram aqui.
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(PERIODO_NAVEGACAO_MS));
   }
 }
 
@@ -156,6 +179,10 @@ static void tarefaTelemetria(void*) {
 
 /// Inicializa o log serial pela USB nativa, os encoders e cria as duas tarefas.
 void setup() {
+  // Primeira coisa: freia os motores. Até aqui, GPIO20/21 (IN3/IN4) ficaram com o que a ROM deixou
+  // na UART0 durante o reset (ver README, "Tranco no boot").
+  motores.iniciar();
+
   Serial.begin(115200);
   // Sem um computador conectado, a escrita na USB CDC esperaria o tempo limite a cada chamada e
   // atrasaria a telemetria. Com tempo zero, o dado é descartado se ninguém estiver lendo.
@@ -165,7 +192,6 @@ void setup() {
   // Configuração provisória para bancada (#189): fixa Labirinto4x4.
   // Em 8x4 e 12x4 a corrida deve receber a dimensão por comando antes de iniciar.
   armazenamentoMapa.iniciarCorrida(micromouse::DimensaoMapa::Labirinto4x4);
-  motores.iniciar();  // começa freado
   encoderEsq.iniciar();
   encoderDir.iniciar();
 
