@@ -281,6 +281,125 @@ void test_resolucao_com_falhas_de_leitura() {
   resolverLabirintoSimulado(exemplos::LABIRINTO_4X4, DimensaoMapa::Labirinto4x4, 50, 3);
 }
 
+// ---- #357: validação da pose e passo pendente
+
+namespace {
+
+void verificarPose(const Navegacao& navegacao, uint8_t linha, uint8_t coluna, Direcao direcao) {
+  TEST_ASSERT_EQUAL_UINT8(linha, navegacao.obterPosicao().linha);
+  TEST_ASSERT_EQUAL_UINT8(coluna, navegacao.obterPosicao().coluna);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(direcao), static_cast<uint8_t>(navegacao.obterDirecao()));
+}
+
+void verificarResultado(ResultadoConfirmacao esperado, ResultadoConfirmacao obtido) {
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(esperado), static_cast<uint8_t>(obtido));
+}
+
+}  // namespace
+
+/// @brief definirPose, moverPara e o construtor recusam célula fora do mapa nos três tamanhos,
+/// sem mudar a pose nem o passo pendente.
+void test_pose_fora_do_mapa_e_recusada_nos_tres_tamanhos() {
+  const DimensaoMapa dimensoes[] = {DimensaoMapa::Labirinto4x4, DimensaoMapa::Labirinto8x4,
+                                    DimensaoMapa::Labirinto12x4};
+  for (DimensaoMapa dimensao : dimensoes) {
+    Mapa mapa(dimensao);
+    const uint8_t linhas = mapa.obterLinhas();
+    const uint8_t colunas = mapa.obterColunas();
+
+    Navegacao navegacao(mapa);
+    TEST_ASSERT_TRUE(navegacao.moverPara(1, 1, Direcao::Leste));
+    Direcao dir;
+    TEST_ASSERT_TRUE(navegacao.darPasso(dir));
+
+    // definirPose: linha fora do mapa
+    TEST_ASSERT_FALSE(navegacao.definirPose({pos(linhas, 0), Direcao::Norte}));
+    verificarPose(navegacao, 1, 1, Direcao::Leste);
+    TEST_ASSERT_TRUE(navegacao.passoPendente());
+
+    // moverPara: coluna fora do mapa e limite de uint8_t (como a Odometria pode entregar)
+    TEST_ASSERT_FALSE(navegacao.moverPara(0, colunas, Direcao::Sul));
+    TEST_ASSERT_FALSE(navegacao.moverPara(255, 255, Direcao::Sul));
+    verificarPose(navegacao, 1, 1, Direcao::Leste);
+    TEST_ASSERT_TRUE(navegacao.passoPendente());
+
+    // Construtor: pose inicial fora do mapa começa na partida (0, 0), mantendo a direção
+    Navegacao comPoseInvalida(mapa, pos(linhas - 1, colunas - 1), {pos(linhas, colunas), Direcao::Oeste});
+    verificarPose(comPoseInvalida, 0, 0, Direcao::Oeste);
+    TEST_ASSERT_TRUE(comPoseInvalida.decidirProximaDirecao(dir));
+  }
+}
+
+/// @brief Com o mapa trocado por um menor (nova corrida), a pose antiga fica fora do mapa:
+/// decidirProximaDirecao e darPasso devolvem false sem ler o vetor de distâncias.
+void test_mapa_trocado_deixa_pose_fora_e_nao_le_o_vetor() {
+  Mapa mapa(DimensaoMapa::Labirinto12x4);
+  Navegacao navegacao(mapa, pos(3, 11), {pos(3, 10), Direcao::Norte});
+
+  mapa = Mapa(DimensaoMapa::Labirinto4x4);  // como ArmazenamentoMapa::iniciarCorrida faz
+
+  Direcao dir = Direcao::Sul;
+  TEST_ASSERT_FALSE(navegacao.decidirProximaDirecao(dir));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Direcao::Sul), static_cast<uint8_t>(dir));
+  TEST_ASSERT_FALSE(navegacao.darPasso(dir));
+
+  // Depois de redefinir objetivo e pose para o mapa novo, a navegação volta a funcionar
+  navegacao.definirObjetivo(pos(3, 3));
+  TEST_ASSERT_TRUE(navegacao.definirPose({pos(0, 0), Direcao::Norte}));
+  TEST_ASSERT_TRUE(navegacao.darPasso(dir));
+}
+
+/// @brief O sensor registra a parede depois que o passo foi planejado: o passo é cancelado
+/// (Bloqueado) e o próximo darPasso replaneja, em vez de deixar o robô parado para sempre.
+void test_parede_registrada_depois_do_passo_nao_prende_o_robo() {
+  Mapa mapa(DimensaoMapa::Labirinto4x4);
+  Navegacao navegacao(mapa);  // (0, 0) voltado para o Norte
+
+  Direcao dir;
+  TEST_ASSERT_TRUE(navegacao.darPasso(dir));  // planeja ir ao Norte, para (1, 0)
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Direcao::Norte), static_cast<uint8_t>(dir));
+
+  mapa.registrarParede(pos(0, 0), Direcao::Norte, EstadoParede::Parede);
+
+  verificarResultado(ResultadoConfirmacao::Bloqueado, navegacao.confirmarPose({pos(0, 0), Direcao::Norte}));
+  TEST_ASSERT_FALSE(navegacao.passoPendente());
+
+  // Replaneja a partir da origem: com o Norte fechado, segue para Leste
+  TEST_ASSERT_TRUE(navegacao.darPasso(dir));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Direcao::Leste), static_cast<uint8_t>(dir));
+  TEST_ASSERT_EQUAL_UINT8(0, navegacao.obterCelulaEsperada().linha);
+  TEST_ASSERT_EQUAL_UINT8(1, navegacao.obterCelulaEsperada().coluna);
+}
+
+/// @brief Sem parede no caminho, o robô parado na origem continua EmAndamento (caso normal).
+void test_sem_parede_no_caminho_passo_segue_em_andamento() {
+  Mapa mapa(DimensaoMapa::Labirinto4x4);
+  Navegacao navegacao(mapa);
+
+  Direcao dir;
+  TEST_ASSERT_TRUE(navegacao.darPasso(dir));
+  mapa.registrarParede(pos(0, 0), Direcao::Leste, EstadoParede::Parede);  // parede fora do caminho
+
+  verificarResultado(ResultadoConfirmacao::EmAndamento, navegacao.confirmarPose({pos(0, 0), Direcao::Norte}));
+  TEST_ASSERT_TRUE(navegacao.passoPendente());
+  verificarResultado(ResultadoConfirmacao::Confirmada, navegacao.confirmarPose({pos(1, 0), Direcao::Norte}));
+}
+
+/// @brief cancelarPasso limpa o passo pendente e libera um novo darPasso.
+void test_cancelar_passo_libera_novo_passo() {
+  Mapa mapa(DimensaoMapa::Labirinto4x4);
+  Navegacao navegacao(mapa);
+
+  Direcao dir;
+  TEST_ASSERT_TRUE(navegacao.darPasso(dir));
+  TEST_ASSERT_FALSE(navegacao.darPasso(dir));
+
+  navegacao.cancelarPasso();
+  TEST_ASSERT_FALSE(navegacao.passoPendente());
+  TEST_ASSERT_TRUE(navegacao.darPasso(dir));
+  verificarPose(navegacao, 0, 0, Direcao::Norte);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_flood_fill_mapa_vazio_4x4);
@@ -295,5 +414,10 @@ int main() {
   RUN_TEST(test_resolucao_labirinto_8x4_simulado);
   RUN_TEST(test_resolucao_labirinto_12x4_simulado);
   RUN_TEST(test_resolucao_com_falhas_de_leitura);
+  RUN_TEST(test_pose_fora_do_mapa_e_recusada_nos_tres_tamanhos);
+  RUN_TEST(test_mapa_trocado_deixa_pose_fora_e_nao_le_o_vetor);
+  RUN_TEST(test_parede_registrada_depois_do_passo_nao_prende_o_robo);
+  RUN_TEST(test_sem_parede_no_caminho_passo_segue_em_andamento);
+  RUN_TEST(test_cancelar_passo_libera_novo_passo);
   return UNITY_END();
 }
