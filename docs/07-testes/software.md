@@ -1970,7 +1970,7 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 | Pinos conforme a Rev 2.0, vindos de `Pinos.h` | O `main.cpp` cria o `MotoresDrv8833` com `pinos::MOTOR_ESQ_IN1`, `MOTOR_ESQ_IN2`, `MOTOR_DIR_IN3` e `MOTOR_DIR_IN4` (GPIO10, 3, 20 e 21); `test_pinos` confere que nenhum GPIO se repete | Aprovado |
 | Motores em freio antes do PWM; tranco no boot documentado no README | Revisão do código: `motores.iniciar()` é a primeira linha do `setup()` e põe os pinos em nível alto antes de ligar o PWM, que começa com duty total; seção "Tranco no boot" no README do firmware | Aprovado no código; tranco a medir na bancada |
 | Duty máximo configurável e comprovado em teste no computador | 7 testes do duty em `test_motores` | Aprovado |
-| Motor travado por tempo contínuo em duty alto, sem variação do ToF frontal nem do giroscópio | 22 testes da `ProtecaoMotorTravado` e 8 da `MotoresComProtecao` | Aprovado no computador; as medidas reais entram com o ToF (PR #391) e a IMU (PR #403) |
+| Motor travado por tempo contínuo em duty alto, sem variação do ToF frontal nem do giroscópio | 22 testes da `ProtecaoMotorTravado` e 8 da `MotoresComProtecao` | Aprovado no computador; as medidas reais entram com o ToF (PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391)) e a IMU (PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403)) |
 | Parâmetros provisórios listados no README do firmware | Tabela "Valores provisórios" da seção "Motores N20 (DRV8833)" | Aprovado |
 
 #### Duty máximo e `MotoresComProtecao`
@@ -2068,4 +2068,4 @@ Suíte completa do firmware nesta branch: **299 de 299 aprovados**, em 21 suíte
 #### Pendências desta etapa
 
 - Ligar as medidas reais na proteção: a taxa do giroscópio quando a IMU (PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403)) chegar à `main`, e o ToF frontal com o driver dos VL53L0X (PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391)). Até lá, a proteção está no caminho dos comandos, mas não freia.
-- Bancada (#381): tranco no boot, sentido das rodas, duty máximo com a tensão real do VM e o corte com uma roda presa em potência de cruzeiro.
+- Bancada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)): tranco no boot, sentido das rodas, duty máximo com a tensão real do VM e o corte com uma roda presa em potência de cruzeiro.
