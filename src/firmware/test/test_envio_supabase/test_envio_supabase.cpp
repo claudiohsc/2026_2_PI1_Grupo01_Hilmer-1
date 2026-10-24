@@ -1,7 +1,8 @@
 /// @file test_envio_supabase.cpp
-/// @brief Testes do lado do robô no envio ao Supabase (#238, cliente da #236): o JSON do lote e das
-/// outras chamadas, a leitura das respostas, as credenciais, a reconexão do Wi-Fi e a cadeia coleta →
-/// buffer → JSON → servidor simulado, com a rede caindo no meio.
+/// @brief Testes do lado do robô no envio ao Supabase (#236 e #238): o JSON do lote e das outras
+/// chamadas, a leitura das respostas, as credenciais, o período da coleta e os tempos da rede, a
+/// reconexão do Wi-Fi e a cadeia coleta → buffer → servidor simulado, com a rede caindo no meio e com
+/// o servidor demorando a responder.
 /// Roda no computador: `pio test -e native -f test_envio_supabase`.
 
 #include <ArduinoJson.h>
@@ -14,7 +15,9 @@
 #include <string>
 
 #include "AmostraTelemetria.h"
+#include "Configuracao.h"
 #include "ConfiguracaoRede.h"
+#include "ConfiguracaoReenvio.h"
 #include "ContratoTelemetria.h"
 #include "ControladorEnvio.h"
 #include "CredenciaisSupabase.h"
@@ -120,6 +123,110 @@ class EnvioJsonSimulado : public IEnvioTelemetria {
  private:
   EnvioSimulado& servidor_;
 };
+
+/// Código que o `HTTPClient` devolve quando a resposta não chega no tempo limite
+/// (`HTTPC_ERROR_READ_TIMEOUT`). Negativo: para a `PoliticaReenvio`, é "sem resposta".
+constexpr int TEMPO_ESGOTADO_HTTP = -11;
+
+/// Servidor simulado que demora para responder (#236). Cada chamada gasta `demoraMs` num relógio
+/// simulado, e, enquanto ela não volta, a coleta continua registrando amostras, como a
+/// `tarefaTelemetria` faz enquanto a `tarefaRede` espera a resposta. Se a demora chega ao tempo limite
+/// da rede (`TEMPO_LIMITE_REDE_MS`), o robô desiste no limite e recebe tempo esgotado, mesmo que o
+/// servidor tenha gravado o lote.
+class EnvioLentoSimulado : public IEnvioTelemetria {
+ public:
+  /// Chamada a cada passo de 100 ms da espera, com o relógio já avançado.
+  using Coleta = void (*)(uint32_t agoraMs, void* contexto);
+
+  EnvioLentoSimulado(EnvioSimulado& servidor, uint32_t& relogioMs, Coleta coleta, void* contexto)
+      : servidor_(servidor), relogioMs_(relogioMs), coleta_(coleta), contexto_(contexto) {}
+
+  /// Tempo de resposta das próximas chamadas, em ms (múltiplo de 100).
+  void definirDemora(uint32_t demoraMs) { demoraMs_ = demoraMs; }
+  /// Chamadas em que o robô desistiu no tempo limite.
+  uint32_t temposEsgotados() const { return temposEsgotados_; }
+
+  ResultadoEnvio enviarLote(uint32_t corridaId, const AmostraTelemetria* amostras, uint16_t quantidade) override {
+    const bool esgotou = esperar();
+    const ResultadoEnvio r = servidor_.enviarLote(corridaId, amostras, quantidade);
+    return esgotou ? tempoEsgotado() : r;
+  }
+
+  ResultadoEnvio encerrarCorrida(uint32_t corridaId) override {
+    const bool esgotou = esperar();
+    const ResultadoEnvio r = servidor_.encerrarCorrida(corridaId);
+    return esgotou ? tempoEsgotado() : r;
+  }
+
+ private:
+  static constexpr uint32_t PASSO_MS = 100;
+
+  /// Passa o tempo da chamada em passos de 100 ms, deixando a coleta rodar a cada passo.
+  /// @return `true` se a chamada chegou ao tempo limite da rede.
+  bool esperar() {
+    const bool esgotou = demoraMs_ >= TEMPO_LIMITE_REDE_MS;
+    const uint32_t espera = esgotou ? TEMPO_LIMITE_REDE_MS : demoraMs_;
+    for (uint32_t passado = 0; passado < espera; passado += PASSO_MS) {
+      relogioMs_ += PASSO_MS;
+      coleta_(relogioMs_, contexto_);
+    }
+    return esgotou;
+  }
+
+  ResultadoEnvio tempoEsgotado() {
+    ++temposEsgotados_;
+    return ResultadoEnvio{TEMPO_ESGOTADO_HTTP, 0, 0};
+  }
+
+  EnvioSimulado& servidor_;
+  uint32_t& relogioMs_;
+  Coleta coleta_;
+  void* contexto_;
+  uint32_t demoraMs_ = 0;
+  uint32_t temposEsgotados_ = 0;
+};
+
+/// A `tarefaTelemetria` simulada: registra a amostra de cada segundo assim que o relógio chega nele,
+/// tanto no laço da tarefa de rede quanto durante uma chamada lenta.
+struct ColetaSimulada {
+  ControladorEnvio* controlador = nullptr;
+  const TravaNula* trava = nullptr;
+  uint32_t total = 0;                   ///< Amostras da corrida (uma por segundo).
+  uint32_t proxima = 1;                 ///< Segundo da próxima amostra.
+  bool duranteRede = false;             ///< `true` enquanto uma chamada de rede está em curso.
+  uint32_t registradasDuranteRede = 0;  ///< Amostras registradas com uma chamada de rede em curso.
+  uint32_t comTravaSegura = 0;          ///< Vezes em que a coleta achou a trava segura por outra parte.
+  uint32_t maiorAtrasoMs = 0;           ///< Maior atraso entre o segundo da amostra e o registro.
+};
+
+void coletar(uint32_t agoraMs, void* contexto) {
+  ColetaSimulada& c = *static_cast<ColetaSimulada*>(contexto);
+  while (c.proxima <= c.total && agoraMs >= c.proxima * 1000) {
+    if (c.trava->profundidade() != 0) {
+      ++c.comTravaSegura;
+    }
+    const uint32_t atraso = agoraMs - c.proxima * 1000;
+    if (atraso > c.maiorAtrasoMs) {
+      c.maiorAtrasoMs = atraso;
+    }
+    const bool ultima = c.proxima == c.total;
+    const Pose pose{{static_cast<uint8_t>(c.proxima % 4), static_cast<uint8_t>((c.proxima / 4) % 4)}, Direcao::Leste};
+    c.controlador->registrar(montarAmostra(pose, c.proxima * 1000, 150,
+                                           ultima ? EstadoCorrida::Parado : EstadoCorrida::Explorando,
+                                           ultima ? EventoTelemetria::ObjetivoAlcancado : EventoTelemetria::Nenhum));
+    if (c.duranteRede) {
+      ++c.registradasDuranteRede;
+    }
+    ++c.proxima;
+  }
+}
+
+void coletarDuranteRede(uint32_t agoraMs, void* contexto) {
+  ColetaSimulada& c = *static_cast<ColetaSimulada*>(contexto);
+  c.duranteRede = true;
+  coletar(agoraMs, contexto);
+  c.duranteRede = false;
+}
 
 /// Valor numérico do JSON em milésimos, arredondado (0.12 → 120), para comparar sem ponto flutuante:
 /// o `pio test -e native` não liga a precisão dupla do Unity.
@@ -452,6 +559,20 @@ void test_url_das_funcoes() {
   TEST_ASSERT_EQUAL_size_t(0, montarUrlFuncao(nullptr, "corridas", url, sizeof(url)));
 }
 
+// ---------------------------------------------------------------- período da coleta e tempos da rede
+
+/// #236: a coleta sai a cerca de 1 s, dentro dos 2 s do RNF05; a tarefa de rede roda várias vezes por
+/// período; um buffer cheio (10 minutos) se esvazia em menos de um período depois que a rede volta; e
+/// uma chamada que esgota o tempo limite ainda cabe no prazo do encerramento.
+void test_periodo_da_coleta_e_tempos_da_rede() {
+  TEST_ASSERT_EQUAL_UINT32(1000, PERIODO_TELEMETRIA_MS);
+  TEST_ASSERT_TRUE(PERIODO_TELEMETRIA_MS <= 2000);
+  TEST_ASSERT_TRUE(PERIODO_CICLO_REDE_MS * 5 <= PERIODO_TELEMETRIA_MS);
+  const uint32_t ciclosParaEsvaziar = CAPACIDADE_BUFFER_AMOSTRAS / TAMANHO_MAXIMO_LOTE;  // 6 lotes de 100
+  TEST_ASSERT_TRUE(ciclosParaEsvaziar * PERIODO_CICLO_REDE_MS < PERIODO_TELEMETRIA_MS);
+  TEST_ASSERT_TRUE(TEMPO_LIMITE_REDE_MS < TEMPO_LIMITE_ENCERRAMENTO_MS);
+}
+
 // ---------------------------------------------------------------- reconexão do Wi-Fi
 
 void test_wifi_conecta_na_primeira_tentativa() {
@@ -576,6 +697,68 @@ void test_integracao_corrida_pelo_json_com_rede_caindo_no_meio() {
   TEST_ASSERT_EQUAL_UINT16(0, controlador.ocupacao());
 }
 
+/// #236: corrida de 60 amostras com o servidor respondendo em 200 ms, depois lento (3 s, dentro do
+/// tempo limite), depois passando do tempo limite (o robô desiste em 5 s, mas o servidor grava), com
+/// `503` no meio. A coleta continua registrando durante as chamadas lentas, sem achar a trava segura e
+/// sem atrasar mais que um ciclo; o servidor termina com as 60 amostras, em ordem e sem duplicata; e a
+/// corrida só é encerrada com tudo entregue.
+void test_integracao_servidor_lento_nao_atrasa_a_coleta_nem_duplica() {
+  EnvioSimulado servidor;
+  TravaNula trava;
+  uint32_t agora = 0;
+  ColetaSimulada coleta;
+  EnvioLentoSimulado cliente(servidor, agora, coletarDuranteRede, &coleta);
+  ControladorEnvio controlador(cliente, trava);
+  coleta.controlador = &controlador;
+  coleta.trava = &trava;
+  coleta.total = 60;
+  servidor.vigiarTrava(&trava);
+  controlador.iniciarCorrida(5);
+
+  bool erroForcado = false;
+  bool encerramentoPedido = false;
+  for (int ciclo = 0; ciclo < 5000 && !controlador.encerrada(); ++ciclo) {
+    coletar(agora, &coleta);
+    const uint32_t registradas = coleta.proxima - 1;
+    if (registradas < 15) {
+      cliente.definirDemora(200);
+    } else if (registradas < 30) {
+      cliente.definirDemora(3000);
+    } else if (registradas < 40) {
+      cliente.definirDemora(TEMPO_LIMITE_REDE_MS + 2000);
+    } else {
+      cliente.definirDemora(200);
+    }
+    if (registradas >= 45 && !erroForcado) {
+      servidor.responderProximasCom(503, 2);
+      erroForcado = true;
+    }
+    if (registradas == coleta.total && !encerramentoPedido) {
+      controlador.solicitarEncerramento(agora);  // como a tarefaRede faz depois da última amostra
+      encerramentoPedido = true;
+    }
+    controlador.ciclo(agora);
+    agora += PERIODO_CICLO_REDE_MS;
+  }
+
+  TEST_ASSERT_TRUE(controlador.encerrada());
+  TEST_ASSERT_EQUAL_UINT16(60, servidor.amostrasArmazenadas());
+  for (uint16_t i = 0; i < 60; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(i + 1, servidor.armazenada(i).numeroSequencia);
+    TEST_ASSERT_EQUAL_UINT32((i + 1) * 1000, servidor.armazenada(i).tempoDecorridoMs);
+  }
+  TEST_ASSERT_EQUAL_UINT16(60, servidor.amostrasAoEncerrar());
+  TEST_ASSERT_TRUE(cliente.temposEsgotados() >= 1);       // o caso do tempo limite aconteceu
+  TEST_ASSERT_TRUE(servidor.duplicatasIgnoradas() >= 1);  // e o lote gravado nele voltou sem duplicar
+  TEST_ASSERT_TRUE(coleta.registradasDuranteRede >= 10);  // a coleta seguiu durante as chamadas lentas
+  TEST_ASSERT_TRUE(coleta.maiorAtrasoMs < PERIODO_CICLO_REDE_MS);
+  TEST_ASSERT_EQUAL_UINT32(0, coleta.comTravaSegura);
+  TEST_ASSERT_EQUAL_UINT32(0, servidor.chamadasComTravaSegura());
+  TEST_ASSERT_EQUAL_INT32(1, trava.maiorProfundidade());
+  TEST_ASSERT_EQUAL_UINT32(0, controlador.amostrasPerdidas());
+  TEST_ASSERT_EQUAL_UINT16(0, controlador.ocupacao());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_lote_com_uma_amostra_tem_os_nomes_das_colunas_e_as_unidades_do_banco);
@@ -594,11 +777,13 @@ int main(int, char**) {
   RUN_TEST(test_sem_credenciais_o_envio_fica_desligado);
   RUN_TEST(test_so_https_e_com_certificado_ou_excecao_de_bancada);
   RUN_TEST(test_url_das_funcoes);
+  RUN_TEST(test_periodo_da_coleta_e_tempos_da_rede);
   RUN_TEST(test_wifi_conecta_na_primeira_tentativa);
   RUN_TEST(test_wifi_espera_cada_vez_mais_entre_tentativas_e_volta_a_1s);
   RUN_TEST(test_wifi_que_cai_tenta_de_novo_na_hora_e_conta_a_queda);
   RUN_TEST(test_wifi_que_volta_sozinho_durante_a_espera_e_aceito);
   RUN_TEST(test_wifi_com_o_relogio_dando_a_volta);
   RUN_TEST(test_integracao_corrida_pelo_json_com_rede_caindo_no_meio);
+  RUN_TEST(test_integracao_servidor_lento_nao_atrasa_a_coleta_nem_duplica);
   return UNITY_END();
 }
