@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CANAL_AO_VIVO, useTelemetriaAoVivo } from './useTelemetriaAoVivo';
@@ -43,12 +44,16 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
     expect(result.current.estado).toBe('aguardando');
   });
 
-  it('assina o canal ao vivo e aguarda quando não há corrida em andamento', async () => {
+  it('assina telemetria e corridas em canais separados e aguarda quando não há corrida em andamento', async () => {
     clienteSimulado.definirTabela('corridas', [corridaSimulada({ id: 7, status: 'concluida', tempo_final: 50 })]);
     const { result } = renderHook(() => useTelemetriaAoVivo());
 
     expect(result.current.disponivel).toBe(true);
-    expect(clienteSimulado.obterCanais().map((c) => c.nome)).toEqual([CANAL_AO_VIVO]);
+    // O Realtime recusa o canal inteiro se uma das tabelas não está publicada (hoje, `corridas`).
+    const nomes = clienteSimulado.obterCanais().map((c) => c.nome);
+    expect(nomes).toHaveLength(2);
+    expect(nomes[0]).toMatch(new RegExp(`^${CANAL_AO_VIVO}-telemetria-\\d+$`));
+    expect(nomes[1]).toMatch(new RegExp(`^${CANAL_AO_VIVO}-corridas-\\d+$`));
     await act(async () => {});
     expect(result.current.estado).toBe('aguardando');
     expect(result.current.corrida).toBeNull();
@@ -186,6 +191,24 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
     clienteSimulado.definirErro('corridas', null);
     await enviar(leituraSimulada(2, { corrida_id: 12 }));
     await waitFor(() => expect(result.current.leituras).toHaveLength(2));
+  });
+
+  it('cada montagem usa canais com nome próprio (o supabase-js reaproveita canal de mesmo nome)', () => {
+    renderHook(() => useTelemetriaAoVivo());
+    renderHook(() => useTelemetriaAoVivo());
+    const nomes = clienteSimulado.obterCanais().map((c) => c.nome);
+    expect(nomes).toHaveLength(4);
+    expect(new Set(nomes).size).toBe(4);
+  });
+
+  it('no StrictMode (montar, desmontar, montar) continua recebendo as leituras', async () => {
+    largar(corridaSimulada({ id: 14 }));
+    const { result } = renderHook(() => useTelemetriaAoVivo(), { wrapper: StrictMode });
+    await waitFor(() => expect(result.current.estado).toBe('em_execucao'));
+
+    await enviar(leituraSimulada(1, { corrida_id: 14 }));
+    expect(result.current.leituras).toHaveLength(1);
+    expect(clienteSimulado.obterCanais()).toHaveLength(2);
   });
 
   it('ao desmontar, remove o canal e para de reagir', async () => {

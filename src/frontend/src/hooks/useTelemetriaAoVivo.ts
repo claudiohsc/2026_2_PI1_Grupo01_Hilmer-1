@@ -3,8 +3,15 @@ import { supabase } from '../lib/supabase';
 import { PAINEL_INICIAL, aplicarCorrida, aplicarTelemetria, type PainelAoVivo } from '../lib/painelAoVivo';
 import type { Corrida, Telemetria } from '../tipos';
 
-/** Nome do canal Realtime da tela ao vivo. */
+/** Prefixo do nome dos canais Realtime da tela ao vivo. */
 export const CANAL_AO_VIVO = 'painel-ao-vivo';
+
+/**
+ * Cada montagem do hook usa canais com nome próprio. O supabase-js devolve o canal já
+ * existente quando o nome se repete; no StrictMode (montar, desmontar, montar), a segunda
+ * montagem pegaria o canal que a primeira está removendo e ficaria sem eventos.
+ */
+let montagens = 0;
 
 export interface TelemetriaAoVivo extends PainelAoVivo {
   /** `false` se o Supabase não está configurado (a tela usa os dados de exemplo). */
@@ -22,8 +29,10 @@ export interface TelemetriaAoVivo extends PainelAoVivo {
  *    `painelAoVivo.ts`, que ignoram linhas repetidas e de corridas encerradas.
  * 4. Leitura de uma corrida que a tela ainda não conhece: busca essa corrida e as leituras dela.
  *    É assim que a tela percebe uma largada nova, porque hoje só `telemetria` e `mapa_celulas`
- *    estão na publicação do Realtime (migração `seguranca_rls`). Eventos de `corridas` também
- *    são tratados, para quando a tabela entrar na publicação.
+ *    estão na publicação do Realtime (migração `seguranca_rls`).
+ * 5. Eventos de `corridas` ficam num canal separado, para quando a tabela entrar na publicação.
+ *    Separado porque o Realtime recusa o canal inteiro quando uma das tabelas assinadas não
+ *    está publicada, e aí nem as leituras de `telemetria` chegariam.
  *
  * Sem Supabase configurado, devolve `disponivel: false` e o painel inicial.
  */
@@ -74,11 +83,9 @@ export function useTelemetriaAoVivo(): TelemetriaAoVivo {
       if (corrida) await carregar(corrida);
     };
 
-    const canal = cliente
-      .channel(CANAL_AO_VIVO)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'corridas' }, (payload) => {
-        if (ativo && payload.new) aplicar(payload.new as Corrida);
-      })
+    const montagem = ++montagens;
+    const canalTelemetria = cliente
+      .channel(`${CANAL_AO_VIVO}-telemetria-${montagem}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'telemetria' }, (payload) => {
         if (!ativo) return;
         const leitura = payload.new as Telemetria;
@@ -87,6 +94,13 @@ export function useTelemetriaAoVivo(): TelemetriaAoVivo {
         } else {
           void buscarCorrida(leitura.corrida_id);
         }
+      })
+      .subscribe();
+
+    const canalCorridas = cliente
+      .channel(`${CANAL_AO_VIVO}-corridas-${montagem}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'corridas' }, (payload) => {
+        if (ativo && payload.new) aplicar(payload.new as Corrida);
       })
       .subscribe();
 
@@ -111,7 +125,8 @@ export function useTelemetriaAoVivo(): TelemetriaAoVivo {
 
     return () => {
       ativo = false;
-      void cliente.removeChannel(canal);
+      void cliente.removeChannel(canalTelemetria);
+      void cliente.removeChannel(canalCorridas);
     };
   }, []);
 

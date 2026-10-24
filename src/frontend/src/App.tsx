@@ -43,6 +43,8 @@ export function App() {
     labirintos.find((l) => l.id === aoVivo.corrida?.labirinto_id) ??
     labirintos.find((l) => l.tipo === tipo) ??
     corridaExemplo.labirinto;
+  // Com uma corrida real, o cabeçalho mostra o labirinto dela, e não a escolha do modo exemplo.
+  const corridaReal = aoVivo.disponivel && aoVivo.corrida !== null;
   const painel = aoVivo.disponivel
     ? {
         labirinto: labirintoAoVivo,
@@ -78,9 +80,10 @@ export function App() {
         aba={aba}
         aoMudarAba={setAba}
         labirintos={labirintos}
-        tipoSelecionado={tipo}
+        tipoSelecionado={corridaReal ? labirintoAoVivo.tipo : tipo}
         aoSelecionarLabirinto={selecionarLabirinto}
         estado={painel.estado}
+        seletorTravado={corridaReal}
       />
 
       <main className="app__conteudo">
