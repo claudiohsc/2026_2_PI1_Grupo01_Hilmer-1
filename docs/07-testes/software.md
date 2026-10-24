@@ -1701,7 +1701,7 @@ Os testes verificaram os critérios de aceitação definidos na issue #235 e na 
 | Faixa de medição em arquivo de configuração e conversão da leitura | 5 testes da conversão (4 faixas, sinal, arredondamento, fundo de escala, faixa cobre giro rápido) | Aprovado |
 | Integração do yaw com viés removido (giro, deriva e viés simulados) | 16 testes unitários do `IntegradorGiro`, 3 de integração e 7 do `AcompanhadorGiro` | Aprovado |
 | Leitura do giroscópio Z em intervalo fixo | `tarefaImu` com `vTaskDelayUntil` a cada 10 ms; os 7 testes do `AcompanhadorGiro` simulam o ciclo dela | Aprovado no computador; intervalo real na bancada |
-| I²C compartilhado com os ToF, protegido contra uso simultâneo | `BarramentoI2c` com mutex do FreeRTOS, usado por toda transação do `ImuMpu6050`. Não há teste no computador (o mutex é do FreeRTOS) | Aprovado do lado da IMU; o driver dos ToF (PR #391) ainda precisa usar o `BarramentoI2c::Uso` |
+| I²C compartilhado com os ToF, protegido contra uso simultâneo | `BarramentoI2c` com mutex do FreeRTOS, usado por toda transação do `ImuMpu6050`. Não há teste no computador (o mutex é do FreeRTOS) | Aprovado do lado da IMU; o driver dos ToF (PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391)) ainda precisa usar o `BarramentoI2c::Uso` |
 | Registradores do sensor só no `esp32c3`, e `pio test -e native` passando | Registradores só em `drivers_esp32/ImuMpu6050.cpp`; contas puras em `ConversorGiro.h`, com 3 testes; suíte nativa completa aprovada | Aprovado |
 
 #### Testes unitários e de integração
@@ -1782,7 +1782,7 @@ Para conferir se os testes detectam erros, e não só passam, 17 alterações pr
 
 #### Driver, barramento I²C e tarefa da IMU
 
-Segunda parte da #378: o driver do MPU6050, o barramento I²C protegido, o `AcompanhadorGiro` e a tarefa da IMU no `main.cpp` (documentação em [Driver, barramento I²C e tarefa da IMU](../04-projeto-conceitual/firmware.md#driver-barramento-i2c-e-tarefa-da-imu)).
+Segunda parte da [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378): o driver do MPU6050, o barramento I²C protegido, o `AcompanhadorGiro` e a tarefa da IMU no `main.cpp` (documentação em [Driver, barramento I²C e tarefa da IMU](../04-projeto-conceitual/firmware.md#driver-barramento-i2c-e-tarefa-da-imu)).
 
 | Item | Valor |
 |---|---|
@@ -1832,4 +1832,4 @@ Suíte completa do firmware nesta branch: **314 de 314 aprovados**, em 20 suíte
 #### Pendências desta etapa
 
 - Driver dos VL53L0X (PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391)): fazer cada leitura dentro de um `BarramentoI2c::Uso`, para a proteção do barramento valer também do lado dos ToF.
-- Leitura do sensor real na bancada (#381): `imu_iniciada` com `who_am_i` 0x68 no log, sinal do giro (`INVERTER_GIRO_Z`), viés e ruído do MPU6050 parado, para ajustar a zona morta e os limites da calibração, e um giro de 90° feito à mão conferido no ângulo.
+- Leitura do sensor real na bancada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)): `imu_iniciada` com `who_am_i` 0x68 no log, sinal do giro (`INVERTER_GIRO_Z`), viés e ruído do MPU6050 parado, para ajustar a zona morta e os limites da calibração, e um giro de 90° feito à mão conferido no ângulo.
