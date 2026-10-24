@@ -276,14 +276,16 @@ Na Rev 2.0, o robô só libera os motores depois de encontrar os 4 dispositivos 
 1. Motores freados e **travados** (`MotoresComTrava`): travado, todo comando de potência vira freio.
 2. `Wire.begin` e `tof.iniciar()`: os 3 VL53L0X saem do reset um por vez e recebem 0x30, 0x31 e 0x32 (#344).
 3. `AutotesteBoot::verificar`: varre de 0x08 a 0x77 e confere os ToF esquerdo (0x30), frontal (0x31) e direito (0x32) e o MPU6050 (0x68, com o `WHO_AM_I` = 0x68).
-4. Aprovado, `motoresTracao.liberar()`; com qualquer falha, os motores ficam travados **até reiniciar** e o log diz o que falhou.
+4. Aprovado, `motoresComTrava.liberar()`; com qualquer falha, os motores ficam travados **até reiniciar** e o log diz o que falhou.
 5. A linha `{"tipo":"boot",...}` sai no log, e as tarefas sobem mesmo com falha.
 
 ```cpp
-MotoresComTrava motoresTracao(motores);              // quem aciona as rodas usa este, não o driver
+MotoresComTrava motoresComTrava(motores);            // quem aciona as rodas usa este, não o driver
 ResultadoBoot r = autoteste.verificar(barramento, {tofEsqIniciado, tofFrenteIniciado, tofDirIniciado});
-if (r.aprovado()) { motoresTracao.liberar(); }
+if (r.aprovado()) { motoresComTrava.liberar(); }
 ```
+
+No `main.cpp`, cada camada dos motores tem o próprio nome (`motores` é o driver, `motoresComTrava` a trava) e a navegação aciona as rodas só por `motoresTracao`, uma referência à camada de fora. Ordem combinada quando as outras camadas entrarem: `MotoresComTrava` (#50) → `MotoresComProtecao` (#341) → `MotoresComEstimativa` (#380) → `MotoresDrv8833`. O `motores.iniciar()` é a primeira linha do `setup()`, para frear antes de tudo.
 
 | Situação | Estado no relatório | Libera os motores? |
 |---|---|---|
@@ -305,7 +307,7 @@ Exemplo do relatório:
 
 O `boot_ms` é o `millis()` no fim do `setup()`, contado desde o início do programa: a ROM e o bootloader do ESP32-C3 rodam antes e ficam de fora. Para o tempo desde o ligar, meça na bancada.
 
-Os parâmetros ficam em `lib/inicializacao/src/ConfiguracaoBoot.h`. O `WHO_AM_I` esperado é **provisório**: módulos com clone do MPU6050 respondem outro valor (0x70, 0x72, 0x98); se a bancada mostrar um desses em `mpu6050_who_am_i`, confirme com a eletrônica e troque lá. Repetir as tentativas durante a corrida é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava (`motoresTracao.travar()`).
+Os parâmetros ficam em `lib/inicializacao/src/ConfiguracaoBoot.h`. O `WHO_AM_I` esperado é **provisório**: módulos com clone do MPU6050 respondem outro valor (0x70, 0x72, 0x98); se a bancada mostrar um desses em `mpu6050_who_am_i`, confirme com a eletrônica e troque lá. Repetir as tentativas durante a corrida é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava (`motoresComTrava.travar()`).
 
 ## Instalação
 

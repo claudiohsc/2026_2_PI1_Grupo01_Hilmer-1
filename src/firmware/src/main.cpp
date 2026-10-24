@@ -74,9 +74,15 @@ static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
                                           false,
                                           true);
 
-/// Trava dos motores (#50): começa travada e só é liberada com o autoteste do boot aprovado. Quem
-/// aciona as rodas usa `motoresTracao`, nunca o driver direto, para a trava valer.
-static micromouse::MotoresComTrava motoresTracao(motores);
+/// Trava dos motores (#50): começa travada e só é liberada com o autoteste do boot aprovado.
+static micromouse::MotoresComTrava motoresComTrava(motores);
+
+/// Motores que a navegação aciona: sempre a camada de fora, nunca o driver direto, para a trava
+/// valer. Cada camada tem o próprio nome e esta referência aponta para a de fora. Ordem combinada
+/// quando as outras camadas entrarem: `MotoresComTrava` (#50) → `MotoresComProtecao` (#341) →
+/// `MotoresComEstimativa` (#380) → `MotoresDrv8833`. Com a trava por fora, a proteção recebe freio
+/// enquanto o robô não foi liberado e não acusa um motor travado falso.
+static micromouse::IMotores& motoresTracao = motoresComTrava;
 
 /// Resultado do autoteste do boot, para a telemetria repetir em todo pacote. Só o `setup()` escreve,
 /// antes de criar as tarefas; depois é só lido, então não precisa de seção crítica.
@@ -230,6 +236,9 @@ static void tarefaTelemetria(void*) {
 /// endereços novos, autoteste do I²C e, só com ele aprovado, motores liberados. As tarefas sobem
 /// mesmo com falha, para a telemetria continuar informando o que falhou.
 void setup() {
+  // Primeira linha: freia os motores antes de qualquer outra coisa, porque o GPIO20/21 (IN3/IN4)
+  // recebe um tranco da ROM durante o reset.
+  motores.iniciar();
   Serial.begin(115200);
   // Sem um computador conectado, a escrita na USB CDC esperaria o tempo limite a cada chamada e
   // atrasaria a telemetria. Com tempo zero, o dado é descartado se ninguém estiver lendo.
@@ -239,11 +248,13 @@ void setup() {
   // Configuração provisória para bancada (#189): fixa Labirinto4x4.
   // Em 8x4 e 12x4 a corrida deve receber a dimensão por comando antes de iniciar.
   armazenamentoMapa.iniciarCorrida(micromouse::DimensaoMapa::Labirinto4x4);
-  motores.iniciar();  // começa freado
   encoderEsq.iniciar();
   encoderDir.iniciar();
 
   // O barramento I²C é dos 3 VL53L0X e do MPU6050; o driver dos ToF recebe ele já iniciado.
+  // Quando o `BarramentoI2c` do #403 (com mutex) entrar, `barramentoI2c.iniciar(SDA, SCL)` toma o
+  // lugar deste `Wire.begin`. O `tof.iniciar()` e o autoteste podem continuar sem o mutex porque
+  // rodam aqui, antes dos `xTaskCreate` (inclusive o da IMU).
   Wire.begin(micromouse::pinos::I2C_SDA, micromouse::pinos::I2C_SCL);
   tof.iniciar();  // o autoteste abaixo diz qual sensor falhou
 
@@ -255,9 +266,9 @@ void setup() {
   micromouse::AutotesteBoot::descreverFalhas(estadoBoot.resultado, estadoBoot.falhas, sizeof(estadoBoot.falhas));
   estadoBoot.ok = estadoBoot.resultado.aprovado();
   if (estadoBoot.ok) {
-    motoresTracao.liberar();
+    motoresComTrava.liberar();
   } else {
-    motoresTracao.travar();
+    motoresComTrava.travar();
     Serial.printf("micromouse: falha no boot (%s): motores travados ate reiniciar\n", estadoBoot.falhas);
   }
 
