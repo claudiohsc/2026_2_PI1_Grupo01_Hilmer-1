@@ -941,6 +941,55 @@ o ciclo de vida da requisição e expõe os estados `{ corridas, carregando, err
   a interface exibe `"Nenhuma corrida registrada."`. Caso o usuário aplique um filtro que não
   tenha correspondências, a mensagem passa a ser `"Nenhuma corrida registrada para este filtro."`.
 
+#### Filtro do histórico por labirinto na consulta ao banco (HU-15)
+
+O controle segmentado do histórico (`FiltroLabirinto`: Todos, Labirinto 1 (4×4), Labirinto 2
+(8×4) e Labirinto 3 (12×4), Frames `04_History_View_M1` a `M3`) passou a **consultar o banco já
+filtrado** (tarefa [#234](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234), HU-15). Antes, o `useCorridas` buscava todas as
+corridas e a tela escondia no navegador as de outros labirintos.
+
+```mermaid
+sequenceDiagram
+    actor U as Usuário
+    participant F as FiltroLabirinto
+    participant T as TelaHistorico
+    participant H as useCorridas(labirintoId)
+    participant DB as Supabase · corridas
+    U->>F: clica em "Labirinto 2 (8×4)"
+    F->>T: aoMudar('8x4')
+    T->>T: '8x4' → labirintoId = 2 (tabela labirintos)
+    T->>H: useCorridas(2)
+    H->>DB: select * where labirinto_id = 2<br/>order by data_hora_inicio desc
+    DB-->>H: só as corridas do labirinto 2
+    H-->>T: corridas
+    T-->>U: tabela e contagem do filtro
+```
+
+**Figura.** Fluxo do filtro: a opção escolhida vira o `id` do labirinto, e o filtro vai na
+consulta ao banco. "Todos" consulta sem filtro.
+
+**Regras.**
+
+- **Consulta filtrada:** com um labirinto escolhido, o hook consulta
+  `corridas` com `.eq('labirinto_id', id)`; com "Todos", sem filtro. A ordenação continua da
+  mais recente para a mais antiga.
+- **Troca de filtro:** cada troca refaz a consulta, e o botão "Atualizar" repete a consulta
+  com o filtro atual.
+- **Resposta fora de ordem:** se a pessoa trocar o filtro depressa, só vale a resposta da
+  consulta mais recente. Uma resposta atrasada do filtro anterior é ignorada e não
+  sobrescreve a tabela.
+- **Sem Supabase configurado:** o filtro é aplicado às corridas de exemplo.
+- **Filtro no navegador:** continua só como garantia, para as corridas recebidas por props e
+  para um tipo de labirinto que não exista na tabela `labirintos` (nesse caso a tabela fica
+  vazia).
+
+**Interface.** `useCorridas(labirintoId: number | null = null)`: `null` traz todas as corridas;
+um `id` traz só as daquele labirinto. O retorno não mudou: `{ corridas, carregando, erro, recarregar }`.
+
+**Observação para o backend.** A coluna `corridas.labirinto_id` não tem índice nas migrações.
+Com poucas corridas por labirinto não faz diferença; se o histórico crescer, vale
+`CREATE INDEX ON corridas (labirinto_id);`.
+
 #### Infraestrutura de testes automatizados e cliente Supabase simulado (#394)
 
 Para garantir a confiabilidade do dashboard e permitir que as próximas tarefas (#231, #234, #239 e #242) implementem testes de unidade e integração sem depender de conexão com o banco de dados nem expor chaves de serviço, foi desenvolvida a infraestrutura de testes automatizados em `src/frontend` (tarefa [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)).
@@ -1140,3 +1189,4 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 1.2 | 19/10/2026 | Documenta a consulta do histórico de corridas no Supabase: hook useCorridas, ordenação e estado vazio ([#235](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235)) | Rafael Lima | Ana Carolina Fialho |
 | 1.3 | 23/10/2026 | Atualiza o contexto, os critérios da HU-02 e da HU-13 e a arquitetura para a Rev 2.0 do hardware: 3 VL53L0X e MPU6050 por I²C no lugar do LiDAR, e pinagem nova ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)) | Ana Carolina Fialho | — |
 | 1.4 | 23/10/2026 | Documenta a infraestrutura de testes do frontend (Vitest e Testing Library), o cliente Supabase simulado e o CI ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) | Rafael Lima | Eduardo Viana |
+| 1.5 | 24/10/2026 | Documenta o filtro do histórico por labirinto na consulta ao banco ([#234](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234)) | Ana Carolina Fialho | — |

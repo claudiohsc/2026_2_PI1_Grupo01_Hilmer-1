@@ -2464,3 +2464,103 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 - [#234 Filtro de histórico](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234): expandirá os testes de filtros e paginação da tela de histórico.
 - [#239 Exibição de mapa e percurso](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239): utilizará os testes de parsing e células de `labirinto.ts` integrados à grade visual.
 - [#242 Estado "Aguardando Largada"](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242): utilizará o hook `useReproducaoCorrida` e os estados do painel.
+
+### Sprint 5 · Filtro do histórico por labirinto
+
+!!! warning "Testes em simulação"
+    Os testes automatizados deste registro rodaram **no computador**, com o Supabase simulado em memória (`src/test/supabaseSimulado.ts`, do [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) no lugar do banco real. As corridas usadas foram **inventadas pelos testes**, só com o formato real da tabela `corridas`.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#234 Filtro do histórico por tipo de labirinto](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234) |
+| História de usuário | HU-15 · Gestão de corridas, RF15 |
+| Código testado | `src/frontend` (branch `feat/234-filtro-historico`, commit `76dd7ea`) |
+| Data da execução | 24/10/2026 |
+| Executado por | Ana Carolina Fialho |
+| Tipo de teste | Unitário e de integração, no computador, com dados simulados |
+| Documentação do código | [Software: filtro do histórico por labirinto na consulta ao banco](../04-projeto-conceitual/software.md#filtro-do-historico-por-labirinto-na-consulta-ao-banco-hu-15) |
+
+**Ambiente de execução:** macOS (Apple Silicon), Node.js 22.22.3, Vitest 5.0.5, Testing Library, jsdom, Vite 6 e TypeScript 5.
+
+#### Critérios da issue e testes
+
+| Critério da #234 | Testes | Situação |
+|---|---|:-:|
+| Cada opção mostra só as corridas daquele labirinto; "Todos" mostra tudo | Integração da tela: cada opção consulta o banco com o `labirinto_id` certo e a tabela mostra só as corridas dele; "Todos" consulta sem filtro e mostra todas. Integração do hook: as 3 opções, "Todos", troca de filtro, resposta atrasada, erro e modo sem Supabase | Aprovado |
+| Consulta ao banco com o filtro escolhido | O auxiliar `src/test/registroConsultas.ts` registra cada consulta feita ao Supabase simulado e os testes conferem o `eq('labirinto_id', id)` enviado | Aprovado |
+| Layout igual aos Frames 04_History_View_M1 a M3 | Unitário do `FiltroLabirinto`: as 4 opções na ordem dos Frames e só a escolhida marcada como ativa. A comparação visual com o protótipo é feita pelas capturas anexadas ao PR | Aprovado no automatizado; comparação visual no PR |
+
+#### Testes unitários e de integração
+
+```bash
+cd src/frontend
+npm install
+npx vitest run src/componentes/FiltroLabirinto.test.tsx src/hooks/useCorridas.test.ts src/paginas/TelaHistorico.test.tsx
+```
+
+| Arquivo | Casos novos | Nível | O que verificam |
+|---|:-:|---|---|
+| `componentes/FiltroLabirinto.test.tsx` | 6 | Unitário | As 4 opções na ordem dos Frames; para cada valor, só a opção certa fica ativa (`aria-pressed` e classe); o clique avisa a opção escolhida |
+| `hooks/useCorridas.test.ts` | 8 | Integração | Sem filtro, consulta sem `labirinto_id` e traz tudo em ordem decrescente; com os labirintos 1, 2 e 3, o filtro vai na consulta e só voltam as corridas dele; trocar o filtro refaz a consulta; resposta atrasada do filtro anterior é ignorada; erro do banco; modo sem Supabase |
+| `paginas/TelaHistorico.test.tsx` | 3 | Integração | Cada opção do filtro consulta o banco com o labirinto escolhido e mostra só as corridas dele; com as corridas por props, o filtro funciona no navegador; "Atualizar" repete a consulta com o filtro escolhido |
+
+**Resultado:** 21 de 21 aprovados nos três arquivos (17 casos novos e os 4 que já existiam em `TelaHistorico.test.tsx`).
+
+```text
+✓ hooks/useCorridas.test.ts > sem filtro, consulta o banco sem labirinto_id e traz todas, da mais recente para a mais antiga
+✓ hooks/useCorridas.test.ts > com o labirinto 1, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > com o labirinto 2, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > com o labirinto 3, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > trocar o labirinto refaz a consulta com o filtro novo
+✓ hooks/useCorridas.test.ts > uma resposta atrasada do filtro anterior não sobrescreve a do filtro atual
+✓ hooks/useCorridas.test.ts > com erro no banco, avisa e não troca a lista
+✓ hooks/useCorridas.test.ts > sem Supabase configurado, filtra as corridas de exemplo
+✓ componentes/FiltroLabirinto.test.tsx > mostra as 4 opções na ordem dos Frames M1 a M3: Todos, 4×4, 8×4 e 12×4
+✓ componentes/FiltroLabirinto.test.tsx > com o valor todos, só a opção "Todos os Labirintos" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 4x4, só a opção "Labirinto 1 (4×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 8x4, só a opção "Labirinto 2 (8×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 12x4, só a opção "Labirinto 3 (12×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > avisa a opção clicada
+✓ paginas/TelaHistorico.test.tsx > renderiza as corridas retornadas pelo cliente Supabase simulado
+✓ paginas/TelaHistorico.test.tsx > permite filtrar as corridas pelo tipo de labirinto selecionado
+✓ paginas/TelaHistorico.test.tsx > cada opção do filtro consulta o banco com o labirinto escolhido e mostra só as corridas dele (#234)
+✓ paginas/TelaHistorico.test.tsx > com as corridas recebidas por props, o filtro funciona no navegador
+✓ paginas/TelaHistorico.test.tsx > o botão Atualizar repete a consulta com o filtro escolhido
+✓ paginas/TelaHistorico.test.tsx > atualiza os dados na tabela ao clicar no botão Atualizar
+✓ paginas/TelaHistorico.test.tsx > exibe mensagem de erro quando o cliente Supabase falha na consulta
+
+ Test Files  3 passed (3)
+      Tests  21 passed (21)
+```
+
+#### Cobertura, suíte completa e build
+
+```bash
+npm run test:cobertura
+npm run build
+```
+
+| Arquivo | Linhas | Desvios |
+|---|:-:|:-:|
+| `componentes/FiltroLabirinto.tsx` | 100% | 100% |
+| `hooks/useCorridas.ts` | 100% | 94% |
+| `paginas/TelaHistorico.tsx` | 92% | 96% |
+
+A linha sem cobertura em `TelaHistorico.tsx` é o botão "Tentar novamente" do alerta de erro, que já não tinha teste antes desta tarefa.
+
+Suíte completa do frontend: **57 de 57 aprovados** (eram 40). `npm run build` (`tsc --noEmit` e Vite): concluído sem erros.
+
+#### Prova de mutação
+
+Para conferir se os testes detectam erros, e não só passam, 13 alterações propositais foram feitas no código, uma de cada vez. Por exemplo: não mandar o filtro ao banco, mandar sempre o labirinto 1, aceitar a resposta atrasada, não refazer a consulta na troca de filtro, inverter a ordenação, marcar a opção ativa errada e tirar uma das opções do filtro.
+
+| Execução | Resultado |
+|---|---|
+| Primeira rodada | 12 de 13 alterações detectadas; "tirar o filtro no navegador" passou despercebida, porque o banco simulado já devolvia só as corridas certas |
+| Correção | Teste novo com as corridas recebidas por props, em que só o filtro no navegador atua |
+| Rodada final | **13 de 13 alterações detectadas** |
+
+#### Pendências desta etapa
+
+- Comparação visual com os Frames `04_History_View_M1` a `M3`: capturas da tela com cada filtro anexadas ao PR de código.
+- Índice em `corridas.labirinto_id` no banco (sugestão para o backend; sem efeito com poucas corridas).
