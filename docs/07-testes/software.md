@@ -1888,6 +1888,91 @@ O menu `scripts/bancada_tof.py` foi executado contra uma placa simulada (porta s
 - **Valores provisórios:** trocar os de `ConfiguracaoTof.h` pelos medidos na bancada.
 - **Hardware:** confirmar com a eletrônica que o módulo aceita o XSHUT em 3,3 V e que os pinos de *strapping* (GPIO2, GPIO8 e GPIO9) não impedem o boot com os sensores ligados.
 
+#### Revisão do PR #391 (24/10/2026)
+
+A revisão do PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391) pediu quatro mudanças no código, feitas no branch `feat/344-driver-vl53l0x` (commits `579fff7`, `e466217`, `2a51308` e `aa4f134`). Esta execução registra o resultado depois delas; a execução de 22/10, acima, fica como estava.
+
+| Pedido da revisão | O que foi feito | Verificação |
+| :--- | :--- | :--- |
+| Renomear a interface, que agora representa os 3 VL53L0X | `ILidar` → `ISensorDistancia`, `LidarSimulado` → `SensorDistanciaSimulado` e `test_lidar_simulado.cpp` → `test_sensor_distancia_simulado.cpp`, num commit só (`579fff7`); `LidarUart` e `DecodificadorLd06` mantidos | Suíte completa e build da placa |
+| Fora de alcance e abaixo do mínimo não devem derrubar a leitura inteira | Decidido com a [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379), que já satura as distâncias: `ForaDeAlcance` sai como 1200 mm (livre) e `AbaixoDoMinimo` como 30 mm (parede); só `Falha`, `SemAmostra` e idade acima de 100 ms recusam (`e466217`). **Muda o 4º critério de pronto da tabela acima:** fora da faixa deixou de devolver `false` | 5 casos novos no `test_tof` |
+| Teste de integração com amostras brutas | `TofSimulado` (`lib/simulacao`) e `test_integracao_tof`: `TofSimulado → CombinadorTof → ClassificadorParede → AtualizadorMapa → Mapa` nos labirintos 4×4, 8×4 e 12×4 (`2a51308`) | 8 casos no `test_integracao_tof` |
+| Bancada sem testes e fora do CI | `scripts/testes/test_bancada_tof.py` (32 casos, sem placa nem `pyserial`); o CI compila o `bancada_tof` e ganhou o job "Scripts de bancada" (`aa4f134`) | 32 casos e o CI do push |
+
+**Casos novos ou alterados**
+
+| Caso de teste | O que verifica | Resultado |
+| :--- | :--- | :--- |
+| `test_fora_de_alcance_vale_limitado_ao_maximo_e_fica_exposto_por_sensor` | 8190 mm na frente: a leitura vale com 1200 mm; a amostra guarda 8190 mm, `ForaDeAlcance` e o instante. Substitui `test_fora_de_alcance_invalida_a_leitura_mas_fica_exposto_por_sensor` | Aprovado |
+| `test_abaixo_do_minimo_vale_limitado_ao_minimo` | 12 mm na esquerda: a leitura vale com 30 mm. Substitui `test_abaixo_do_minimo_invalida_a_leitura` | Aprovado |
+| `test_os_tres_lados_fora_da_faixa_ainda_montam_a_leitura` | 8191, 0 e 65535 mm viram 1200, 30 e 1200 mm | Aprovado |
+| `test_falha_derruba_a_leitura_mesmo_com_os_outros_fora_da_faixa` | Uma falha recusa a leitura mesmo com os outros lados fora da faixa | Aprovado |
+| `test_leitura_fora_da_faixa_velha_tambem_falha` | Com 101 ms, a leitura fora da faixa também falha | Aprovado |
+| `test_configuracao_altera_faixa_e_idade` | Também confere a limitação na faixa configurada (50 a 500 mm) | Aprovado |
+| `test_mapa_final_identico_ao_labirinto_4x4`, `_8x4` e `_12x4` | Pelas amostras brutas, o robô simulado visita todas as células, sem leitura recusada nem conflito, e o mapa final é igual ao labirinto | Aprovado |
+| `test_corredores_sem_alvo_viram_passagem_livre_e_o_mapa_fecha` | 12×4 em serpentina (corredores a 2070 mm do centro): há amostras de 8190 mm e o mapa fecha igual ao labirinto | Aprovado |
+| `test_amostra_bruta_e_a_distancia_da_face_do_sensor` | Em (0, 0) Norte, `{630, 90, 90}` do centro viram `{600, 60, 60}` da face dos sensores | Aprovado |
+| `test_sensor_sem_alvo_entrega_o_alcance_maximo` | Amostra de 8190 mm (`ForaDeAlcance`) e leitura de 1200 mm | Aprovado |
+| `test_sensor_encostado_registra_parede` | 12 mm forçados na esquerda viram 30 mm e a parede Oeste entra no mapa sem conflito | Aprovado |
+| `test_sensor_sem_resposta_nao_altera_o_mapa` | Sensor direito em falha: leitura recusada, estado `Falha` e mapa igual; volta ao religar | Aprovado |
+
+**Saída da execução**
+
+```bash
+pio test -e native -f test_tof -f test_integracao_tof -v
+```
+
+```text
+test/test_tof/test_tof.cpp:216:test_sem_amostras_a_leitura_falha:PASS
+test/test_tof/test_tof.cpp:217:test_tres_amostras_validas_montam_a_leitura_por_lado:PASS
+test/test_tof/test_tof.cpp:218:test_classificacao_nos_limites_da_faixa:PASS
+test/test_tof/test_tof.cpp:219:test_falha_tem_prioridade_sobre_a_distancia:PASS
+test/test_tof/test_tof.cpp:220:test_sensor_com_falha_invalida_a_leitura:PASS
+test/test_tof/test_tof.cpp:221:test_fora_de_alcance_vale_limitado_ao_maximo_e_fica_exposto_por_sensor:PASS
+test/test_tof/test_tof.cpp:222:test_abaixo_do_minimo_vale_limitado_ao_minimo:PASS
+test/test_tof/test_tof.cpp:223:test_os_tres_lados_fora_da_faixa_ainda_montam_a_leitura:PASS
+test/test_tof/test_tof.cpp:224:test_falha_derruba_a_leitura_mesmo_com_os_outros_fora_da_faixa:PASS
+test/test_tof/test_tof.cpp:225:test_leitura_fora_da_faixa_velha_tambem_falha:PASS
+test/test_tof/test_tof.cpp:226:test_sensor_que_nunca_mediu_invalida_a_leitura:PASS
+test/test_tof/test_tof.cpp:227:test_a_idade_e_a_da_amostra_mais_antiga:PASS
+test/test_tof/test_tof.cpp:228:test_leitura_velha_falha_e_volta_quando_chega_amostra_nova:PASS
+test/test_tof/test_tof.cpp:229:test_leitura_volta_depois_de_uma_falha:PASS
+test/test_tof/test_tof.cpp:230:test_idade_correta_quando_o_relogio_da_a_volta:PASS
+test/test_tof/test_tof.cpp:231:test_reiniciar_esquece_as_amostras:PASS
+test/test_tof/test_tof.cpp:232:test_configuracao_altera_faixa_e_idade:PASS
+17 Tests 0 Failures 0 Ignored
+test/test_integracao_tof/test_integracao_tof.cpp:225:test_mapa_final_identico_ao_labirinto_4x4:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:226:test_mapa_final_identico_ao_labirinto_8x4:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:227:test_mapa_final_identico_ao_labirinto_12x4:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:228:test_corredores_sem_alvo_viram_passagem_livre_e_o_mapa_fecha:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:229:test_amostra_bruta_e_a_distancia_da_face_do_sensor:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:230:test_sensor_sem_alvo_entrega_o_alcance_maximo:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:231:test_sensor_encostado_registra_parede:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:232:test_sensor_sem_resposta_nao_altera_o_mapa:PASS
+8 Tests 0 Failures 0 Ignored
+```
+
+**Verificação de detecção de falhas:** com o `CombinadorTof` voltado temporariamente à regra antiga (qualquer estado diferente de `Valida` recusa a leitura), o `test_integracao_tof` reprovou 3 casos: no 12×4 de corredores, o robô parou na partida (1 de 48 células visitadas), e o "sem alvo" e o sensor encostado tiveram a leitura recusada. O arquivo foi restaurado depois da verificação.
+
+**Testes do menu de bancada**
+
+```bash
+python3 -m unittest discover -s scripts/testes -v
+```
+
+O `test_bancada_tof.py` troca a porta serial por um falso que devolve as linhas JSON do `bancada_tof.cpp` e confere: o protocolo (resposta pedida, log e JSON quebrado no meio, erro da placa, prazo esgotado e sem conexão); cada etapa do roteiro (fiação, endereços, taxa e tempo, régua com a tolerância de 10 mm ou 5%, fora da faixa e sensor ausente) com APROVADO, REPROVADO ou OBSERVADO; o relatório em Markdown; e se os limites do passo 5 são os do `ConfiguracaoTof.h`. Resultado: **32 testes, OK**, também sem o `pyserial` instalado (`python3 -S`).
+
+**Suíte completa, build e CI**
+
+| Verificação | Resultado |
+|---|---|
+| `pio test -e native_cobertura` | **303 aprovados, 0 falhas** (eram 263 na execução de 22/10; a diferença inclui o que veio da `main` desde então) |
+| `pio run -e esp32c3` | **Sucesso**; RAM 4,6% (15.156 de 327.680 bytes), Flash 21,9% (286.858 de 1.310.720 bytes) |
+| `pio run -e bancada_tof` | **Sucesso**; RAM 4,4% (14.388 de 327.680 bytes), Flash 21,4% (280.010 de 1.310.720 bytes) |
+| CI do push (`aa4f134`) | Testes nativos (com o mínimo de 80% de cobertura), Build ESP32-C3 (com o `bancada_tof`), Scripts de bancada, backend e frontend: **todos aprovados** |
+
+As pendências da execução de 22/10 continuam valendo: bancada com os sensores montados ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)), troca dos valores provisórios e confirmação do XSHUT em 3,3 V com a eletrônica.
+
 ### Sprint 5 · Percepção para ToF: limiares, filtro e geometria dos sensores
 
 | Item | Valor |
