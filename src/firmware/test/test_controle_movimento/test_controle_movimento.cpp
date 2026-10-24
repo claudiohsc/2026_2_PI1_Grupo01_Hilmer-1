@@ -13,7 +13,7 @@
 #include "ControladorCentralizacao.h"
 #include "ControleMovimento.h"
 #include "IMotores.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 #include "MotoresSimulados.h"
 #include "PerfilParadaFrontal.h"
 #include "SinaisDrv8833.h"
@@ -257,7 +257,7 @@ void test_leitura_valida_zera_o_tempo_sem_leitura() {
 /// `atualizar` lê o LiDAR pela interface e comanda os motores: potência enquanto anda, freio
 /// quando para.
 void test_atualizar_le_o_lidar_e_comanda_os_motores() {
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   MotoresSimulados motores;
   ControleMovimento controle;
 

@@ -23,6 +23,8 @@ npm run dev                  # abre em http://localhost:5173
 | Comando | O que faz |
 |---|---|
 | `npm run dev` | Servidor de desenvolvimento com recarga automática, em `http://localhost:5173`. |
+| `npm test` | Executa todos os testes unitários e de integração com Vitest. |
+| `npm run test:cobertura` | Executa os testes e gera o relatório de cobertura de código. |
 | `npm run build` | Confere os tipos (`tsc --noEmit`) e gera a versão final em `dist/`. |
 | `npm run preview` | Serve a pasta `dist/` para conferir o build. |
 
@@ -65,7 +67,8 @@ src/frontend/
     ├── paginas/               # TelaAoVivo (Frames 01–03) e TelaHistorico (Frame 04)
     ├── hooks/                 # useLabirintos, useCorridas (leitura no Supabase) e useReproducaoCorrida
     ├── lib/                   # supabase.ts (cliente), formatacao.ts, labirinto.ts
-    └── dados/                 # Dados de exemplo: labirintos, corrida e histórico
+    ├── dados/                 # Dados de exemplo: labirintos, corrida e histórico
+    └── test/                  # setup.ts e cliente Supabase simulado reutilizável (supabaseSimulado.ts)
 ```
 
 ---
@@ -85,6 +88,33 @@ Ao clicar em `INICIAR CORRIDA`, a corrida de exemplo é reproduzida 4× mais rá
 ### Histórico de Consultas (Frame 04 e filtros M1–M3)
 
 Tabela integrada ao banco de dados via Supabase (`supabase-js`), consultando as corridas reais com Data/Hora, Labirinto, Tentativa (com a nota: 1ª = 10, 2ª = 7,5, 3ª = 5), Tempo final, Velocidade média, Bateria e Status, ordenadas da corrida mais recente para a mais antiga (`data_hora_inicio` decrescente). Suporta filtro por labirinto (`Todos os Labirintos` / `Labirinto 1 (4×4)` / `Labirinto 2 (8×4)` / `Labirinto 3 (12×4)`), atualização sob demanda e tratamento de estado vazio.
+
+---
+
+## Testes
+
+O frontend conta com testes unitários e de integração utilizando **Vitest** e **Testing Library** (com ambiente `jsdom`).
+
+### Como rodar os testes
+
+```bash
+cd src/frontend
+npm test                 # Roda todos os testes uma vez
+npm run test:watch       # Modo contínuo (recarrega ao salvar arquivos)
+npm run test:cobertura   # Gera relatório de cobertura com V8
+```
+
+### O que é testado
+
+* **Formatação (`src/lib/formatacao.test.ts`)**: testes unitários das regras de exibição e conversão (tempo em `mm:ss.mmm` e `m:ss`, velocidade, percentual linear de bateria LiPo 2S, notas de 10 a 5 por tentativa e formatação de datas).
+* **Labirinto (`src/lib/labirinto.test.ts`)**: testes unitários do algoritmo de parsing de labirintos em ASCII, verificação de paredes cardeais, percurso com retorno de becos sem saída e mapa de células exploradas.
+* **Hook de reprodução (`src/hooks/useReproducaoCorrida.test.ts`)**: testes unitários do cronômetro acelerado (4×), avanço e filtragem temporal de telemetria, transição para o estado concluído ao atingir o objetivo e corte pelo limite de 10:00 (RNF-03).
+* **Integração do Histórico (`src/paginas/TelaHistorico.test.tsx`)**: teste de integração da tela de histórico montada com o cliente Supabase simulado, verificando o carregamento assíncrono das corridas do banco, aplicação dos filtros por tipo de labirinto, botão de atualização sob demanda e tratamento de erro de conexão.
+* **Cliente Supabase simulado (`src/test/supabaseSimulado.ts`)**: implementação reutilizável em memória para os testes do frontend, compatível com consultas encadeadas (`.from().select().order().eq()`), inserção de registros e canais Realtime (`.channel().on('postgres_changes', ...).subscribe()`).
+
+### Integração contínua (CI)
+
+O workflow [`.github/workflows/ci-frontend.yml`](../../.github/workflows/ci-frontend.yml) executa o check **"Testes do frontend"** em todos os Pull Requests e pushes para a branch `main`. O job realiza a instalação limpa (`npm ci`), executa todos os testes com cobertura (`npm run test:cobertura`) e confere os tipos e compilação de produção (`npm run build`).
 
 ---
 

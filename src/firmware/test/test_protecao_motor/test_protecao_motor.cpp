@@ -1,7 +1,7 @@
 /// @file test_protecao_motor.cpp
 /// @brief Testes da proteção contra motor travado sem encoder (#341): a regra de tempo em duty
 /// alto sem movimento do ToF frontal nem do giroscópio, e a integração com o `ControleMovimento`,
-/// o `LidarSimulado` e os `MotoresSimulados`.
+/// o `SensorDistanciaSimulado` e os `MotoresSimulados`.
 /// Roda no computador: `pio test -e native -f test_protecao_motor`.
 
 #include <unity.h>
@@ -12,7 +12,7 @@
 #include "ConfiguracaoProtecaoMotor.h"
 #include "ControleMovimento.h"
 #include "IMotores.h"
-#include "LidarSimulado.h"
+#include "SensorDistanciaSimulado.h"
 #include "MotoresSimulados.h"
 #include "ProtecaoMotorTravado.h"
 
@@ -236,7 +236,7 @@ namespace {
 
 /// Um ciclo da navegação: o controle comanda os motores a partir do LiDAR simulado e a proteção
 /// confere o resultado. Se travar, freia, como a tarefa de navegação fará.
-EstadoProtecao cicloDaNavegacao(ControleMovimento& controle, LidarSimulado& lidar, MotoresSimulados& motores,
+EstadoProtecao cicloDaNavegacao(ControleMovimento& controle, SensorDistanciaSimulado& lidar, MotoresSimulados& motores,
                                 ProtecaoMotorTravado& protecao, int16_t taxaGiroDecimosDps) {
   controle.atualizar(lidar, motores, DT_MS);
   DistanciasLaterais leitura = {0, 0, 0};
@@ -254,7 +254,7 @@ EstadoProtecao cicloDaNavegacao(ControleMovimento& controle, LidarSimulado& lida
 /// Robô preso numa parede falsa: o controle manda potência de cruzeiro, a leitura não muda, e a
 /// proteção freia os motores no tempo limite.
 void test_integracao_robo_preso_e_freado() {
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   MotoresSimulados motores;
   ControleMovimento controle;
   ProtecaoMotorTravado protecao;
@@ -275,7 +275,7 @@ void test_integracao_robo_preso_e_freado() {
 /// Robô andando de verdade: a leitura frontal diminui a cada ciclo e a proteção nunca atua, até o
 /// controle parar na parede.
 void test_integracao_robo_andando_nao_e_freado() {
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   MotoresSimulados motores;
   ControleMovimento controle;
   ProtecaoMotorTravado protecao;
@@ -295,7 +295,7 @@ void test_integracao_robo_andando_nao_e_freado() {
 /// Depois de travar, a navegação reinicia o controle e a proteção; sem o obstáculo, o robô anda
 /// de novo sem ser freado.
 void test_integracao_destrava_e_volta_a_andar() {
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   MotoresSimulados motores;
   ControleMovimento controle;
   ProtecaoMotorTravado protecao;
@@ -319,7 +319,7 @@ void test_integracao_destrava_e_volta_a_andar() {
 
 /// Sem leitura do sensor (falha), a proteção não conclui nada e o controle segue seu fail-safe.
 void test_integracao_sem_leitura_nao_dispara_a_protecao() {
-  LidarSimulado lidar;
+  SensorDistanciaSimulado lidar;
   MotoresSimulados motores;
   ControleMovimento controle;
   ProtecaoMotorTravado protecao;
