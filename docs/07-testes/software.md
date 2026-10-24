@@ -2104,6 +2104,27 @@ pio run -e bancada_tof
 - **Valores provisórios:** conferir o `WHO_AM_I` do módulo montado (`mpu6050_who_am_i` no relatório) e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (endereço 0x68).
 - **Calibração do giroscópio:** a configuração do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) calibra com 200 amostras de 10 ms (2 s), o que sozinho estoura os 2 s do RNF-09 e o 1 s do RNF-08. A decisão fica com a [#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240) e a [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378).
 
+#### Atualização com o #391 revisado e ajustes de integração (24/10/2026)
+
+O branch `feat/50-boot-autoteste` recebeu o driver dos VL53L0X já revisado no PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391) (merge `93392c3`): interface renomeada para `ISensorDistancia`, medida fora da faixa limitada à faixa, `TofSimulado` e a bancada no CI. O autoteste do boot não muda com isso, porque usa só o `sensorIniciado()` de cada ToF, não a leitura.
+
+No mesmo branch, o commit `b605db7` fez os ajustes de integração com as [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341), [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) e [#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380), sem mudar a regra do boot:
+
+| Ajuste | O que mudou |
+| :--- | :--- |
+| Camadas dos motores com nome próprio | A trava passou a se chamar `motoresComTrava`; `motoresTracao` virou uma referência (`IMotores&`) à camada de fora, a única que a navegação aciona |
+| Ordem dos decoradores | Registrada no `main.cpp` e no README: `MotoresComTrava` → `MotoresComProtecao` → `MotoresComEstimativa` → `MotoresDrv8833` |
+| Freio na primeira linha | `motores.iniciar()` voltou a ser a primeira linha do `setup()`, antes do `Serial.begin` |
+| I²C com a IMU | Comentário no `setup()`: o `barramentoI2c.iniciar()` do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) toma o lugar do `Wire.begin`; o autoteste roda antes dos `xTaskCreate` |
+
+| Verificação | Resultado |
+|---|---|
+| `pio test -e native` | **328 aprovados, 0 falhas** (eram 304); `test_boot` com os mesmos 24 casos |
+| `pio run -e esp32c3` | **Sucesso**; RAM 4,7% (15.268 de 327.680 bytes), Flash 22,1% (290.212 de 1.310.720 bytes) |
+| `pio run -e bancada_tof` | **Sucesso**; RAM 4,4% (14.388 de 327.680 bytes), Flash 21,4% (280.010 de 1.310.720 bytes) |
+
+A pendência da bancada continua: medir na placa o tempo desde o ligar, que o `boot_ms` não conta (critério "tempo de boot medido e registrado" da #50).
+
 ### Sprint 5 · Percepção para ToF: limiares, filtro e geometria dos sensores
 
 | Item | Valor |

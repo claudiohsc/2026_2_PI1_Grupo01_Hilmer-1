@@ -338,11 +338,11 @@ Na Rev 2.0, o boot passa pelo I²C: os 3 VL53L0X precisam receber os endereços 
 
 ```mermaid
 flowchart TD
-    a["setup(): motores freados<br/>e travados (MotoresComTrava)"] --> b["Wire.begin(SDA, SCL)"]
+    a["setup(), 1ª linha: motores.iniciar()<br/>freados e travados (MotoresComTrava)"] --> b["Wire.begin(SDA, SCL)"]
     b --> c["tof.iniciar()<br/>XSHUT um por vez: 0x30, 0x31, 0x32"]
     c --> d["AutotesteBoot::verificar<br/>varre 0x08 a 0x77"]
     d --> e{"4 dispositivos ok<br/>e ninguém no 0x29?"}
-    e -- "sim" --> f["motoresTracao.liberar()"]
+    e -- "sim" --> f["motoresComTrava.liberar()"]
     e -- "não" --> g["motores travados até reiniciar<br/>log diz o que falhou"]
     f --> h["relatório do boot (linha JSON)<br/>e criação das tarefas"]
     g --> h
@@ -367,7 +367,9 @@ flowchart TD
 
 * **Identidade do MPU6050:** além de responder no 0x68, o registrador `WHO_AM_I` (0x75) precisa valer 0x68, para outro chip nesse endereço não passar pela IMU. Usa só o `Wire`, sem depender do driver da IMU ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)).
 * **Falha:** os motores ficam travados **até o robô ser reiniciado**. Repetir as tentativas durante a corrida e reiniciar um ToF pelo XSHUT é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava.
-* **Trava dos motores:** a `MotoresComTrava` envolve o driver e começa travada. Travada, todo `definirPotencia` vira `parar()`; o `parar()` sempre passa. Quem aciona as rodas (o detector do objetivo hoje e o controle de movimento depois) recebe a trava em vez do driver.
+* **Trava dos motores:** a `MotoresComTrava` envolve o driver e começa travada. Travada, todo `definirPotencia` vira `parar()`; o `parar()` sempre passa. O `motores.iniciar()` é a primeira linha do `setup()`, para frear antes de tudo, porque o GPIO20/21 (IN3/IN4) recebe um tranco da ROM durante o reset.
+* **Camadas dos motores:** no `main.cpp`, cada camada tem o próprio nome: `motores` é o driver e `motoresComTrava`, a trava. Quem aciona as rodas (o detector do objetivo hoje e o controle de movimento depois) usa só `motoresTracao`, uma referência (`IMotores&`) à camada de fora. Ordem combinada para quando as outras camadas entrarem: `MotoresComTrava` (#50) → `MotoresComProtecao` ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) → `MotoresComEstimativa` ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)) → `MotoresDrv8833`. Com a trava por fora, a proteção recebe freio enquanto o robô não foi liberado e não acusa um motor travado falso; quando as camadas se juntarem, só a referência `motoresTracao` muda.
+* **I²C compartilhado com a IMU:** o `BarramentoI2c` do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) (com mutex) vai tomar o lugar do `Wire.begin` do `setup()`, com `barramentoI2c.iniciar(SDA, SCL)` antes do `tof.iniciar()`. O `tof.iniciar()` e o autoteste não precisam do mutex, porque rodam antes dos `xTaskCreate` (inclusive o da IMU). Fica para essa integração unificar o `BarramentoI2cEsp32` com o `BarramentoI2c`, por exemplo com o `BarramentoI2cEsp32` usando o `BarramentoI2c::Uso` por dentro.
 * **Tempo do boot (RNF-09):** `boot_ms` é o `millis()` no fim do `setup()`, contado desde o início do programa. A ROM e o bootloader do ESP32-C3 rodam antes e ficam de fora; o tempo desde o ligar precisa ser medido na bancada.
 
 **Parâmetros:** em `lib/inicializacao/src/ConfiguracaoBoot.h`.
@@ -1151,3 +1153,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | 0.7 | 22/10/2026 | Algoritmo de resolução; detecção do objetivo e evento na telemetria ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183), [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) | Rafael Lima | — |
 | 1.0 | 23/10/2026 | Atualização para a Rev 2.0 do hardware: seção nova, pinagem conferida com o esquemático, sensores de distância VL53L0X no lugar do LiDAR, pastas e próximos passos; criação deste histórico ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)) | Ana Carolina Fialho | — |
 | 1.1 | 24/10/2026 | Driver dos 3 VL53L0X: ligação, endereços, regra de validade com fora da faixa limitado, bancada e seus testes no CI, `TofSimulado` e integração com o mapa; interface renomeada para `ISensorDistancia` ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) | Marllon Fausto | — |
+| 1.2 | 24/10/2026 | Boot do sistema: autoteste do I²C, trava dos motores e relatório do boot; camadas dos motores com nome próprio e ordem combinada com as #341 e #380; integração do I²C com o #403 ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) | Marllon Fausto | — |
