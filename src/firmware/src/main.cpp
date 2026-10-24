@@ -58,6 +58,11 @@ static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
 /// Deslocamento sem encoder (#380): estima o avanço pela potência comandada e o corrige pelos ToF.
 /// Quem acionar as rodas (o `ControleMovimento`, na #184) deve usar `motoresTracao`, para o
 /// estimador saber a potência; com os encoders instalados, `motoresTracao` é o próprio driver.
+///
+/// A estimativa fica colada no driver, para ver só o que chega de fato às rodas. Os outros
+/// decoradores envolvem `motoresTracao`, nesta ordem: `MotoresComTrava` (#50) →
+/// `MotoresComProtecao` (#341) → `MotoresComEstimativa` → `MotoresDrv8833`. Assim um comando
+/// recusado pela trava ou pela proteção chega ao estimador como freio.
 static micromouse::DeslocamentoEstimado deslocamento(motores);
 static micromouse::IMotores& motoresTracao =
     micromouse::ENCODERS_INSTALADOS ? static_cast<micromouse::IMotores&>(motores) : deslocamento.motores();

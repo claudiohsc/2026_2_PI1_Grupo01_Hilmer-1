@@ -56,6 +56,11 @@ struct PontoVelocidade {
 /// régua quanto ele andou e divida por 2. Repita para cada ponto (comece pela zona morta: a menor
 /// potência em que ele se move). Se o robô andar mais (ou menos) do que a odometria diz, é aqui
 /// que se corrige.
+///
+/// Meça só com o limite de duty da #341 valendo (`LIMITE_DUTY_MOTORES_MILESIMOS`, provisório em
+/// 70%, no `MotoresDrv8833`): com ele, a potência 1000 vira duty 716 de 1023, e as menores ficam
+/// proporcionais. Medida antes dele, a tabela dá mm/s acima dos reais. Se o limite mudar, meça de
+/// novo.
 constexpr PontoVelocidade TABELA_VELOCIDADE[] = {
     {150, 45},
     {400, 120},
