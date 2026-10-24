@@ -939,6 +939,26 @@ o ciclo de vida da requisição e expõe os estados `{ corridas, carregando, err
   a interface exibe `"Nenhuma corrida registrada."`. Caso o usuário aplique um filtro que não
   tenha correspondências, a mensagem passa a ser `"Nenhuma corrida registrada para este filtro."`.
 
+#### Infraestrutura de testes automatizados e cliente Supabase simulado (#394)
+
+Para garantir a confiabilidade do dashboard e permitir que as próximas tarefas (#231, #234, #239 e #242) implementem testes de unidade e integração sem depender de conexão com o banco de dados nem expor chaves de serviço, foi desenvolvida a infraestrutura de testes automatizados em `src/frontend` (tarefa [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)).
+
+**Tecnologias adotadas:**
+- **Vitest:** executor de testes nativo para projetos Vite com suporte direto a ESM e TypeScript sem etapa extra de compilação.
+- **Testing Library (`@testing-library/react` e `@testing-library/jest-dom`):** testes centrados no comportamento do usuário a partir da árvore de acessibilidade do DOM.
+- **JSDOM:** ambiente de emulação do DOM do navegador em Node.js.
+- **V8 Coverage (`@vitest/coverage-v8`):** mensuração de cobertura de código por linhas, funções, *branches* e *statements*.
+
+**Cliente Supabase simulado reutilizável (`src/test/supabaseSimulado.ts`).**
+Para isolar os testes de requisições de rede reais, foi criada a fábrica `criarClienteSupabaseSimulado`. O cliente provê:
+- **Padrão Query Builder:** suporta métodos encadeados como `.from('corridas').select('*').order('data_hora_inicio', { ascending: false }).eq(...).limit(...)`. Retorna um objeto que implementa `PromiseLike` (método `.then()`), comportando-se como uma *Promise* idêntica ao cliente real do `@supabase/supabase-js`.
+- **Canais Realtime:** suporte a `.channel(nome).on('postgres_changes', filtro, callback).subscribe()`, permitindo testar fluxos reativos em que novas telemetrias ou corridas chegam via WebSocket simulado.
+- **Disparo de eventos:** o método `cliente.emitirRealtime(tabela, evento, novoRegistro)` despacha payloads formatados aos ouvintes de forma assíncrona (`queueMicrotask`), reproduzindo o comportamento do Supabase Realtime nos testes de componentes e hooks.
+- **Injeção via mock:** no Vitest, os testes substituem o cliente real por `vi.mock('../lib/supabase', () => ({ supabase: clienteSimulado }))`, permitindo que os componentes executem seu ciclo de vida completo sem alterações no código de produção.
+
+**Integração Contínua (CI):**
+O workflow `.github/workflows/ci-frontend.yml` valida todo PR e *push* para a branch `main`, executando `npm ci`, a suíte de testes com cobertura (`npm run test:cobertura`) e a verificação estática de tipos e build (`npm run build`). O workflow opera sem filtro de caminhos, garantindo conformidade com a política de proteção de branch do repositório.
+
 > - **Roteiro de testes funcionais:**
 >   - Código do caso de teste;
 >   - Nome do caso de teste;
@@ -1116,3 +1136,4 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 1.0 | 18/10/2026 | Documenta a escrita de corridas mediada por Edge Function e a decisão sobre quem cria a corrida ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)) | Eduardo Viana | Cláudio Henrique |
 | 1.1 | 19/10/2026 | Documenta a implementação do frontend: estrutura, variáveis de ambiente, telas, componentes e dados de exemplo ([#230](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230)) | Eduardo Viana | Ana Carolina Fialho |
 | 1.2 | 19/10/2026 | Documenta a consulta do histórico de corridas no Supabase: hook useCorridas, ordenação e estado vazio ([#235](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235)) | Rafael Lima | Ana Carolina Fialho |
+| 1.3 | 23/10/2026 | Documenta a infraestrutura de testes do frontend (Vitest e Testing Library), o cliente Supabase simulado e o CI ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) | Rafael Lima | Eduardo Viana |
