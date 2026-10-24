@@ -1,6 +1,7 @@
 /// @file test_telemetria_json.cpp
 /// @brief Testes da serialização JSON do pacote de telemetria e inclusão do evento objetivo_alcancado (#189, HU-07),
-/// dos campos de diagnóstico do ToF (#344) e do pior caso no buffer de `TAMANHO_MAX_JSON_TELEMETRIA`.
+/// dos campos de diagnóstico do ToF (#344), do resultado do boot (#50) e do pior caso no buffer de
+/// `TAMANHO_MAX_JSON_TELEMETRIA`.
 /// Roda no computador: `pio test -e native -f test_telemetria_json`.
 
 #include <ArduinoJson.h>
@@ -113,6 +114,27 @@ void test_serializa_campos_de_diagnostico_do_tof() {
   TEST_ASSERT_EQUAL_UINT32(33, doc["tof_idade_ms"].as<uint32_t>());
 }
 
+void test_serializa_resultado_do_boot() {
+  PacoteTelemetria padrao;  // sem preencher: boot aprovado, sem falhas
+  char buffer[CAPACIDADE];
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(padrao, buffer, sizeof(buffer)));
+  JsonDocument doc;
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_TRUE(doc["boot_ok"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("", doc["boot_falhas"].as<const char*>());
+  TEST_ASSERT_EQUAL_UINT32(0, doc["boot_ms"].as<uint32_t>());
+
+  PacoteTelemetria falhou;
+  falhou.bootOk = false;
+  falhou.falhasBoot = "tof_frontal,mpu6050";
+  falhou.bootMs = 640;
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(falhou, buffer, sizeof(buffer)));
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_FALSE(doc["boot_ok"].as<bool>());
+  TEST_ASSERT_EQUAL_STRING("tof_frontal,mpu6050", doc["boot_falhas"].as<const char*>());
+  TEST_ASSERT_EQUAL_UINT32(640, doc["boot_ms"].as<uint32_t>());
+}
+
 void test_pior_caso_cabe_em_tamanho_max_json_telemetria() {
   PacoteTelemetria pacote;
   pacote.numeroSequencia = UINT32_MAX;
@@ -131,12 +153,15 @@ void test_pior_caso_cabe_em_tamanho_max_json_telemetria() {
   pacote.tofDirMm = UINT16_MAX;
   pacote.tofValida = false;
   pacote.tofIdadeMs = UINT32_MAX;
+  pacote.bootOk = false;
+  pacote.falhasBoot = "tof_esquerdo,tof_frontal,tof_direito,mpu6050,tof_0x29";
+  pacote.bootMs = UINT32_MAX;
 
   char buffer[TAMANHO_MAX_JSON_TELEMETRIA];
   const size_t bytes = TelemetriaJson::serializar(pacote, buffer, sizeof(buffer));
   TEST_ASSERT_GREATER_THAN_UINT32(0, bytes);
-  // O antigo buffer de 256 bytes não comportava este caso: a linha seria descartada.
-  TEST_ASSERT_GREATER_THAN_UINT32(256, bytes);
+  // Os antigos buffers de 256 e de 512 bytes não comportam este caso: a linha seria descartada.
+  TEST_ASSERT_GREATER_THAN_UINT32(512, bytes);
 }
 
 void test_buffer_insuficiente_retorna_zero() {
@@ -161,6 +186,7 @@ int main(int, char**) {
   RUN_TEST(test_serializa_telemetria_padrao_sem_evento);
   RUN_TEST(test_serializa_telemetria_com_evento_objetivo_alcancado);
   RUN_TEST(test_serializa_campos_de_diagnostico_do_tof);
+  RUN_TEST(test_serializa_resultado_do_boot);
   RUN_TEST(test_pior_caso_cabe_em_tamanho_max_json_telemetria);
   RUN_TEST(test_buffer_insuficiente_retorna_zero);
   RUN_TEST(test_buffer_nulo_ou_capacidade_zero);

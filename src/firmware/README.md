@@ -19,17 +19,18 @@ src/firmware/
 | Pasta em `lib/` | Camada | O que entra |
 |---|---|---|
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
-| `hal` | Interfaces de hardware | Interfaces abstratas (`ISensorDistancia`, `IEncoder` e `IMotores`) |
+| `hal` | Interfaces de hardware | Interfaces abstratas (`ISensorDistancia`, `IEncoder`, `IMotores` e `IBarramentoI2c`) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` para os 3 sensores ToF (VL53L0X) com limiares por lado, filtro digital e saturação defensiva (#379) |
+| `inicializacao` | Boot | Autoteste do boot (`AutotesteBoot`): varredura do I²C, conferência dos 4 dispositivos e relatório (`RelatorioBoot`), com os parâmetros em `ConfiguracaoBoot.h` |
 | `tof` | Sensoriamento | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros provisórios (`ConfiguracaoTof.h`), sem Arduino |
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula) e armazenamento em memória |
 | `navegacao` | Navegação | Localização (`Odometria`: pose pela odometria diferencial dos encoders), decisão de movimento (`Navegacao`) e detecção do objetivo (`DetectorObjetivo`) |
-| `atuacao` | Atuação | Controle dos motores e correção de trajetória |
+| `atuacao` | Atuação | Controle dos motores, correção de trajetória e trava dos motores (`MotoresComTrava`) |
 | `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
-| `simulacao` | Falsos para teste | `SensorDistanciaSimulado`, um `ISensorDistancia` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `SensorDistanciaSimulado`, `TofSimulado`, os 3 VL53L0X no labirinto, com amostras brutas pelo `CombinadorTof` real, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, e `MotoresSimulados`, um `IMotores` que guarda o último comando, sem hardware |
-| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X pelo I²C, encoders, DRV8833, WiFi) |
+| `simulacao` | Falsos para teste | `SensorDistanciaSimulado`, um `ISensorDistancia` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `SensorDistanciaSimulado`, `TofSimulado`, os 3 VL53L0X no labirinto, com amostras brutas pelo `CombinadorTof` real, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, `MotoresSimulados`, um `IMotores` que guarda o último comando, e `BarramentoI2cSimulado`, um `IBarramentoI2c` com os dispositivos escolhidos pelo teste, sem hardware |
+| `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X e varredura pelo I²C, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
 
@@ -268,6 +269,46 @@ O CI compila o `bancada_tof` junto com o firmware do robô e roda os testes do m
 
 Os critérios ficam no topo do script e são provisórios. O firmware de bancada também funciona direto no monitor serial: `pio device monitor -e bancada_tof` e o comando `AJUDA` listam `SCAN`, `ISOLAR`, `INIT`, `LER`, `FLUXO` e `ESTAT`; cada resposta é uma linha JSON.
 
+## Boot e autoteste
+
+Na Rev 2.0, o robô só libera os motores depois de encontrar os 4 dispositivos do I²C ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)). A sequência do `setup()`:
+
+1. Motores freados e **travados** (`MotoresComTrava`): travado, todo comando de potência vira freio.
+2. `Wire.begin` e `tof.iniciar()`: os 3 VL53L0X saem do reset um por vez e recebem 0x30, 0x31 e 0x32 (#344).
+3. `AutotesteBoot::verificar`: varre de 0x08 a 0x77 e confere os ToF esquerdo (0x30), frontal (0x31) e direito (0x32) e o MPU6050 (0x68, com o `WHO_AM_I` = 0x68).
+4. Aprovado, `motoresComTrava.liberar()`; com qualquer falha, os motores ficam travados **até reiniciar** e o log diz o que falhou.
+5. A linha `{"tipo":"boot",...}` sai no log, e as tarefas sobem mesmo com falha.
+
+```cpp
+MotoresComTrava motoresComTrava(motores);            // quem aciona as rodas usa este, não o driver
+ResultadoBoot r = autoteste.verificar(barramento, {tofEsqIniciado, tofFrenteIniciado, tofDirIniciado});
+if (r.aprovado()) { motoresComTrava.liberar(); }
+```
+
+No `main.cpp`, cada camada dos motores tem o próprio nome (`motores` é o driver, `motoresComTrava` a trava) e a navegação aciona as rodas só por `motoresTracao`, uma referência à camada de fora. Ordem combinada quando as outras camadas entrarem: `MotoresComTrava` (#50) → `MotoresComProtecao` (#341) → `MotoresComEstimativa` (#380) → `MotoresDrv8833`. O `motores.iniciar()` é a primeira linha do `setup()`, para frear antes de tudo.
+
+| Situação | Estado no relatório | Libera os motores? |
+|---|---|---|
+| Dispositivo responde no endereço esperado | `ok` | Sim, se os 4 estiverem `ok` |
+| Ninguém no endereço | `ausente` | Não |
+| ToF responde, mas o driver não conseguiu configurá-lo | `nao_iniciou` | Não |
+| Algo no 0x68 com outro `WHO_AM_I` (ou sem leitura) | `nao_identificado` | Não |
+| Algo no 0x29: um ToF ficou no endereço de fábrica | `tof_0x29: true` | Não |
+| Outro endereço qualquer | `inesperados` (só aviso) | Sim |
+| Boot acima de 2 s (RNF-09) | `no_prazo: false` (só aviso) | Sim |
+
+Exemplo do relatório:
+
+```json
+{"tipo":"boot","ok":false,"motores_liberados":false,"falhas":"tof_frontal","boot_ms":412,"prazo_ms":2000,"no_prazo":true,"dispositivos":{"tof_esquerdo":"ok","tof_frontal":"ausente","tof_direito":"ok","mpu6050":"ok"},"tof_0x29":false,"mpu6050_who_am_i":104,"inesperados":[],"inesperados_total":0}
+```
+
+**Na USB nativa, a linha do boot se perde se o monitor abrir depois do reset.** Por isso a telemetria repete `boot_ok`, `boot_falhas` e `boot_ms` em todo pacote, e o comando `B` no monitor serial reimprime o relatório.
+
+O `boot_ms` é o `millis()` no fim do `setup()`, contado desde o início do programa: a ROM e o bootloader do ESP32-C3 rodam antes e ficam de fora. Para o tempo desde o ligar, meça na bancada.
+
+Os parâmetros ficam em `lib/inicializacao/src/ConfiguracaoBoot.h`. O `WHO_AM_I` esperado é **provisório**: módulos com clone do MPU6050 respondem outro valor (0x70, 0x72, 0x98); se a bancada mostrar um desses em `mpu6050_who_am_i`, confirme com a eletrônica e troque lá. Repetir as tentativas durante a corrida é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava (`motoresComTrava.travar()`).
+
 ## Instalação
 
 Instale o PlatformIO por uma das opções:
@@ -284,7 +325,7 @@ Execute os comandos dentro de `src/firmware`:
 | Compilar para o ESP32-C3 | `pio run -e esp32c3` |
 | Gravar na placa | `pio run -e esp32c3 -t upload` |
 | Gravar o firmware de bancada dos VL53L0X | `pio run -e bancada_tof -t upload` (ou pelo `scripts/bancada_tof.py`) |
-| Abrir o monitor serial | `pio device monitor` |
+| Abrir o monitor serial | `pio device monitor` (`B` repete o relatório do boot; `Z` zera os encoders) |
 | Rodar os testes no computador | `pio test -e native` |
 | Rodar um teste específico | `pio test -e native -f test_nucleo` |
 
