@@ -439,6 +439,24 @@ test("as linhas da telemetria chegam ao Realtime: a tabela está na publicação
   assert.ok(r.rows.some((l) => l.tablename === "telemetria"));
 });
 
+test("o encerramento da corrida chega ao Realtime: a tabela corridas está na publicação do dashboard", async () => {
+  const db = await criarBanco();
+  const r = await db.query<{ tablename: string }>(
+    "SELECT tablename FROM pg_publication_tables WHERE pubname = 'supabase_realtime' ORDER BY tablename",
+  );
+  assert.deepEqual(r.rows.map((l) => l.tablename), ["corridas", "mapa_celulas", "telemetria"]);
+});
+
+test("a migração do Realtime de corridas pode rodar de novo sem erro", async () => {
+  const db = await criarBanco();
+  const sql = readFileSync(fileURLToPath(new URL("../supabase/migrations/20261024120000_realtime_corridas.sql", import.meta.url)), "utf8");
+  await db.exec(sql);
+  const r = await db.query<{ n: number }>(
+    "SELECT COUNT(*)::int AS n FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'corridas'",
+  );
+  assert.equal(r.rows[0].n, 1);
+});
+
 // ---------------------------------------------------------------- contrato e corrida completa
 
 test("o lote de exemplo do contrato com o firmware é aceito como está", async () => {

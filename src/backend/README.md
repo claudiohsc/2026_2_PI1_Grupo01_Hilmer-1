@@ -25,7 +25,9 @@ src/backend/
     └── migrations/
         ├── 20261014180000_esquema_inicial.sql    # DDL das 4 tabelas, restrições e seed de labirintos
         ├── 20261014180500_seguranca_rls.sql      # Políticas RLS e ativação do Realtime
-        └── 20261018232250_remote_schema.sql      # criar_corrida e encerrar_corrida (só service_role)
+        ├── 20261018232250_remote_schema.sql      # criar_corrida e encerrar_corrida (só service_role)
+        ├── 20261023100000_telemetria_mapa_e_consolidacao.sql  # Telemetria em lote, mapa final e consolidação (#229)
+        └── 20261024120000_realtime_corridas.sql  # Publica `corridas` no Realtime (#231)
 ```
 ---
 
