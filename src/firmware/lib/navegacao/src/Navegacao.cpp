@@ -25,22 +25,24 @@ Navegacao::Navegacao(const Mapa& mapa)
 
 Navegacao::Navegacao(const Mapa& mapa, PosicaoCelula objetivo, Pose poseInicial)
     : mapa_(mapa),
-      posicao_atual_(poseInicial.celula),
+      posicao_atual_(mapa.posValida(poseInicial.celula) ? poseInicial.celula : PosicaoCelula{0, 0}),
       direcao_atual_(poseInicial.direcao),
       detector_(objetivo) {
   recalcularDistancias();
 }
 
-void Navegacao::definirPose(const Pose& pose) {
+bool Navegacao::definirPose(const Pose& pose) {
+  if (!mapa_.posValida(pose.celula)) {
+    return false;
+  }
   posicao_atual_ = pose.celula;
   direcao_atual_ = pose.direcao;
   passo_pendente_ = false;
+  return true;
 }
 
-void Navegacao::moverPara(uint8_t linha, uint8_t coluna, Direcao direcao) {
-  posicao_atual_ = PosicaoCelula{linha, coluna};
-  direcao_atual_ = direcao;
-  passo_pendente_ = false;
+bool Navegacao::moverPara(uint8_t linha, uint8_t coluna, Direcao direcao) {
+  return definirPose({PosicaoCelula{linha, coluna}, direcao});
 }
 
 void Navegacao::definirObjetivo(PosicaoCelula objetivo) {
@@ -111,6 +113,11 @@ uint8_t Navegacao::obterDistancia(PosicaoCelula celula) const {
 }
 
 bool Navegacao::decidirProximaDirecao(Direcao& proximaDirecao) {
+  // A pose pode ficar fora do mapa se o mapa for trocado por outro menor; nunca ler o vetor assim.
+  if (!mapa_.posValida(posicao_atual_)) {
+    return false;
+  }
+
   if (atingiuObjetivo()) {
     return false;
   }
@@ -183,6 +190,7 @@ bool Navegacao::darPasso(Direcao& direcaoMovimento) {
   }
 
   celula_esperada_ = esperada;
+  direcao_passo_ = direcao;
   passo_pendente_ = true;
   direcaoMovimento = direcao;
   return true;
@@ -207,6 +215,13 @@ ResultadoConfirmacao Navegacao::confirmarPose(const Pose& poseMedida) {
   }
 
   if (mesmaCelula(posicao_atual_, origem)) {
+    // O sensor pode registrar a parede depois do planejamento: com ela no caminho, o passo nunca
+    // seria concluído. Cancela para o próximo darPasso() replanejar.
+    if (mapa_.obterParede(origem, direcao_passo_) == EstadoParede::Parede ||
+        mapa_.obterParede(celula_esperada_, oposta(direcao_passo_)) == EstadoParede::Parede) {
+      passo_pendente_ = false;
+      return ResultadoConfirmacao::Bloqueado;
+    }
     return ResultadoConfirmacao::EmAndamento;
   }
 
