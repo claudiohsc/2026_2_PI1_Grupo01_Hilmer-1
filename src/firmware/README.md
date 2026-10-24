@@ -97,42 +97,51 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
 | `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
 
-## Calibração dos ToF (`CalibradorTof`)
+## Calibração dos Sensores e Giroscópio (`lib/calibracao`)
 
-A camada `lib/calibracao` estima o desvio de cada VL53L0X (frente, esquerda, direita) com o robô parado diante de distâncias conhecidas e aplica esse desvio nas leituras seguintes ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240), HU-13 / RF-13). Esta é a **metade ToF** da issue; o viés do giroscópio, a orquestração unificada e a medição do orçamento de 1 s (RNF-08) ficam para a outra metade.
+A camada `lib/calibracao` implementa a autocalibração dos sensores de distância VL53L0X e do giroscópio MPU6050 com o robô parado na célula de partida ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240), HU-13 / RF-13 / RNF-08).
 
-O calibrador **não depende do driver** dos VL53L0X ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): quem chama alimenta `DistanciasLaterais` (via `ILidar` / `LidarSimulado` nos testes, ou o driver real depois do merge da #344).
+A rotina unificada atende a todos os critérios de pronto da issue:
+1. **Viés do giroscópio:** calculado pela média aritmética de amostras com o robô parado; a rotina é recusada/abortada se o robô se mover durante a calibração (`CalibradorGiro`).
+2. **Desvio dos ToF:** calculado e guardado por sensor (frente, esquerda e direita) contra referências conhecidas, aplicado diretamente nas leituras com saturação (`CalibradorTof`).
+3. **Orçamento de 1 segundo (RNF-08):** duração medida e controlada pela `RotinaCalibracao`; caso a calibração ultrapasse 1000 ms, o estado é marcado como `TempoExcedido`.
+4. **Testes no computador:** testável sem hardware usando `ImuSimulado` e `LidarSimulado`.
 
 ```cpp
-CalibradorTof calibrador;  // ConfiguracaoCalibracaoTof padrão
-calibrador.iniciar();
-while (calibrador.estado() == EstadoCalibracaoTof::Calibrando) {
-  DistanciasLaterais leitura;
-  if (sensor.lerDistanciasLaterais(leitura)) {
-    calibrador.adicionarAmostra(leitura);
-  }
+RotinaCalibracao rotina;  // ConfiguracaoRotinaCalibracao padrão
+rotina.iniciar();
+
+// Execução passo a passo ou via método executar:
+EstadoRotinaCalibracao resultado = rotina.executar(sensorDistancia, imu);
+if (resultado == EstadoRotinaCalibracao::Sucesso) {
+  DistanciasLaterais distCorrigida = rotina.corrigirTof(distBruta);
+  int16_t taxaCorrigida = rotina.corrigirGiro(taxaBruta);
+  uint32_t duracaoMs = rotina.duracaoMedidaMs(); // <= 1000 ms (RNF-08)
 }
-DistanciasLaterais corrigida = calibrador.corrigir(leituraBruta);  // bruta − desvio
 ```
 
-| Conceito | Comportamento |
-|---|---|
-| Desvio por lado | `média arredondada das amostras − distância de referência` (mm) |
-| `corrigir` | `bruta − desvio`, saturado em `uint16_t` (não fica negativo) |
-| Recusa | Se em algum lado `maior − menor > variacaoMaximaMm`, estado `Recusada` e os desvios anteriores permanecem |
-| Orçamento (parcial) | Fatia ToF prevista: 10 amostras × ~33 ms ≈ 330 ms dentro de `ORCAMENTO_CALIBRACAO_TOF_MS` (400 ms); o total de 1 s e a medição de duração são da metade do giro |
+| Componente | Responsabilidade | Comportamento em caso de movimento |
+|---|---|---|
+| `CalibradorTof` | Desvio por lado: `média arredondada − referência` (mm) | Se `maior − menor > variacaoMaximaMm`, estado `Recusada` e mantém desvios anteriores |
+| `CalibradorGiro` | Viés do giroscópio Z: `média arredondada das amostras` (décimos de °/s) | Se `maior − menor > variacaoMaximaDecimosDps`, estado `Recusada` e mantém viés anterior |
+| `RotinaCalibracao` | Orquestração simultânea dos sensores e controle da duração | Estado `RecusadaPorMovimento` se qualquer sensor acusar movimento; `TempoExcedido` se passar de 1 s |
 
-### Valores provisórios (`ConfiguracaoCalibracao.h`)
+### Valores nominais e provisórios (`ConfiguracaoCalibracao.h`)
 
 | Parâmetro | Constante | Valor | Nota |
 |---|---|---|---|
-| Orçamento total | `ORCAMENTO_CALIBRACAO_MS` | **1000 ms** | RNF-08; enforcement na rotina unificada (outra metade) |
-| Fatia ToF | `ORCAMENTO_CALIBRACAO_TOF_MS` | **400 ms** | Margem para o giro no mesmo segundo |
-| Amostras | `AMOSTRAS_CALIBRACAO_TOF` | **10** | ~330 ms com período de medição ~33 ms |
-| Variação máxima | `VARIACAO_MAXIMA_CALIBRACAO_TOF_MM` | **8 mm** | Acima disso, assume movimento/oscilação e recusa |
-| Referência | `DISTANCIA_REFERENCIA_TOF_MM` | **54 mm** | Mesma geometria da percepção (#379); ajustar na bancada (#175) |
+| Orçamento total | `ORCAMENTO_CALIBRACAO_MS` | **1000 ms** | RNF-08; duração medida e verificada na rotina |
+| Fatia prevista ToF | `ORCAMENTO_CALIBRACAO_TOF_MS` | **400 ms** | 10 amostras × ~33 ms ≈ 330 ms |
+| Fatia prevista Giro | `ORCAMENTO_CALIBRACAO_GIRO_MS` | **500 ms** | 50 amostras × 10 ms = 500 ms |
+| Amostras ToF | `AMOSTRAS_CALIBRACAO_TOF` | **10** | Período de ~33 ms do VL53L0X |
+| Amostras Giro | `AMOSTRAS_CALIBRACAO_GIRO` | **50** | Período de 10 ms da IMU |
+| Variação máx. ToF | `VARIACAO_MAXIMA_CALIBRACAO_TOF_MM` | **8 mm** | Acima disso assume oscilação ou robô mexendo |
+| Variação máx. Giro | `VARIACAO_MAXIMA_CALIBRACAO_GIRO_DECIMOS_DPS` | **50** (5 °/s) | Acima disso assume robô em movimento |
+| Distância referência | `DISTANCIA_REFERENCIA_TOF_MM` | **54 mm** | Geometria nominal da célula com sensores recuados |
 
-Testes: `pio test -e native -f test_calibracao_tof`.
+Testes:
+- `pio test -e native -f test_calibracao_tof` (testes unitários dos ToF)
+- `pio test -e native -f test_rotina_calibracao` (testes do giroscópio, orquestração e RNF-08 com `ImuSimulado`)
 
 ## Percepção ToF (VL53L0X) e classificação de paredes
 

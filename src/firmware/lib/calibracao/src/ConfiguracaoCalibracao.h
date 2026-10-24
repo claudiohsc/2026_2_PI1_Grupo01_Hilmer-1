@@ -49,14 +49,35 @@ struct ConfiguracaoCalibracaoTof {
   ReferenciasTof referencias = {};
 };
 
-// ---------------------------------------------------------------------------
-// Metade do Cláudio (#240): giroscópio + rotina unificada
-// ---------------------------------------------------------------------------
-// - Ajustar a calibração do viés do giro (média de amostras; abortar se o robô se mexer) ao
-//   orçamento de 1 s. Em #378 a calibração usa 200 × 10 ms = 2 s — precisa caber em
-//   `ORCAMENTO_CALIBRACAO_MS` junto com os ToF.
-// - Orquestrar ToF (`CalibradorTof`) + giro (`IntegradorGiro` / `AcompanhadorGiro` da #378).
-// - Medir a duração e falhar se passar de `ORCAMENTO_CALIBRACAO_MS`.
-// - Testes com `ImuSimulado` + leituras simuladas dos ToF.
+/// Fatia prevista para o giroscópio dentro do orçamento (RNF-08).
+constexpr uint32_t ORCAMENTO_CALIBRACAO_GIRO_MS = 500;
+
+/// Amostras da calibração do giroscópio dentro da rotina de 1 s. Com intervalo de 10 ms
+/// (o mesmo ciclo da IMU), 50 amostras levam 500 ms, cabendo com folga em
+/// `ORCAMENTO_CALIBRACAO_MS` (1 s).
+constexpr uint16_t AMOSTRAS_CALIBRACAO_GIRO = 50;
+
+/// Maior diferença entre a maior e a menor amostra da taxa de giro, em décimos de °/s.
+/// Acima dela, o robô provavelmente se mexeu e a calibração é recusada.
+constexpr uint16_t VARIACAO_MAXIMA_CALIBRACAO_GIRO_DECIMOS_DPS = 50;
+
+/// Período nominal entre amostras do giroscópio, em ms (o mesmo ciclo da IMU / navegação).
+constexpr uint32_t PERIODO_AMOSTRAGEM_GIRO_MS = 10;
+
+/// Período nominal entre leituras dos ToF, em ms (~30 Hz do VL53L0X).
+constexpr uint32_t PERIODO_AMOSTRAGEM_TOF_MS = 33;
+
+/// Parâmetros do `CalibradorGiro`.
+struct ConfiguracaoCalibracaoGiro {
+  uint16_t amostras = AMOSTRAS_CALIBRACAO_GIRO;
+  uint16_t variacaoMaximaDecimosDps = VARIACAO_MAXIMA_CALIBRACAO_GIRO_DECIMOS_DPS;
+};
+
+/// Parâmetros da `RotinaCalibracao` unificada (RNF-08 / RF-13).
+struct ConfiguracaoRotinaCalibracao {
+  uint32_t orcamentoTotalMs = ORCAMENTO_CALIBRACAO_MS;
+  ConfiguracaoCalibracaoTof tof{};
+  ConfiguracaoCalibracaoGiro giro{};
+};
 
 }  // namespace micromouse

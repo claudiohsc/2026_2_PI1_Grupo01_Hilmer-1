@@ -77,6 +77,9 @@ class CalibradorTof {
   /// Referências usadas na calibração em andamento (ou as da config, se ainda não iniciou).
   ReferenciasTof referencias() const { return referencias_; }
 
+  /// Quantidade de amostras recebidas na calibração atual.
+  uint16_t amostrasRecebidas() const { return amostrasRecebidas_; }
+
  private:
   struct AcumuladorLado {
     uint16_t amostras = 0;
