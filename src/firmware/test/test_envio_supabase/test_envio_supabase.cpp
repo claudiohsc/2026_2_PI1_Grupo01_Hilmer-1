@@ -61,8 +61,8 @@ AmostraTelemetria amostraMaisLonga() {
   return a;
 }
 
-/// Rede Wi-Fi falsa: o teste decide quando ela conecta.
-class RedeFalsa : public IRedeWifi {
+/// Rede Wi-Fi simulada: o teste decide quando ela conecta.
+class RedeWifiSimulada : public IRedeWifi {
  public:
   bool conectada() override { return conectada_; }
   void iniciarConexao() override { ++inicios_; }
@@ -80,9 +80,9 @@ class RedeFalsa : public IRedeWifi {
 /// Cliente "HTTP" para o teste de integração: transforma o lote em JSON com `serializarLote`, lê o
 /// JSON de volta como o backend faria, grava no servidor simulado e devolve a resposta também em
 /// JSON, lida por `lerRespostaLote`. Assim a cadeia inteira passa pelo contrato.
-class EnvioPorJson : public IEnvioTelemetria {
+class EnvioJsonSimulado : public IEnvioTelemetria {
  public:
-  explicit EnvioPorJson(EnvioSimulado& servidor) : servidor_(servidor) {}
+  explicit EnvioJsonSimulado(EnvioSimulado& servidor) : servidor_(servidor) {}
 
   ResultadoEnvio enviarLote(uint32_t corridaId, const AmostraTelemetria* amostras, uint16_t quantidade) override {
     static char json[TAMANHO_MAXIMO_LOTE_JSON];
@@ -455,7 +455,7 @@ void test_url_das_funcoes() {
 // ---------------------------------------------------------------- reconexão do Wi-Fi
 
 void test_wifi_conecta_na_primeira_tentativa() {
-  RedeFalsa rede;
+  RedeWifiSimulada rede;
   ReconexaoWifi wifi(rede);
   TEST_ASSERT_FALSE(wifi.ciclo(0));
   TEST_ASSERT_EQUAL_INT(1, rede.inicios());
@@ -468,7 +468,7 @@ void test_wifi_conecta_na_primeira_tentativa() {
 }
 
 void test_wifi_espera_cada_vez_mais_entre_tentativas_e_volta_a_1s() {
-  RedeFalsa rede;
+  RedeWifiSimulada rede;
   ReconexaoWifi wifi(rede, 1000);  // tentativa de 1 s, para o teste
   uint32_t t = 0;
   wifi.ciclo(t);                                   // 1ª tentativa
@@ -492,7 +492,7 @@ void test_wifi_espera_cada_vez_mais_entre_tentativas_e_volta_a_1s() {
 }
 
 void test_wifi_que_cai_tenta_de_novo_na_hora_e_conta_a_queda() {
-  RedeFalsa rede;
+  RedeWifiSimulada rede;
   ReconexaoWifi wifi(rede);
   wifi.ciclo(0);
   rede.definirConectada(true);
@@ -505,7 +505,7 @@ void test_wifi_que_cai_tenta_de_novo_na_hora_e_conta_a_queda() {
 }
 
 void test_wifi_que_volta_sozinho_durante_a_espera_e_aceito() {
-  RedeFalsa rede;
+  RedeWifiSimulada rede;
   ReconexaoWifi wifi(rede, 1000);
   wifi.ciclo(0);
   wifi.ciclo(1000);  // esgotou: aguardando
@@ -515,7 +515,7 @@ void test_wifi_que_volta_sozinho_durante_a_espera_e_aceito() {
 }
 
 void test_wifi_com_o_relogio_dando_a_volta() {
-  RedeFalsa rede;
+  RedeWifiSimulada rede;
   ReconexaoWifi wifi(rede, 1000);
   const uint32_t quaseNoFim = UINT32_MAX - 500;
   wifi.ciclo(quaseNoFim);
@@ -534,7 +534,7 @@ void test_wifi_com_o_relogio_dando_a_volta() {
 /// corrida só é encerrada depois do último lote.
 void test_integracao_corrida_pelo_json_com_rede_caindo_no_meio() {
   EnvioSimulado servidor;
-  EnvioPorJson cliente(servidor);
+  EnvioJsonSimulado cliente(servidor);
   TravaNula trava;
   ControladorEnvio controlador(cliente, trava);
   controlador.iniciarCorrida(9);
