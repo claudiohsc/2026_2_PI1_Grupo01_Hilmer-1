@@ -1,11 +1,11 @@
 #pragma once
 
-/// @file LidarSimulado.h
-/// @brief Implementação falsa de `ILidar` para testes sem hardware.
+/// @file SensorDistanciaSimulado.h
+/// @brief Implementação falsa de `ISensorDistancia` para testes sem hardware.
 
 #include <stdint.h>
 
-#include "ILidar.h"
+#include "ISensorDistancia.h"
 #include "LabirintoSimulado.h"
 
 namespace micromouse {
@@ -24,21 +24,21 @@ namespace micromouse {
 ///
 /// Exemplo:
 /// @code
-/// LidarSimulado lidar;
+/// SensorDistanciaSimulado lidar;
 /// lidar.definirLeituraFixa({500, 500, 500});  // corredor livre
 /// lidar.enfileirarLeitura({90, 90, 270});     // depois, uma célula com parede à frente e à esquerda
-/// ILidar& sensor = lidar;                     // a lógica recebe só a interface
+/// ISensorDistancia& sensor = lidar;           // a lógica recebe só a interface
 /// @endcode
 ///
 /// No modo labirinto, a leitura vem da posição do robô:
 /// @code
 /// LabirintoSimulado labirinto;
 /// labirinto.carregar(texto);
-/// LidarSimulado lidar;
+/// SensorDistanciaSimulado lidar;
 /// lidar.usarLabirinto(labirinto);                          // o labirinto precisa continuar vivo
 /// lidar.posicionar({{0, 0}, Direcao::Norte});              // lê {630, 90, 90} no labirinto 4×4
 /// @endcode
-class LidarSimulado : public ILidar {
+class SensorDistanciaSimulado : public ISensorDistancia {
  public:
   /// Quantidade máxima de leituras na fila.
   static constexpr uint8_t CAPACIDADE_FILA = 16;
@@ -80,7 +80,7 @@ class LidarSimulado : public ILidar {
   /// @param falha `true` para simular a falha; `false` para voltar ao normal.
   void simularFalha(bool falha) { falha_ = falha; }
 
-  /// @copydoc ILidar::lerDistanciasLaterais
+  /// @copydoc ISensorDistancia::lerDistanciasLaterais
   bool lerDistanciasLaterais(DistanciasLaterais& saida) override {
     if (falha_) {
       return false;

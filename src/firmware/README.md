@@ -19,7 +19,7 @@ src/firmware/
 | Pasta em `lib/` | Camada | O que entra |
 |---|---|---|
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
-| `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar`, `IEncoder` e `IMotores`) |
+| `hal` | Interfaces de hardware | Interfaces abstratas (`ISensorDistancia`, `IEncoder` e `IMotores`) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` para os 3 sensores ToF (VL53L0X) com limiares por lado, filtro digital e saturação defensiva (#379) |
 | `tof` | Sensoriamento | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros provisórios (`ConfiguracaoTof.h`), sem Arduino |
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
@@ -28,14 +28,14 @@ src/firmware/
 | `navegacao` | Navegação | Localização (`Odometria`: pose pela odometria diferencial dos encoders), decisão de movimento (`Navegacao`) e detecção do objetivo (`DetectorObjetivo`) |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
 | `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
-| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, e `MotoresSimulados`, um `IMotores` que guarda o último comando, sem hardware |
+| `simulacao` | Falsos para teste | `SensorDistanciaSimulado`, um `ISensorDistancia` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `SensorDistanciaSimulado`, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, e `MotoresSimulados`, um `IMotores` que guarda o último comando, sem hardware |
 | `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X pelo I²C, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
 
 - As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
 - O acesso ao hardware passa pelas interfaces de `hal`. Os drivers reais ficam em `drivers_esp32`, e `src/main.cpp` liga cada driver à sua interface.
-- Para testar a lógica sem sensor, use o `LidarSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência, `simularFalha(true)` faz o sensor parar de responder e, com um `LabirintoSimulado`, `posicionar` faz a leitura vir da posição do robô (veja [Labirinto simulado](#labirinto-simulado)).
+- Para testar a lógica sem sensor, use o `SensorDistanciaSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência, `simularFalha(true)` faz o sensor parar de responder e, com um `LabirintoSimulado`, `posicionar` faz a leitura vir da posição do robô (veja [Labirinto simulado](#labirinto-simulado)).
 - Evite alocação dinâmica na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo (`MAX_LINHAS_LABIRINTO` × `MAX_COLUNAS_LABIRINTO`) bastam.
 
 ## Mapa do labirinto
@@ -73,7 +73,7 @@ O armazenamento não pode ser copiado, e o acesso `const` impede que a telemetri
 
 ## Labirinto simulado
 
-O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes conhecidas. Com ele, o `LidarSimulado` devolve o que o sensor real veria na posição do robô, sem digitar leituras à mão. Serve para testar a classificação de paredes e a atualização do mapa num labirinto inteiro.
+O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes conhecidas. Com ele, o `SensorDistanciaSimulado` devolve o que o sensor real veria na posição do robô, sem digitar leituras à mão. Serve para testar a classificação de paredes e a atualização do mapa num labirinto inteiro.
 
 **Formato do texto.** O labirinto é escrito em ASCII: cada célula ocupa 4 colunas e 2 linhas de texto, `+` marca os cantos, `---` uma parede horizontal, `|` uma parede vertical e espaço é passagem livre. A primeira linha é a borda Norte e a partida (0, 0) é a célula do canto inferior esquerdo, como no `Mapa`. Cada parede aparece uma única vez, então as duas células vizinhas sempre concordam. Há um exemplo de cada tamanho (4×4, 8×4 e 12×4) em `test/test_labirinto_simulado/LabirintosExemplo.h`.
 
@@ -82,7 +82,7 @@ LabirintoSimulado labirinto;
 labirinto.carregar(exemplos::LABIRINTO_4X4);   // ResultadoCarga::Carregado
 labirinto.temParede({0, 0}, Direcao::Leste);   // true
 
-LidarSimulado lidar;
+SensorDistanciaSimulado lidar;
 lidar.usarLabirinto(labirinto);                // o labirinto precisa continuar vivo
 lidar.posicionar({{0, 0}, Direcao::Norte});
 DistanciasLaterais d;
@@ -96,7 +96,7 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `carregar(texto)` | Lê o labirinto. Se o texto for inválido, devolve o motivo (`TamanhoInvalido`, `CaractereInvalido`, `ParedeIncompleta` ou `PerimetroAberto`) e mantém o labirinto anterior |
 | `temParede(celula, direcao)` | `true` se há parede naquele lado; célula fora do labirinto conta como parede |
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
-| `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
+| `SensorDistanciaSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
 
 ## Percepção ToF (VL53L0X) e classificação de paredes
 
@@ -154,7 +154,7 @@ O `ControleMovimento` (`lib/atuacao`) leva o robô em linha reta, centralizado n
 
 ```cpp
 ControleMovimento controle;
-EstadoMovimento estado = controle.atualizar(lidar, motores, 100);  // ILidar e IMotores
+EstadoMovimento estado = controle.atualizar(lidar, motores, 100);  // ISensorDistancia e IMotores
 if (estado == EstadoMovimento::ParadoNaParede) {
   // decidir o próximo passo e, antes de andar de novo, chamar controle.reiniciar()
 }
@@ -216,7 +216,7 @@ Campos diagnósticos adicionais (`esq_pulsos`, `dir_pulsos`, `esq_mm`, `dir_mm`,
 
 ## Sensores de distância (VL53L0X)
 
-Na Rev 2.0 do hardware, o LiDAR deu lugar a 3 VL53L0X no I²C (esquerdo, frontal e direito). O `TofVl53l0x` (`lib/drivers_esp32`) implementa o `ILidar`, então mapa, percepção e navegação não mudaram ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)). A regra de validade fica no `CombinadorTof` (`lib/tof`), testado no `native`; a biblioteca `pololu/VL53L0X` só entra no `esp32c3`.
+Na Rev 2.0 do hardware, o LiDAR deu lugar a 3 VL53L0X no I²C (esquerdo, frontal e direito). O `TofVl53l0x` (`lib/drivers_esp32`) implementa o `ISensorDistancia`, então mapa, percepção e navegação não mudaram ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)). A regra de validade fica no `CombinadorTof` (`lib/tof`), testado no `native`; a biblioteca `pololu/VL53L0X` só entra no `esp32c3`.
 
 ```cpp
 Wire.begin(pinos::I2C_SDA, pinos::I2C_SCL);   // barramento compartilhado com o MPU6050
@@ -317,7 +317,7 @@ Nomeie as funções de teste pelo comportamento esperado (`test_classifica_como_
 
 ## Convenções
 
-**Idioma do código:** nomes de pastas, arquivos, tipos, funções, variáveis, constantes e testes em português, sem acentos (identificadores só com ASCII), e comentários em português. Mantêm-se em inglês apenas as APIs e os termos consagrados: `setup`/`loop`, `Serial`, `xTaskCreate`, `LiDAR`, `UART`, `PWM`, `buffer`, `ILidar` (prefixo `I` de interface).
+**Idioma do código:** nomes de pastas, arquivos, tipos, funções, variáveis, constantes e testes em português, sem acentos (identificadores só com ASCII), e comentários em português. Mantêm-se em inglês apenas as APIs e os termos consagrados: `setup`/`loop`, `Serial`, `xTaskCreate`, `LiDAR`, `UART`, `PWM`, `buffer`, `ISensorDistancia` (prefixo `I` de interface).
 
 | Elemento | Estilo | Exemplo |
 |---|---|---|
