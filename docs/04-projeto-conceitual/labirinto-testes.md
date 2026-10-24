@@ -214,28 +214,34 @@ Para liberar o projeto para fabricação, os desenhos necessários são:
 
 ### 10.1 Modelo 1 — rasgos
 
+![Vista CAD do Modelo 1 — labirinto com rasgos](../figs/labirinto-modelo1-rasgos.png)
+**Figura 1 – Modelo 1: vista CAD do labirinto montado (paredes encaixadas em rasgos)**
+
 ![Base com rasgos — vista geral](../figs/labirinto-modelo1-rasgos-1.png)
-**Figura 1 – Modelo 1: base com rasgos (folha 1/3)**
+**Figura 2 – Modelo 1: base com rasgos (folha 1/3)**
 
 ![Modelo 1 — folha 2](../figs/labirinto-modelo1-rasgos-2.png)
-**Figura 2 – Modelo 1: desenho técnico (folha 2/3)**
+**Figura 3 – Modelo 1: desenho técnico (folha 2/3)**
 
 ![Modelo 1 — folha 3](../figs/labirinto-modelo1-rasgos-3.png)
-**Figura 3 – Modelo 1: desenho técnico (folha 3/3)**
+**Figura 4 – Modelo 1: desenho técnico (folha 3/3)**
 
 ### 10.2 Modelo 2 — cavilhas
 
+![Vista CAD do Modelo 2 — labirinto com cavilhas](../figs/labirinto-modelo2-cavilhas.png)
+**Figura 5 – Modelo 2: vista CAD do labirinto montado (paredes fixadas por cavilhas)**
+
 ![Base de fixação por cavilhas](../figs/labirinto-modelo2-cavilhas-1.png)
-**Figura 4 – Modelo 2: base de fixação (folha 1/4)**
+**Figura 6 – Modelo 2: base de fixação (folha 1/4)**
 
 ![Modelo 2 — folha 2](../figs/labirinto-modelo2-cavilhas-2.png)
-**Figura 5 – Modelo 2: desenho técnico (folha 2/4)**
+**Figura 7 – Modelo 2: desenho técnico (folha 2/4)**
 
 ![Modelo 2 — folha 3](../figs/labirinto-modelo2-cavilhas-3.png)
-**Figura 6 – Modelo 2: desenho técnico (folha 3/4)**
+**Figura 8 – Modelo 2: desenho técnico (folha 3/4)**
 
 ![Modelo 2 — folha 4](../figs/labirinto-modelo2-cavilhas-4.png)
-**Figura 7 – Modelo 2: desenho técnico (folha 4/4)**
+**Figura 9 – Modelo 2: desenho técnico (folha 4/4)**
 
 ### 10.3 Arquivos CAD e PDF
 
@@ -245,9 +251,8 @@ Os arquivos de projeto ficam em [`mec/`](https://github.com/fcte-pi1/2026_2_PI1_
 |---|---|
 | [`micromouse_modelo1_rasgos.step`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/mec/micromouse_modelo1_rasgos.step) | CAD — Modelo 1 (rasgos) |
 | [`micromouse_modelo1_rasgos-desenho-v1.pdf`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/mec/micromouse_modelo1_rasgos-desenho-v1.pdf) | Desenho técnico — Modelo 1 |
+| [`micromouse_modelo2_cavilhas.step`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/mec/micromouse_modelo2_cavilhas.step) | CAD — Modelo 2 (cavilhas) |
 | [`micromouse_modelo2_cavilhas-desenho-v1.pdf`](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/documentacao/mec/micromouse_modelo2_cavilhas-desenho-v1.pdf) | Desenho técnico — Modelo 2 |
-
-> **Nota:** o CAD do Modelo 2 (`.step`) ainda não foi incluído no repositório; apenas o desenho em PDF está disponível.
 
 ## 11. Lista preliminar de materiais
 
