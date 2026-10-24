@@ -20,7 +20,7 @@ enum class ResultadoCarga : uint8_t {
 };
 
 /// Labirinto da competição com todas as paredes conhecidas, usado como verdade de referência
-/// nos testes: o `LidarSimulado` deriva dele o que o sensor veria em cada posição (HU-02).
+/// nos testes: o `SensorDistanciaSimulado` deriva dele o que o sensor veria em cada posição (HU-02).
 ///
 /// **Formato do texto (ASCII).** Cada célula ocupa 4 colunas de texto e 2 linhas; `+` marca os
 /// cantos, `---` uma parede horizontal e `|` uma parede vertical. Espaço é passagem livre.

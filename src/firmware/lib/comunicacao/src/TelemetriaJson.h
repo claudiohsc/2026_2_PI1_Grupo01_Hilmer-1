@@ -18,6 +18,9 @@
 /// - `esq_pulsos`, `dir_pulsos`: contagem acumulada dos encoders ópticos
 /// - `esq_mm`, `dir_mm`, `medio_mm`: deslocamento linear percorrido em milímetros
 /// - `pose_valida`: flag de integridade da pose na malha discreta
+/// - `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`: última leitura dos 3 VL53L0X, em mm (#344)
+/// - `tof_valida`: se a leitura dos 3 sensores é válida (`ISensorDistancia::lerDistanciasLaterais`)
+/// - `tof_idade_ms`: idade da amostra mais antiga da leitura (`ISensorDistancia::idadeUltimaLeituraMs`)
 
 #include <stddef.h>
 #include <stdint.h>
@@ -26,6 +29,11 @@
 #include "Tipos.h"
 
 namespace micromouse {
+
+/// Tamanho de buffer que comporta o pior caso do JSON de telemetria (todos os números no maior
+/// valor, com o evento `objetivo_alcancado`), com folga. O pior caso tem cerca de 400 caracteres;
+/// com um buffer menor, `serializar` devolve `0` e a linha se perde.
+constexpr size_t TAMANHO_MAX_JSON_TELEMETRIA = 512;
 
 /// Dados reportados na telemetria periódica do robô.
 struct PacoteTelemetria {
@@ -43,6 +51,13 @@ struct PacoteTelemetria {
   int32_t dirMm = 0;              ///< Deslocamento da roda direita em mm (`dir_mm`)
   int32_t medioMm = 0;            ///< Deslocamento médio do robô em mm (`medio_mm`)
   bool poseValida = true;         ///< Pose estimada é válida na malha (`pose_valida`)
+
+  // Campos de diagnóstico dos sensores de distância (#344):
+  uint16_t tofFrenteMm = 0;       ///< Sensor frontal, em mm (`tof_frente_mm`)
+  uint16_t tofEsqMm = 0;          ///< Sensor esquerdo, em mm (`tof_esq_mm`)
+  uint16_t tofDirMm = 0;          ///< Sensor direito, em mm (`tof_dir_mm`)
+  bool tofValida = false;         ///< Leitura dos 3 sensores válida (`tof_valida`)
+  uint32_t tofIdadeMs = 0;        ///< Idade da leitura, em ms (`tof_idade_ms`)
 };
 
 /// Serializador de dados de telemetria em formato JSON compatível com a tabela `telemetria` e o dashboard web.

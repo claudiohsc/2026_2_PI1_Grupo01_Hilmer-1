@@ -322,12 +322,12 @@ void test_uart_sem_relogio_nao_verifica_a_idade() {
   TEST_ASSERT_TRUE(lidar.lerDistanciasLaterais(saida));
 }
 
-void test_uart_pode_ser_usado_pela_interface_ILidar() {
+void test_uart_pode_ser_usado_pela_interface_ISensorDistancia() {
   FonteBytesSimulada fonte;
   DecodificadorSimulado decodificador;
   LidarUart uart(fonte, decodificador, relogioFalso);
   enfileirarDuasVoltas(fonte, mundoPadrao);
-  ILidar& lidar = uart;
+  ISensorDistancia& lidar = uart;
   DistanciasLaterais saida = {};
   TEST_ASSERT_TRUE(lidar.lerDistanciasLaterais(saida));
   verificar(saida, 100, 270, 150);
@@ -356,6 +356,6 @@ int main(int, char**) {
   RUN_TEST(test_uart_limite_de_bytes_por_chamada);
   RUN_TEST(test_uart_volta_a_responder_depois_de_ficar_mudo);
   RUN_TEST(test_uart_sem_relogio_nao_verifica_a_idade);
-  RUN_TEST(test_uart_pode_ser_usado_pela_interface_ILidar);
+  RUN_TEST(test_uart_pode_ser_usado_pela_interface_ISensorDistancia);
   return UNITY_END();
 }
