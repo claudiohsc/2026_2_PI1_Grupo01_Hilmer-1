@@ -1748,14 +1748,15 @@ pio run -e esp32c3
 ### Sprint 5 · IMU MPU6050 e ângulo de giro (testes com giroscópio simulado)
 
 !!! warning "Testes em simulação"
-    Todos os testes deste registro rodaram **no computador**, com o giroscópio simulado `ImuSimulado` no lugar do MPU6050. Os valores de taxa, viés e ruído foram **definidos pelos testes** para reproduzir as condições do sensor real. **Ainda não houve leitura do MPU6050 real:** o driver no ESP32-C3 e a proteção do barramento I²C estão em desenvolvimento ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)), e a validação na placa faz parte da bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+    Todos os testes deste registro rodaram **no computador**, com o giroscópio simulado `ImuSimulado` no lugar do MPU6050. Os valores de taxa, viés e ruído foram **definidos pelos testes** para reproduzir as condições do sensor real. O driver do MPU6050, a tarefa da IMU e a trava do barramento I²C dependem do ESP32-C3 e **não rodam no computador**: deles, só foi verificado que o firmware compila. **Ainda não houve leitura do MPU6050 real**; a validação na placa faz parte da bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
 
 | Item | Valor |
 |---|---|
 | Tarefa | [#378 Driver do MPU6050 e ângulo de giro (yaw)](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) |
 | História de usuário | HU-05 · Odometria e localização ([#41](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)), RF05 |
-| Código testado | `src/firmware/lib/imu`, `lib/hal/src/IImu.h` e `lib/simulacao/src/ImuSimulado.h` (commit `257c69f`, PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403)) |
-| Data da execução | 23/10/2026 |
+| Código testado | `src/firmware/lib/imu`, `lib/hal/src/IImu.h` e `lib/simulacao/src/ImuSimulado.h`, na `main` depois do merge do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) (commit `6bf0c06`) |
+| Autoria do código | Ana Carolina Fialho (`IImu`, `ImuSimulado`, `IntegradorGiro`, conversão) e Eduardo Viana (`ImuMpu6050`, `BarramentoI2c`, `AcompanhadorGiro`, tarefa da IMU) |
+| Data da execução | 23/10/2026 (primeira parte) e 24/10/2026 (código completo, depois do merge) |
 | Executado por | Ana Carolina Fialho |
 | Tipo de teste | Unitário e de integração, no computador, com dados simulados |
 | Documentação do código | [Orientação: IMU e ângulo de giro](../04-projeto-conceitual/firmware.md#orientacao-imu-e-angulo-de-giro) |
@@ -1768,9 +1769,10 @@ pio run -e esp32c3
 |---|---|:-:|
 | `IImu` e `ImuSimulado`, com testes no computador | 5 testes da `ImuSimulado` (viés, ruído, falha, saturação, uso pela interface) | Aprovado |
 | Faixa de medição em arquivo de configuração e conversão da leitura | 5 testes da conversão (4 faixas, sinal, arredondamento, fundo de escala, faixa cobre giro rápido) | Aprovado |
-| Integração do yaw com viés removido (giro, deriva e viés simulados) | 16 testes unitários do `IntegradorGiro` e 3 de integração | Aprovado |
-| I²C compartilhado com os ToF, protegido contra uso simultâneo | Parte do driver | Pendente |
-| Biblioteca do sensor só no `esp32c3` | Parte do driver | Pendente |
+| Integração do yaw com viés removido (giro, deriva e viés simulados) | 16 testes unitários do `IntegradorGiro`, 3 de integração e 7 do `AcompanhadorGiro` (ciclo da tarefa com o `ImuSimulado`) | Aprovado |
+| Leitura do MPU6050 (bits da faixa, bytes do sensor, sinal) | 3 testes das funções puras do driver (`valorGyroConfig`, `juntarBytesGiro`, `ajustarSinalGiro`) | Aprovado |
+| I²C compartilhado com os ToF, protegido contra uso simultâneo | `BarramentoI2c` com mutex, usado pela IMU e pela leitura dos ToF na navegação; depende do FreeRTOS, sem teste no computador | Implementado; validação na bancada pendente |
+| Biblioteca do sensor só no `esp32c3` | `ImuMpu6050` em `lib/drivers_esp32`, ignorada no ambiente `native` (`lib_ignore`); `pio run -e esp32c3` compila | Aprovado |
 
 #### Testes unitários e de integração
 
@@ -1781,44 +1783,56 @@ pio test -e native -f test_imu
 | Grupo | Casos | Nível | O que verificam |
 |---|:-:|---|---|
 | Conversão da leitura bruta | 5 | Unitário | 1 °/s nas 4 faixas, sinal, arredondamento, fundo de escala de ±500 e ±2000 °/s, faixa do robô cobre um giro de 300 °/s |
+| Funções do driver | 3 | Unitário | Bits da faixa no `GYRO_CONFIG`, dois bytes em complemento de dois, sinal invertido com o sensor de cabeça para baixo |
 | `ImuSimulado` | 5 | Unitário | Soma de taxa e viés, ruído alternado, falha sem alterar a saída, saturação em `int16_t`, uso pela interface `IImu` |
 | Integração do ângulo | 6 | Unitário | 90°/s por 1 s = 90°, giro para a direita negativo, `dt` zero, frações acumuladas sem perda, `zerarAngulo` mantém o viés, normalização em (−180°, 180°] |
 | Viés, deriva e calibração | 10 | Unitário | Sem calibrar, 1,2 °/s viram 12° em 10 s; calibrado, 0°; viés negativo; média arredondada; calibração incompleta, recusada por movimento e no limite exato; amostra fora da calibração ignorada; zona morta; deriva do viés depois da calibração |
 | IMU simulada + integrador | 3 | Integração | Calibração com viés de 1,5 °/s e ruído, giro de 90° terminando exatamente em 90° e sem deriva parado por 5 s; giro de 180° para a direita; leitura com falha não soma ao ângulo |
+| `AcompanhadorGiro` + IMU simulada | 7 | Integração | Só fica válido depois de calibrar na largada; giro de 90° sem o viés; calibração recomeça se o robô se mexer; falhas seguidas invalidam o ângulo; sem calibrar integra mas não é válido; falha na calibração não conta amostra; taxa publicada não estoura com o viés |
 
-**Resultado:** 29 de 29 aprovados (26 unitários e 3 de integração).
+**Resultado:** 39 de 39 aprovados (29 unitários e 10 de integração).
 
 ```text
-test/test_imu/test_imu.cpp:377: test_conversao_um_grau_por_segundo_em_cada_faixa [PASSED]
-test/test_imu/test_imu.cpp:378: test_conversao_preserva_o_sinal [PASSED]
-test/test_imu/test_imu.cpp:379: test_conversao_arredonda_para_o_mais_proximo [PASSED]
-test/test_imu/test_imu.cpp:380: test_conversao_no_limite_da_faixa [PASSED]
-test/test_imu/test_imu.cpp:381: test_faixa_do_robo_cobre_um_giro_rapido [PASSED]
-test/test_imu/test_imu.cpp:382: test_imu_simulada_soma_taxa_e_vies [PASSED]
-test/test_imu/test_imu.cpp:383: test_imu_simulada_ruido_alterna_o_sinal [PASSED]
-test/test_imu/test_imu.cpp:384: test_imu_simulada_em_falha_nao_altera_a_saida [PASSED]
-test/test_imu/test_imu.cpp:385: test_imu_simulada_satura_no_limite_de_int16 [PASSED]
-test/test_imu/test_imu.cpp:386: test_imu_simulada_pode_ser_usada_pela_interface [PASSED]
-test/test_imu/test_imu.cpp:387: test_noventa_graus_por_segundo_durante_um_segundo_da_noventa_graus [PASSED]
-test/test_imu/test_imu.cpp:388: test_giro_para_a_direita_e_negativo [PASSED]
-test/test_imu/test_imu.cpp:389: test_dt_zero_nao_muda_o_angulo [PASSED]
-test/test_imu/test_imu.cpp:390: test_fracoes_nao_se_perdem_entre_ciclos [PASSED]
-test/test_imu/test_imu.cpp:391: test_zerar_angulo_mantem_o_vies [PASSED]
-test/test_imu/test_imu.cpp:392: test_angulo_normalizado_fica_entre_menos_180_e_180 [PASSED]
-test/test_imu/test_imu.cpp:393: test_sem_calibrar_o_vies_vira_deriva [PASSED]
-test/test_imu/test_imu.cpp:394: test_calibracao_remove_o_vies_e_a_deriva [PASSED]
-test/test_imu/test_imu.cpp:395: test_calibracao_com_vies_negativo [PASSED]
-test/test_imu/test_imu.cpp:396: test_calibracao_usa_a_media_arredondada [PASSED]
-test/test_imu/test_imu.cpp:397: test_calibracao_incompleta_segue_calibrando_e_nao_troca_o_vies [PASSED]
-test/test_imu/test_imu.cpp:398: test_robo_se_mexendo_na_calibracao_e_recusada [PASSED]
-test/test_imu/test_imu.cpp:399: test_limite_da_variacao_na_calibracao [PASSED]
-test/test_imu/test_imu.cpp:400: test_amostra_fora_de_calibracao_e_ignorada [PASSED]
-test/test_imu/test_imu.cpp:401: test_zona_morta_segura_o_ruido_do_sensor_parado [PASSED]
-test/test_imu/test_imu.cpp:402: test_deriva_do_vies_depois_da_calibracao [PASSED]
-test/test_imu/test_imu.cpp:403: test_integracao_giro_de_90_graus_com_vies_e_ruido [PASSED]
-test/test_imu/test_imu.cpp:404: test_integracao_giro_de_180_graus_para_a_direita [PASSED]
-test/test_imu/test_imu.cpp:405: test_integracao_leitura_com_falha_nao_soma_ao_angulo [PASSED]
-================= 29 test cases: 29 succeeded in 00:00:01.896 =================
+test/test_imu/test_imu.cpp:530: test_conversao_um_grau_por_segundo_em_cada_faixa [PASSED]
+test/test_imu/test_imu.cpp:531: test_conversao_preserva_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:532: test_conversao_arredonda_para_o_mais_proximo [PASSED]
+test/test_imu/test_imu.cpp:533: test_conversao_no_limite_da_faixa [PASSED]
+test/test_imu/test_imu.cpp:534: test_faixa_do_robo_cobre_um_giro_rapido [PASSED]
+test/test_imu/test_imu.cpp:535: test_valor_do_gyro_config_para_cada_faixa [PASSED]
+test/test_imu/test_imu.cpp:536: test_juntar_bytes_em_complemento_de_dois [PASSED]
+test/test_imu/test_imu.cpp:537: test_sensor_de_cabeca_para_baixo_inverte_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:538: test_imu_simulada_soma_taxa_e_vies [PASSED]
+test/test_imu/test_imu.cpp:539: test_imu_simulada_ruido_alterna_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:540: test_imu_simulada_em_falha_nao_altera_a_saida [PASSED]
+test/test_imu/test_imu.cpp:541: test_imu_simulada_satura_no_limite_de_int16 [PASSED]
+test/test_imu/test_imu.cpp:542: test_imu_simulada_pode_ser_usada_pela_interface [PASSED]
+test/test_imu/test_imu.cpp:543: test_noventa_graus_por_segundo_durante_um_segundo_da_noventa_graus [PASSED]
+test/test_imu/test_imu.cpp:544: test_giro_para_a_direita_e_negativo [PASSED]
+test/test_imu/test_imu.cpp:545: test_dt_zero_nao_muda_o_angulo [PASSED]
+test/test_imu/test_imu.cpp:546: test_fracoes_nao_se_perdem_entre_ciclos [PASSED]
+test/test_imu/test_imu.cpp:547: test_zerar_angulo_mantem_o_vies [PASSED]
+test/test_imu/test_imu.cpp:548: test_angulo_normalizado_fica_entre_menos_180_e_180 [PASSED]
+test/test_imu/test_imu.cpp:549: test_sem_calibrar_o_vies_vira_deriva [PASSED]
+test/test_imu/test_imu.cpp:550: test_calibracao_remove_o_vies_e_a_deriva [PASSED]
+test/test_imu/test_imu.cpp:551: test_calibracao_com_vies_negativo [PASSED]
+test/test_imu/test_imu.cpp:552: test_calibracao_usa_a_media_arredondada [PASSED]
+test/test_imu/test_imu.cpp:553: test_calibracao_incompleta_segue_calibrando_e_nao_troca_o_vies [PASSED]
+test/test_imu/test_imu.cpp:554: test_robo_se_mexendo_na_calibracao_e_recusada [PASSED]
+test/test_imu/test_imu.cpp:555: test_limite_da_variacao_na_calibracao [PASSED]
+test/test_imu/test_imu.cpp:556: test_amostra_fora_de_calibracao_e_ignorada [PASSED]
+test/test_imu/test_imu.cpp:557: test_zona_morta_segura_o_ruido_do_sensor_parado [PASSED]
+test/test_imu/test_imu.cpp:558: test_deriva_do_vies_depois_da_calibracao [PASSED]
+test/test_imu/test_imu.cpp:559: test_integracao_giro_de_90_graus_com_vies_e_ruido [PASSED]
+test/test_imu/test_imu.cpp:560: test_integracao_giro_de_180_graus_para_a_direita [PASSED]
+test/test_imu/test_imu.cpp:561: test_integracao_leitura_com_falha_nao_soma_ao_angulo [PASSED]
+test/test_imu/test_imu.cpp:562: test_acompanhador_calibra_na_largada_e_so_entao_fica_valido [PASSED]
+test/test_imu/test_imu.cpp:563: test_acompanhador_integra_um_giro_de_90_graus_sem_o_vies [PASSED]
+test/test_imu/test_imu.cpp:564: test_acompanhador_recomeca_a_calibracao_se_o_robo_se_mexer [PASSED]
+test/test_imu/test_imu.cpp:565: test_acompanhador_falhas_seguidas_invalidam_o_angulo [PASSED]
+test/test_imu/test_imu.cpp:566: test_acompanhador_sem_calibrar_nao_e_valido_mas_integra [PASSED]
+test/test_imu/test_imu.cpp:567: test_acompanhador_falha_durante_a_calibracao_nao_conta_amostra [PASSED]
+test/test_imu/test_imu.cpp:568: test_acompanhador_taxa_publicada_nao_estoura_com_o_vies [PASSED]
+================= 39 test cases: 39 succeeded in 00:00:01.758 =================
 ```
 
 #### Cobertura e suíte completa
@@ -1831,12 +1845,15 @@ gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --
 | Arquivo | Linhas | Cobertura |
 |---|:-:|:-:|
 | `lib/imu/src/IntegradorGiro.cpp` | 54 | 100% |
-| `lib/imu/src/ConversorGiro.h` | 9 | 100% |
+| `lib/imu/src/AcompanhadorGiro.cpp` | 43 | 100% |
+| `lib/imu/src/ConversorGiro.h` | 14 | 100% |
 | `lib/simulacao/src/ImuSimulado.h` | 32 | 100% |
-| `lib/imu/src/ConfiguracaoImu.h`, `IntegradorGiro.h`, `lib/hal/src/IImu.h` | 8 | 100% |
-| **Total do firmware** (`lib/`) | 1268 | **97%** |
+| `lib/imu/src/ConfiguracaoImu.h`, `IntegradorGiro.h`, `AcompanhadorGiro.h`, `lib/hal/src/IImu.h` | 16 | 100% |
+| **Total do firmware** (`lib/`) | 2028 | **98%** |
 
-Suíte completa do firmware: **291 de 291 aprovados**. `pio run -e esp32c3`: compilação concluída.
+`ImuMpu6050` e `BarramentoI2c` ficam em `lib/drivers_esp32`, fora do ambiente `native`, e por isso fora da cobertura.
+
+Suíte completa do firmware: **412 de 412 aprovados**. `pio run -e esp32c3`: compilação concluída.
 
 #### Prova de mutação
 
@@ -1848,10 +1865,24 @@ Para conferir se os testes detectam erros, e não só passam, 17 alterações pr
 | Correção | O teste `test_amostra_fora_de_calibracao_e_ignorada` passou a usar uma calibração de 1 amostra, em que a alteração calibraria sozinha |
 | Rodada final | **17 de 17 alterações detectadas** |
 
+Na segunda parte (código do Eduardo, 24/10), 15 alterações foram feitas no `AcompanhadorGiro` e nas funções do driver. Por exemplo: somar o viés em vez de subtrair, errar o deslocamento dos bits da faixa, trocar a ordem dos bytes, não inverter o sinal e não recomeçar a calibração recusada.
+
+| Execução | Resultado |
+|---|---|
+| Rodada única | **12 de 15 alterações detectadas**; 3 passaram despercebidas (abaixo) |
+
+| Alteração não detectada | O que falta testar |
+|---|---|
+| `iniciarCalibracao()` do `AcompanhadorGiro` não zera o ângulo do integrador | Integrar um giro, recalibrar e conferir que o ângulo recomeça de zero depois da calibração |
+| A contagem de falhas seguidas não volta a zero depois de uma leitura boa | Falhas, uma leitura boa e mais falhas, abaixo do limite: o ângulo deve continuar válido |
+| O `ciclo` ignora o `dtMs` recebido e usa sempre 10 ms | Um ciclo com `dtMs` diferente de 10 ms (todos os testes usam 10 ms) |
+
 #### Pendências desta etapa
 
-- Driver do MPU6050 no ESP32-C3, leitura a cada 10 ms e proteção do barramento I²C compartilhado com os VL53L0X (parte de Eduardo Viana na #378).
-- Leitura do sensor real na bancada: viés e ruído do MPU6050 parado, para ajustar a zona morta e os limites da calibração (#381).
+- Três testes do `AcompanhadorGiro`, para as alterações não detectadas na prova de mutação (vão num PR de código para a `main`).
+- Leitura do sensor real na bancada: viés e ruído do MPU6050 parado, para ajustar a zona morta e os limites da calibração, e o sinal do eixo Z (`INVERTER_GIRO_Z`) (#381).
+- Bancada com os 3 VL53L0X e o MPU6050 ligados ao mesmo tempo, para confirmar o barramento compartilhado: a contagem `esperasEsgotadas()` e as falhas de leitura devem ficar em zero com o robô rodando (#381).
+- Frequência do I²C (100 kHz) e espera máxima pelo barramento (8 ms), ainda provisórias.
 
 ### Sprint 5 · Driver dos 3 sensores VL53L0X
 
