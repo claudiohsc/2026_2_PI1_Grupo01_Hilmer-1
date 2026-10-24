@@ -10,6 +10,11 @@ interface CabecalhoProps {
   tipoSelecionado: TipoLabirinto;
   aoSelecionarLabirinto: (tipo: TipoLabirinto) => void;
   estado: EstadoPainel;
+  /**
+   * Trava o seletor mesmo fora da execução. No modo ao vivo (#231) quem define o labirinto
+   * é a corrida do robô, e o seletor só mostra qual é.
+   */
+  seletorTravado?: boolean;
 }
 
 const ABAS: { id: Aba; rotulo: string }[] = [
@@ -29,6 +34,7 @@ export function Cabecalho({
   tipoSelecionado,
   aoSelecionarLabirinto,
   estado,
+  seletorTravado = false,
 }: CabecalhoProps) {
   const ordenados = [...labirintos].sort(
     (a, b) => TIPOS_LABIRINTO.indexOf(a.tipo) - TIPOS_LABIRINTO.indexOf(b.tipo),
@@ -61,8 +67,14 @@ export function Cabecalho({
             <select
               value={tipoSelecionado}
               onChange={(evento) => aoSelecionarLabirinto(evento.target.value as TipoLabirinto)}
-              disabled={estado === 'em_execucao'}
-              title={estado === 'em_execucao' ? 'Aguarde o fim da corrida para trocar o labirinto' : undefined}
+              disabled={seletorTravado || estado === 'em_execucao'}
+              title={
+                seletorTravado
+                  ? 'Labirinto definido pela corrida do robô'
+                  : estado === 'em_execucao'
+                    ? 'Aguarde o fim da corrida para trocar o labirinto'
+                    : undefined
+              }
             >
               {ordenados.map((labirinto) => (
                 <option key={labirinto.tipo} value={labirinto.tipo}>

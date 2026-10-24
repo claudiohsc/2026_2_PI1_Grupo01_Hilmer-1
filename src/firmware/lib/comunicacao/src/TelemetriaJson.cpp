@@ -35,6 +35,22 @@ size_t TelemetriaJson::serializar(const PacoteTelemetria& pacote, char* saida, s
   doc["medio_mm"] = pacote.medioMm;
   doc["pose_valida"] = pacote.poseValida;
 
+  // Campos diagnósticos dos sensores de distância (#344):
+  doc["tof_frente_mm"] = pacote.tofFrenteMm;
+  doc["tof_esq_mm"] = pacote.tofEsqMm;
+  doc["tof_dir_mm"] = pacote.tofDirMm;
+  doc["tof_valida"] = pacote.tofValida;
+  doc["tof_idade_ms"] = pacote.tofIdadeMs;
+
+  // Campos diagnósticos do deslocamento sem encoder (#380):
+  doc["deslocamento"] = pacote.modoDeslocamento != nullptr ? pacote.modoDeslocamento : "encoder";
+  doc["sem_correcao_mm"] = pacote.semCorrecaoMm;
+
+  // Resultado do autoteste do boot (#50):
+  doc["boot_ok"] = pacote.bootOk;
+  doc["boot_falhas"] = pacote.falhasBoot != nullptr ? pacote.falhasBoot : "";
+  doc["boot_ms"] = pacote.bootMs;
+
   if (measureJson(doc) >= capacidade) {
     return 0;
   }
