@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TelaHistorico } from './TelaHistorico';
 import { criarClienteSupabaseSimulado } from '../test/supabaseSimulado';
+import { registrarConsultas } from '../test/registroConsultas';
 import type { Corrida, Labirinto } from '../tipos';
 
 const clienteSimulado = criarClienteSupabaseSimulado();
@@ -48,6 +49,7 @@ describe('TelaHistorico (Integração com Supabase Simulado)', () => {
   ];
 
   beforeEach(() => {
+    vi.restoreAllMocks();
     clienteSimulado.limpar();
     clienteSimulado.definirTabela('corridas', corridasSimuladas);
   });
@@ -103,6 +105,59 @@ describe('TelaHistorico (Integração com Supabase Simulado)', () => {
 
     expect(screen.getByText('2 corridas')).toBeInTheDocument();
     expect(screen.getByText('2ª Tentativa (Não concluída)')).toBeInTheDocument();
+  });
+
+  it('cada opção do filtro consulta o banco com o labirinto escolhido e mostra só as corridas dele (#234)', async () => {
+    const user = userEvent.setup();
+    const terceira: Corrida = { ...corridasSimuladas[0], id: 12, labirinto_id: 3, numero_tentativa: 3, tempo_final: 70 };
+    clienteSimulado.definirTabela('corridas', [...corridasSimuladas, terceira]);
+    const consultas = registrarConsultas(clienteSimulado);
+    render(<TelaHistorico labirintos={labirintos} />);
+    await waitFor(() => expect(screen.getByText('3 corridas')).toBeInTheDocument());
+
+    const linhasDaTabela = () => screen.getAllByRole('row').slice(1); // sem o cabeçalho
+    const opcoes = [
+      { rotulo: 'Labirinto 1 (4×4)', id: 1 },
+      { rotulo: 'Labirinto 2 (8×4)', id: 2 },
+      { rotulo: 'Labirinto 3 (12×4)', id: 3 },
+    ];
+    for (const { rotulo, id } of opcoes) {
+      await user.click(screen.getByRole('button', { name: rotulo }));
+      await waitFor(() => expect(consultas.at(-1)).toEqual({ tabela: 'corridas', filtros: { labirinto_id: id } }));
+      await waitFor(() => expect(screen.getByText('1 corrida')).toBeInTheDocument());
+      expect(linhasDaTabela()).toHaveLength(1);
+      expect(within(linhasDaTabela()[0]).getByRole('cell', { name: rotulo })).toBeInTheDocument();
+    }
+
+    await user.click(screen.getByRole('button', { name: 'Todos os Labirintos' }));
+    await waitFor(() => expect(screen.getByText('3 corridas')).toBeInTheDocument());
+    expect(consultas.at(-1)).toEqual({ tabela: 'corridas', filtros: {} });
+    expect(linhasDaTabela()).toHaveLength(3);
+  });
+
+  it('com as corridas recebidas por props, o filtro funciona no navegador', async () => {
+    const user = userEvent.setup();
+    render(<TelaHistorico corridas={corridasSimuladas} labirintos={labirintos} />);
+    expect(screen.getByText('2 corridas')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Labirinto 2 (8×4)' }));
+    expect(screen.getByText('1 corrida')).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'Labirinto 2 (8×4)' })).toBeInTheDocument();
+    expect(screen.queryByRole('cell', { name: 'Labirinto 1 (4×4)' })).not.toBeInTheDocument();
+  });
+
+  it('o botão Atualizar repete a consulta com o filtro escolhido', async () => {
+    const user = userEvent.setup();
+    const consultas = registrarConsultas(clienteSimulado);
+    render(<TelaHistorico labirintos={labirintos} />);
+    await waitFor(() => expect(screen.getByText('2 corridas')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Labirinto 2 (8×4)' }));
+    await waitFor(() => expect(screen.getByText('1 corrida')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Atualizar' }));
+    await waitFor(() => expect(consultas).toHaveLength(3));
+
+    expect(consultas.at(-1)).toEqual({ tabela: 'corridas', filtros: { labirinto_id: 2 } });
   });
 
   it('atualiza os dados na tabela ao clicar no botão Atualizar', async () => {
