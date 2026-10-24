@@ -1951,8 +1951,8 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 | Item | Valor |
 |---|---|
 | Tarefa | [#238 Buffer local e reenvio sem duplicação](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/238) |
-| História de usuário | HU-16 · Telemetria sem perda ([#46](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/46)), RF16 e RNF05 |
-| Código testado | `src/firmware/lib/comunicacao`, `lib/hal`, `lib/simulacao` e `lib/drivers_esp32` (branch `feat/238-buffer-reenvio` com a `feat/238-envio-http`: commits `2909415`, `b759b6a` e `d42378c`, PR [#412](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/412)) |
+| História de usuário | HU-16 · Estabilização de Conexão ([#46](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/46)), RF16 e RNF05 |
+| Código testado | `src/firmware/lib/comunicacao`, `lib/hal`, `lib/simulacao` e `lib/drivers_esp32` (branch `feat/238-buffer-reenvio` com a `feat/238-envio-http`: commits `2909415`, `b759b6a`, `d42378c` e `f3b0a28`, PR [#412](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/412)) |
 | Data da execução | 24/10/2026 |
 | Executado por | Eduardo Viana |
 | Tipo de teste | Unitário e de integração, no computador, com o servidor simulado `EnvioSimulado` |
@@ -1961,7 +1961,7 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 **Ambiente de execução:** Linux (Ubuntu 24.04), GCC 13.3, Unity 2.6.1 e ArduinoJson 7.4.2, com as mesmas bibliotecas do ambiente `native` (todas as de `lib/`, menos `drivers_esp32`). Cobertura medida com `gcov`, somando todas as suítes.
 
 !!! warning "Testes no computador"
-    O servidor, a rede e o Wi-Fi foram simulados: o `EnvioSimulado` imita o backend (ignora `(corrida, sequência)` repetidos, fica fora do ar e perde respostas quando o teste pede), e a `RedeFalsa` imita o Wi-Fi. O teste com o Wi-Fi real fica para a bancada (ED2), e o ponta a ponta com o Supabase, para a [#232](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/232).
+    O servidor, a rede e o Wi-Fi foram simulados: o `EnvioSimulado` imita o backend (ignora `(corrida, sequência)` repetidos, fica fora do ar e perde respostas quando o teste pede), e a `RedeWifiSimulada` imita o Wi-Fi. O teste com o Wi-Fi real fica para a bancada (ED2), e o ponta a ponta com o Supabase, para a [#232](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/232).
 
 #### Critérios da issue e testes
 
@@ -2013,7 +2013,7 @@ pio test -e native -f test_envio_supabase
 | Grupo | Casos | Nível | O que verificam |
 |---|:-:|---|---|
 | JSON do lote | 7 | Unitário | Nomes das colunas e unidades do banco; `evento` só quando existe; várias amostras em ordem e JSON válido; números negativos e pequenos com três casas; lote vazio e orientação inválida não quebram o JSON; lote que não cabe devolve zero; a pior amostra e o pior lote cabem no espaço reservado |
-| Contrato igual ao exemplo do backend | 1 | Unitário | Compara o lote com `src/backend/tests/fixtures/lote-telemetria.json`. **Ignorado** nesta branch: o arquivo chega com a #229 (PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398)) e o teste passa a rodar sozinho quando os dois estiverem juntos |
+| Contrato igual ao exemplo do backend | 1 | Unitário | Compara o lote com `src/backend/tests/fixtures/lote-telemetria.json`. **Ignorado** nesta branch: o arquivo chega com a [#229](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/229) (PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398)) e o teste passa a rodar sozinho quando os dois estiverem juntos |
 | Respostas e corpos | 5 | Unitário | Contagens da resposta do lote; resposta sem as contagens recusada; `id` da corrida criada; corpos da criação e do encerramento; amostra montada a partir da pose |
 | Credenciais | 3 | Unitário | Sem credenciais, o envio fica desligado; só `https`, com certificado ou com a exceção de bancada; URL das funções |
 | Wi-Fi | 5 | Unitário | Conecta na primeira tentativa; espera cada vez mais entre tentativas e volta a 1 s; queda com a rede conectada tenta de novo na hora e é contada; rede que volta sozinha durante a espera é aceita; relógio que dá a volta |
@@ -2101,5 +2101,5 @@ Suíte completa do firmware nesta branch: **325 de 326 aprovados e 1 ignorado** 
 
 #### Pendências desta etapa
 
-- Edge Function `telemetria` (#229, PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398)): enquanto ela não estiver no ar, o servidor responde `404` e os lotes são descartados. Com ela na `main`, o teste do contrato deixa de ser ignorado.
-- Bancada com o Wi-Fi real (ED2): criar a corrida, desligar o roteador no meio, conferir no log os contadores e, no banco, as amostras sem buraco e sem duplicata; depois, o ponta a ponta da #232.
+- Edge Function `telemetria` ([#229](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/229), PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398)): enquanto ela não estiver no ar, o servidor responde `404` e os lotes são descartados. Com ela na `main`, o teste do contrato deixa de ser ignorado.
+- Bancada com o Wi-Fi real (ED2): criar a corrida, desligar o roteador no meio, conferir no log os contadores e, no banco, as amostras sem buraco e sem duplicata; depois, o ponta a ponta da [#232](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/232).
