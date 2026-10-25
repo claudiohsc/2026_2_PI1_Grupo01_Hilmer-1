@@ -34,7 +34,11 @@ DECLARE
     v_primeira double precision;
     v_ultima double precision;
 BEGIN
-    SELECT MAX(t.tempo_decorrido), AVG(t.velocidade), MAX(t.velocidade),
+    -- As amostras de antes da largada (`estado_corrida = 'aguardando'`, #242) mostram o robô parado
+    -- na partida: não contam para a velocidade. Sem nenhuma amostra de corrida, a velocidade fica NULL.
+    SELECT MAX(t.tempo_decorrido),
+           AVG(t.velocidade) FILTER (WHERE t.estado_corrida IS DISTINCT FROM 'aguardando'),
+           MAX(t.velocidade) FILTER (WHERE t.estado_corrida IS DISTINCT FROM 'aguardando'),
            COALESCE(bool_or(t.evento = 'objetivo_alcancado'), false)
     INTO m_tempo_final, m_velocidade_media, m_velocidade_pico, m_objetivo
     FROM telemetria t
