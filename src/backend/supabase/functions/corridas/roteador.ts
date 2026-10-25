@@ -2,10 +2,16 @@
 /// um repositório, e devolve status e corpo. O `index.ts` só liga isto ao servidor HTTP.
 
 import { tokenValido } from "../_shared/autenticacao.ts";
-import { analisarId, validarCriacao, validarEncerramento } from "./logica.ts";
+import { analisarId, validarCriacao, validarEncerramento, validarMapa } from "./logica.ts";
 import type { Corrida, DadosEncerramento, TipoLabirinto } from "./logica.ts";
 
-export type CodigoErro = "labirinto_inexistente" | "corrida_inexistente" | "corrida_ja_encerrada" | "status_invalido";
+export type CodigoErro =
+  | "labirinto_inexistente"
+  | "corrida_inexistente"
+  | "corrida_ja_encerrada"
+  | "status_invalido"
+  | "celulas_invalidas"
+  | "mapa_grande_demais";
 
 /** Erro de regra de negócio vindo do banco (por exemplo, encerrar uma corrida já encerrada com outro status). */
 export class ErroDeNegocio extends Error {
@@ -20,6 +26,8 @@ export class ErroDeNegocio extends Error {
 export interface Repositorio {
   criarCorrida(tipo: TipoLabirinto): Promise<Corrida>;
   encerrarCorrida(id: number, dados: DadosEncerramento): Promise<Corrida>;
+  /** Grava o mapa final; devolve `{ novas, atualizadas }`. */
+  registrarMapa(id: number, celulas: unknown[]): Promise<{ novas: number; atualizadas: number }>;
 }
 
 export interface Requisicao {
@@ -52,6 +60,8 @@ const STATUS_POR_ERRO: Record<CodigoErro, { status: number; mensagem: string }> 
   corrida_inexistente: { status: 404, mensagem: "corrida não encontrada" },
   corrida_ja_encerrada: { status: 409, mensagem: "a corrida já foi encerrada com outro status" },
   status_invalido: { status: 400, mensagem: "status inválido" },
+  celulas_invalidas: { status: 400, mensagem: "alguma célula do mapa é inválida" },
+  mapa_grande_demais: { status: 413, mensagem: "o mapa tem mais células do que o labirinto da corrida" },
 };
 
 /** Segmentos do caminho depois de `corridas`: `/functions/v1/corridas/12/encerrar` vira `["12", "encerrar"]`. */
@@ -104,6 +114,25 @@ export async function tratarRequisicao(req: Requisicao, deps: Dependencias): Pro
       }
       const corrida = await deps.repositorio.encerrarCorrida(id, validacao.valor);
       return { status: 200, corpo: corrida };
+    }
+
+    if (segmentos.length === 2 && segmentos[1] === "mapa") {
+      if (req.metodo !== "POST") {
+        return erro(405, "metodo_nao_permitido", "use POST em /corridas/{id}/mapa");
+      }
+      const id = analisarId(segmentos[0]);
+      if (id === null) {
+        return erro(400, "id_invalido", "o identificador da corrida deve ser um inteiro positivo");
+      }
+      if (req.corpo === CORPO_INVALIDO) {
+        return erro(400, "corpo_invalido", "o corpo não é um JSON válido");
+      }
+      const validacao = validarMapa(req.corpo);
+      if (!validacao.ok) {
+        return erro(400, "corpo_invalido", validacao.mensagem);
+      }
+      const resultado = await deps.repositorio.registrarMapa(id, validacao.valor.celulas);
+      return { status: 200, corpo: resultado };
     }
 
     return erro(404, "rota_inexistente", "rota não encontrada");

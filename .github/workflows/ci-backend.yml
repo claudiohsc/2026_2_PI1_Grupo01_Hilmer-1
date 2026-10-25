@@ -61,7 +61,7 @@ jobs:
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-      # O index.ts é o único arquivo da Edge Function que os testes do Node não executam (usa Deno.serve).
+      # O index.ts de cada Edge Function é o único arquivo que os testes do Node não executam (usa Deno.serve).
       - uses: denoland/setup-deno@v2
         if: ${{ !cancelled() }}
         with:
@@ -70,6 +70,6 @@ jobs:
       # Há um package.json em src/backend (só para os testes do Node), então o Deno 2 entra no modo
       # "manual" e procura o npm:@supabase/supabase-js na pasta node_modules. No Supabase não existe
       # node_modules: o pacote vem do cache do Deno. `--node-modules-dir=none` reproduz isso.
-      - name: Checar os tipos da Edge Function
+      - name: Checar os tipos das Edge Functions
         if: ${{ !cancelled() }}
-        run: deno check --node-modules-dir=none supabase/functions/corridas/index.ts
+        run: deno check --node-modules-dir=none supabase/functions/corridas/index.ts supabase/functions/telemetria/index.ts
