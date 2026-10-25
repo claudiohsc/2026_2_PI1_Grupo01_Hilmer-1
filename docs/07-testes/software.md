@@ -2676,6 +2676,9 @@ Para atestar que a suíte é sensível a defeitos e não apenas confirmatória, 
 
 ### Sprint 5 · Execução dos movimentos entre células
 
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**. O robô é o `RoboSimulado`: rodas com a velocidade da tabela vezes um fator por roda, giroscópio `ImuSimulado` com viés e ruído, e os 3 ToF como raios num labirinto simulado. Esses valores foram **definidos pelos testes** para reproduzir o robô real. Os motores, os VL53L0X e o MPU6050 reais **não rodam no computador**: deles, só foi verificado que o firmware e a bancada compilam. **O erro de deslocamento ainda não foi medido no robô montado** (critério 3, etapas 7 e 8 da bancada, nas pendências).
+
 | Item | Valor |
 | ------ | ------ |
 | Tarefa | [#184 Execução dos movimentos entre células](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184) |
@@ -2951,6 +2954,9 @@ python3 -m unittest discover -s scripts/testes -v
 ---
 
 ### Sprint 5 · Correção do erro acumulado pelas paredes
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, com o mesmo robô simulado da [execução dos movimentos](#sprint-5-execucao-dos-movimentos-entre-celulas). O encoder simulado, a deriva do giroscópio e as imperfeições dos robôs foram **definidos pelos testes**. A varredura de 189 corridas também é **simulação**. Os motores, os VL53L0X e o MPU6050 reais **não rodam no computador**: deles, só foi verificado que o firmware e a bancada compilam. **A célula estimada ainda não foi comparada com a real no robô montado** (critério 2, etapas 9 e 10 da bancada, nas pendências).
 
 | Item | Valor |
 | ------ | ------ |
