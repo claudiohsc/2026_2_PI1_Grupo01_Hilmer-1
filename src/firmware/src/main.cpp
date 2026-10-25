@@ -349,18 +349,21 @@ static void coletarAmostra(const micromouse::Pose& pose, bool chegouAoObjetivo, 
 
 /// Se a calibração do boot falhou, mas o autoteste foi aprovado e o giroscópio calibrou sozinho (tarefa da
 /// IMU), o robô também está pronto na largada: a partida sem a correção dos ToF funciona. Chamada a cada
-/// ciclo da telemetria; depois de calibrado, não faz nada.
+/// ciclo da telemetria; depois de calibrado, não faz nada (e nem toca na seção crítica do giroscópio).
 static void atualizarFaseDaCalibracao() {
-  if (!estadoBoot.ok || lerGiro().calibracao != micromouse::EstadoCalibracao::Calibrado) {
+  if (!estadoBoot.ok) {
     return;
   }
   portENTER_CRITICAL(&travaCorrida);
   const bool jaCalibrado = faseCorrida.calibrado();
+  portEXIT_CRITICAL(&travaCorrida);
+  if (jaCalibrado || lerGiro().calibracao != micromouse::EstadoCalibracao::Calibrado) {
+    return;
+  }
+  portENTER_CRITICAL(&travaCorrida);
   faseCorrida.calibracaoConcluida();
   portEXIT_CRITICAL(&travaCorrida);
-  if (!jaCalibrado) {
-    Serial.println("{\"status\":\"aguardando_largada\",\"calibracao\":\"giroscopio\"}");
-  }
+  Serial.println("{\"status\":\"aguardando_largada\",\"calibracao\":\"giroscopio\"}");
 }
 
 /// Uma linha de log com os contadores do envio, para a bancada e o dashboard.
@@ -600,8 +603,13 @@ static void tarefaTelemetria(void*) {
         portEXIT_CRITICAL(&travaOdometria);
         portENTER_CRITICAL(&travaCorrida);
         faseCorrida.reiniciar();  // recolocado na partida à mão: volta a aguardar a largada
+        const bool corridaEncerrada = faseCorrida.encerrada();
         portEXIT_CRITICAL(&travaCorrida);
         Serial.println("{\"status\":\"encoders_zerados\"}");
+        if (corridaEncerrada) {
+          // A corrida já foi encerrada no servidor: o `Z` zera a odometria, mas não começa outra tentativa.
+          Serial.println("{\"status\":\"aviso\",\"motivo\":\"corrida_encerrada_reinicie_a_placa_para_nova_tentativa\"}");
+        }
       } else if (c == 'B' || c == 'b') {
         imprimirRelatorioBoot();
       }

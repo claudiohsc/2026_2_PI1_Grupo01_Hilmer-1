@@ -553,6 +553,10 @@ AguardandoCalibracao --calibração bem-sucedida--> AguardandoLargada --largou--
 
 Valores **provisórios** em `ConfiguracaoLargada.h`: o deslocamento mínimo (acima da oscilação da estimativa parado e abaixo de meia célula) e o período da amostra de espera. Confira na bancada com o robô parado e depois empurrado.
 
+**Validação do limiar de 20 mm na bancada.** Hoje, sem encoder, o deslocamento vem da potência comandada aos motores, então mexer o robô à mão (alinhar contra as paredes da partida) não soma deslocamento e não dispara a largada. Com os encoders instalados isso muda: o deslocamento passa a ser medido nas rodas. Nesse caso, posicione o robô encostando nas paredes da célula de partida, confira que nenhum `{"status":"largada"}` sai no log e, se sair, aumente `DESLOCAMENTO_MINIMO_LARGADA_MM` (sem passar de meia célula, 90 mm).
+
+**Nova tentativa.** Depois do objetivo ou dos 10 minutos a corrida está encerrada no servidor. O comando `Z` zera a odometria, mas **não** começa outra tentativa: o log mostra `{"status":"aviso","motivo":"corrida_encerrada_reinicie_a_placa_para_nova_tentativa"}`, e é preciso reiniciar a placa (cada tentativa é uma corrida nova).
+
 Testes: `pio test -e native -f test_fase_corrida` (fases, limiares, volta do `millis()` e o caminho até o servidor simulado, com o JSON do lote).
 
 ## Instalação

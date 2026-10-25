@@ -47,6 +47,10 @@ class FaseCorrida {
   /// `true` se a calibração já terminou bem: a corrida pode ser criada no servidor.
   bool calibrado() const { return fase_ != Fase::AguardandoCalibracao; }
 
+  /// `true` depois do objetivo ou dos 10 minutos. A corrida já foi encerrada no servidor, então só um
+  /// reinício da placa começa uma nova tentativa: `reiniciar()` não a desencerra.
+  bool encerrada() const { return fase_ == Fase::Encerrada; }
+
   /// A calibração do boot terminou bem (ou o giroscópio calibrou sozinho): passa a aguardar a largada.
   /// Fora de `AguardandoCalibracao`, não faz nada.
   void calibracaoConcluida();
@@ -58,7 +62,8 @@ class FaseCorrida {
   DecisaoColeta decidir(int32_t deslocamentoMm, uint32_t agoraMs, bool chegouAoObjetivo);
 
   /// Volta a aguardar a largada (por exemplo, o robô foi recolocado na partida à mão, comando `Z`).
-  /// Uma corrida encerrada continua encerrada, e sem calibração continua sem calibração.
+  /// Uma corrida encerrada continua encerrada (veja `encerrada()`), e sem calibração continua sem
+  /// calibração.
   void reiniciar();
 
  private:
