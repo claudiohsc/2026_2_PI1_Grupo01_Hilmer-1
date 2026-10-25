@@ -1,6 +1,12 @@
 /// Regras da Edge Function `corridas`: validação dos corpos e tipos compartilhados.
 /// Sem dependência de Deno nem do Supabase, para rodar também nos testes com Node.
 
+import { analisarId, ehObjeto } from "../_shared/validacao.ts";
+import type { Validacao } from "../_shared/validacao.ts";
+
+export { analisarId };
+export type { Validacao };
+
 export const TIPOS_LABIRINTO = ["4x4", "8x4", "12x4"] as const;
 export type TipoLabirinto = (typeof TIPOS_LABIRINTO)[number];
 
@@ -22,17 +28,17 @@ export interface Corrida {
 }
 
 export interface DadosEncerramento {
-  status: StatusFinal;
+  /** Sem status, o banco decide pela telemetria: `concluida` se houve `objetivo_alcancado`, senão `nao_concluida`. */
+  status?: StatusFinal;
   tempo_final?: number;
   velocidade_media?: number;
   velocidade_pico?: number;
   consumo_bateria?: number;
 }
 
-export type Validacao<T> = { ok: true; valor: T } | { ok: false; mensagem: string };
-
-function ehObjeto(corpo: unknown): corpo is Record<string, unknown> {
-  return typeof corpo === "object" && corpo !== null && !Array.isArray(corpo);
+/** Corpo de `POST /corridas/{id}/mapa`: as células do mapa final, como o `MapaJson` do firmware. */
+export interface DadosMapa {
+  celulas: unknown[];
 }
 
 /** Corpo de `POST /corridas`: `{ "labirinto": "4x4" | "8x4" | "12x4" }`. O labirinto é obrigatório. */
@@ -53,23 +59,25 @@ export function validarCriacao(corpo: unknown): Validacao<{ tipo: TipoLabirinto 
 const CAMPOS_NUMERICOS = ["tempo_final", "velocidade_media", "velocidade_pico", "consumo_bateria"] as const;
 
 /**
- * Corpo de `POST /corridas/{id}/encerrar`: `status` obrigatório (`concluida` ou `nao_concluida`) e
- * métricas numéricas opcionais, finitas e não negativas.
+ * Corpo de `POST /corridas/{id}/encerrar`. Tudo é opcional: o `status` (`concluida` ou
+ * `nao_concluida`) e as métricas numéricas, finitas e não negativas. O que o robô não informar, o
+ * banco calcula pela telemetria já gravada. Sem corpo, vale `{}`.
  */
 export function validarEncerramento(corpo: unknown): Validacao<DadosEncerramento> {
-  if (!ehObjeto(corpo)) {
+  const dadosEnviados = corpo === undefined ? {} : corpo;
+  if (!ehObjeto(dadosEnviados)) {
     return { ok: false, mensagem: "o corpo deve ser um objeto JSON" };
   }
-  const status = corpo.status;
-  if (status === undefined || status === null) {
-    return { ok: false, mensagem: "o campo 'status' é obrigatório" };
+  const dados: DadosEncerramento = {};
+  const status = dadosEnviados.status;
+  if (status !== undefined && status !== null) {
+    if (!(STATUS_FINAIS as readonly unknown[]).includes(status)) {
+      return { ok: false, mensagem: `status inválido; use um de: ${STATUS_FINAIS.join(", ")}` };
+    }
+    dados.status = status as StatusFinal;
   }
-  if (!(STATUS_FINAIS as readonly unknown[]).includes(status)) {
-    return { ok: false, mensagem: `status inválido; use um de: ${STATUS_FINAIS.join(", ")}` };
-  }
-  const dados: DadosEncerramento = { status: status as StatusFinal };
   for (const campo of CAMPOS_NUMERICOS) {
-    const valor = corpo[campo];
+    const valor = dadosEnviados[campo];
     if (valor === undefined || valor === null) {
       continue;
     }
@@ -81,11 +89,18 @@ export function validarEncerramento(corpo: unknown): Validacao<DadosEncerramento
   return { ok: true, valor: dados };
 }
 
-/** Identificador da corrida na URL: só dígitos, maior que zero e dentro do inteiro de 32 bits do banco. */
-export function analisarId(texto: string): number | null {
-  if (!/^[0-9]+$/.test(texto)) {
-    return null;
+/**
+ * Corpo de `POST /corridas/{id}/mapa`: um objeto com a lista `celulas` (o `MapaJson` do firmware,
+ * que também traz `dimensao`, `linhas` e `colunas`, ignorados aqui). A conferência de cada célula
+ * (limites, paredes) fica no banco, em `registrar_mapa`, que recusa o mapa inteiro se uma for inválida.
+ */
+export function validarMapa(corpo: unknown): Validacao<DadosMapa> {
+  if (!ehObjeto(corpo)) {
+    return { ok: false, mensagem: "o corpo deve ser um objeto JSON" };
   }
-  const id = Number(texto);
-  return id > 0 && id <= 2147483647 ? id : null;
+  const celulas = corpo.celulas;
+  if (!Array.isArray(celulas) || celulas.length === 0) {
+    return { ok: false, mensagem: "o campo 'celulas' deve ser uma lista com pelo menos uma célula" };
+  }
+  return { ok: true, valor: { celulas } };
 }

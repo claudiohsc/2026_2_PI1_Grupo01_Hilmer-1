@@ -30,7 +30,7 @@ src/firmware/
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula) e armazenamento em memória |
 | `navegacao` | Navegação | Localização (`Odometria`: pose pela odometria diferencial dos encoders), decisão de movimento (`Navegacao`) e detecção do objetivo (`DetectorObjetivo`) |
-| `atuacao` | Atuação | Controle dos motores, correção de trajetória e trava dos motores (`MotoresComTrava`) |
+| `atuacao` | Atuação | Controle dos motores, correção de trajetória e rumo pelo giroscópio, giros de 90° e 180° em malha fechada (`ControleGiro`) e trava dos motores (`MotoresComTrava`) (#190, #191) |
 | `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `SensorDistanciaSimulado`, um `ISensorDistancia` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `SensorDistanciaSimulado`, `TofSimulado`, os 3 VL53L0X no labirinto, com amostras brutas pelo `CombinadorTof` real, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, `MotoresSimulados`, um `IMotores` que guarda o último comando, `BarramentoI2cSimulado`, um `IBarramentoI2c` com os dispositivos escolhidos pelo teste, e `ImuSimulado`, um `IImu` com taxa, viés, ruído e falha definidos pelo teste, sem hardware |
 | `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (3 VL53L0X e varredura pelo I²C, MPU6050, barramento I²C com mutex, encoders, DRV8833, WiFi) |
@@ -212,25 +212,47 @@ O valor de 140 mm também é 100% compatível com o ambiente simulado (`Labirint
 
 ## Controle de movimento
 
-O `ControleMovimento` (`lib/atuacao`) leva o robô em linha reta, centralizado no corredor, e para no centro da célula antes de uma parede frontal ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), HU-12). Chame `atualizar` uma vez por leitura nova do LiDAR (cerca de 100 ms):
+O `ControleMovimento` e o `ControleGiro` (`lib/atuacao`) controlam a trajetória e orientação do robô no labirinto: avanço retilíneo centralizado no corredor com parada frontal ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), HU-12), correção contínua do desvio de rumo pelo giroscópio e giros de 90° e 180° no próprio eixo em malha fechada ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190), HU-11).
 
 ```cpp
+// Avanço com centralização lateral e correção de rumo pelo giroscópio:
 ControleMovimento controle;
-EstadoMovimento estado = controle.atualizar(lidar, motores, 100);  // ISensorDistancia e IMotores
+controle.definirRumoAlvo(0); // Rumo reto na partida (0 m°)
+EstadoMovimento estado = controle.atualizar(lidar, motores, 100, leituraGiro);
 if (estado == EstadoMovimento::ParadoNaParede) {
-  // decidir o próximo passo e, antes de andar de novo, chamar controle.reiniciar()
+  // Giro de 90° para a direita em malha fechada:
+  ControleGiro giro;
+  giro.iniciarGiro90Direita(leituraGiro.anguloMiligraus);
+  while (!giro.concluido()) {
+    giro.atualizar(leituraGiro, motores, 10);
+  }
+  controle.reiniciar(giro.anguloAlvoMiligraus()); // Novo rumo alvo travado
 }
 ```
 
 | Regra | Comportamento |
 |---|---|
-| Centralização | PD sobre o deslocamento lateral: `(esquerda - direita) / 2` com parede dos dois lados, ou a diferença para 84 mm com uma só; sem parede ao lado, segue reto |
-| Correção | Tirada da roda esquerda e somada à direita (positiva vira para a esquerda), limitada a 250 e a 60% da potência base, para nenhuma roda girar para trás |
+| Centralização lateral | PD sobre o deslocamento lateral: `(esquerda - direita) / 2` com parede dos dois lados, ou a diferença para 84 mm com uma só; sem parede ao lado, segue reto |
+| Correção de rumo | PD sobre o erro angular de guinada: $e = \text{rumoAlvo} - \text{anguloAtual}$. Em trechos abertos (`SemReferencia`), o giroscópio é a referência que mantém a linha reta; em corredores com paredes, atua como amortecimento |
+| Correção total | Soma da centralização lateral com a correção de rumo, limitada a `correcaoMaximaPercentualDaBase` (60%) da potência base, impedindo que qualquer roda inverta durante cruzeiro |
 | Parada frontal | Cruzeiro (400) até 264 mm da parede, rampa até a mínima (150) e parada a 84 mm, o centro da célula |
-| Parado | `ParadoNaParede` freia e fica travado até `reiniciar()` |
-| Sem leitura do LiDAR | Segue reto na potência mínima; depois de 500 ms sem leitura, freia (`ParadoSemLeitura`) |
+| Giros de 90° e 180° | Rotação diferencial no lugar em malha fechada sobre o ângulo integrado (`ControleGiro`): rampa proporcional com desaceleração suave até a potência mínima (150), parada com freio ao atingir a tolerância configurável (padrão $\pm 2,0^\circ$) e confirmação por ciclos de estabilização |
+| Deslizamento do piso | Sem encoders nas rodas na Rev 2.0, a malha fechada no ângulo do giroscópio compensa escorregamento dos pneus e desníveis do solo (HU-11), mantendo giros precisos e avanço retilíneo |
+| Parado / Falha | `ParadoNaParede` e `ParadoSemLeitura` freiam até `reiniciar()`; timeout de giro acusa `Timeout` e freia |
 
-Os ganhos e as potências estão em `ConfiguracaoControle.h` e são **provisórios**: foram ajustados numa simulação do corredor (`test_controle_movimento`) e precisam ser confirmados na bancada. A geometria vem do tema do PI1 (célula de 180 mm com parede de 12 mm) e do chassi de 100 × 120 mm, com o LiDAR no centro: sobram 24 mm de cada lado com o robô centralizado.
+### Parâmetros provisórios de giro e rumo (`ConfiguracaoGiro.h` e `ConfiguracaoControle.h`)
+
+| Parâmetro | Constante / Campo | Valor provisório | Origem / Justificativa |
+|---|---|---|---|
+| Tolerância do giro | `toleranciaMiligraus` | **2 000 m° (2,0°)** | Erro angular admissível para o robô sair alinhado na célula seguinte |
+| Potência máxima de giro | `potenciaMaxima` | **350** | Limita a aceleração angular para evitar derrapagem violenta |
+| Potência mínima de giro | `potenciaMinima` | **150** | Vence a zona morta de atrito estático dos micromotores N20 |
+| Ganho proporcional do giro | `ganhoProporcionalDecimos` | **40 (4,0 pot/°)** | Desacelera a rotação conforme o robô se aproxima do alvo angular |
+| Timeout do giro | `tempoMaximoGiroMs` | **2 500 ms** | Fail-safe caso o robô colida ou fique preso durante a rotação |
+| Ciclos de estabilização | `ciclosEstabilizacao` | **3 ciclos (30 ms)** | Impede falsos positivos causados por simples cruzamento rápido da meta |
+| Ganho proporcional de rumo | `ganhoRumoProporcionalDecimos` | **80 (8,0 pot/°)** | Corrige desvios angulares durante o avanço retilíneo |
+| Ganho derivativo de rumo | `ganhoRumoDerivativoDecimos` | **20 (2,0 pot/(°/s))** | Amortece a taxa de rotação para evitar serpentear no corredor |
+| Correção máxima de rumo | `correcaoRumoMaxima` | **200** | Limita a autoridade de correção angular sobre os motores |
 
 O `MotoresDrv8833` (`lib/drivers_esp32`) aplica a potência com PWM de 20 kHz e 10 bits nos GPIO 4 a 7, no modo *fast decay*; `parar()` liga IN1 e IN2 (freio). O motor direito fica invertido no `main.cpp`, pela montagem espelhada.
 

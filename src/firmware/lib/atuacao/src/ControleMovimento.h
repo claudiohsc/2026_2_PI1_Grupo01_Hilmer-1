@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "AcompanhadorGiro.h"
 #include "ConfiguracaoControle.h"
 #include "ControladorCentralizacao.h"
 #include "ISensorDistancia.h"
@@ -50,10 +51,43 @@ class ControleMovimento {
   /// @return Potência de cada roda. `{0, 0}` nos estados parados.
   PotenciaRodas calcular(const DistanciasLaterais* leitura, uint32_t dtMs);
 
+  /// Calcula a potência das rodas para uma referência de leitura.
+  PotenciaRodas calcular(const DistanciasLaterais& leitura, uint32_t dtMs) {
+    return calcular(&leitura, dtMs);
+  }
+
+  /// Calcula a potência das rodas com correção conjunta de centralização lateral e rumo (#190).
+  /// @param leitura Distâncias medidas, ou `nullptr` se o LiDAR não deu leitura válida.
+  /// @param dtMs Tempo desde a chamada anterior, em ms.
+  /// @param anguloGiroMiligraus Ângulo atual de guinada medido pelo giroscópio, em mili-graus.
+  /// @return Potência de cada roda.
+  PotenciaRodas calcular(const DistanciasLaterais* leitura, uint32_t dtMs, int32_t anguloGiroMiligraus);
+
+  /// Calcula a potência das rodas para uma referência de leitura e ângulo de rumo (#190).
+  PotenciaRodas calcular(const DistanciasLaterais& leitura, uint32_t dtMs, int32_t anguloGiroMiligraus) {
+    return calcular(&leitura, dtMs, anguloGiroMiligraus);
+  }
+
   /// Lê o LiDAR, calcula e aplica nos motores: `parar()` nos estados parados e
   /// `definirPotencia()` nos demais.
   /// @return O estado depois da atualização.
   EstadoMovimento atualizar(ISensorDistancia& lidar, IMotores& motores, uint32_t dtMs);
+
+  /// Lê o LiDAR, calcula com correção de rumo (#190) e aplica nos motores.
+  /// @param lidar Sensor de distância.
+  /// @param motores Interface dos motores.
+  /// @param dtMs Tempo decorrido em ms.
+  /// @param anguloGiroMiligraus Ângulo atual de guinada do robô.
+  /// @return O estado depois da atualização.
+  EstadoMovimento atualizar(ISensorDistancia& lidar, IMotores& motores, uint32_t dtMs, int32_t anguloGiroMiligraus);
+
+  /// Lê o LiDAR, calcula com leitura completa do giroscópio (#190) e aplica nos motores.
+  /// @param lidar Sensor de distância.
+  /// @param motores Interface dos motores.
+  /// @param dtMs Tempo decorrido em ms.
+  /// @param giro Estrutura com leitura do giroscópio e indicador de validade.
+  /// @return O estado depois da atualização.
+  EstadoMovimento atualizar(ISensorDistancia& lidar, IMotores& motores, uint32_t dtMs, const LeituraGiro& giro);
 
   /// Estado depois da última atualização.
   EstadoMovimento estado() const { return estado_; }
@@ -63,18 +97,51 @@ class ControleMovimento {
     return estado_ == EstadoMovimento::ParadoNaParede || estado_ == EstadoMovimento::ParadoSemLeitura;
   }
 
-  /// Destrava a parada e esquece o histórico da centralização, para um novo trecho reto.
+  /// Destrava a parada e esquece o histórico da centralização e do rumo, para um novo trecho reto.
   void reiniciar();
+
+  /// Destrava a parada, esquece o histórico e define um novo rumo alvo em linha reta (#190).
+  void reiniciar(int32_t novoRumoAlvoMiligraus) {
+    reiniciar();
+    definirRumoAlvo(novoRumoAlvoMiligraus);
+  }
+
+  /// Define o rumo alvo (em mili-graus) que o robô deve manter durante o avanço.
+  void definirRumoAlvo(int32_t rumoAlvoMiligraus);
+
+  /// Rumo alvo atualmente configurado, em mili-graus.
+  int32_t rumoAlvoMiligraus() const { return rumoAlvoMiligraus_; }
+
+  /// Último desvio angular de rumo calculado (rumoAlvo - anguloAtual), em mili-graus.
+  int32_t desvioRumoMiligraus() const { return desvioRumoMiligraus_; }
+
+  /// Última correção de rumo aplicada aos motores, em unidades de potência.
+  int16_t correcaoRumo() const { return correcaoRumo_; }
+
+  /// `true` se houve um ângulo de giro válido na última chamada a `calcular`.
+  bool temRumoValido() const { return temRumoValido_; }
 
   /// Controlador lateral, para consultar o erro e o modo (telemetria e testes).
   const ControladorCentralizacao& centralizacao() const { return centralizacao_; }
 
  private:
+  PotenciaRodas calcularInterno(const DistanciasLaterais* leitura, uint32_t dtMs, bool temAngulo,
+                                int32_t anguloGiroMiligraus);
+
   ConfiguracaoControle config_;
   ControladorCentralizacao centralizacao_;
   PerfilParadaFrontal perfil_;
   EstadoMovimento estado_ = EstadoMovimento::Cruzeiro;
   uint32_t tempoSemLeituraMs_ = 0;
+
+  // Controle de rumo pelo giroscópio (#190)
+  int32_t rumoAlvoMiligraus_ = 0;
+  int32_t desvioRumoMiligraus_ = 0;
+  int32_t desvioRumoAnterior_ = 0;
+  int32_t derivadaRumoMiliGrausPorS_ = 0;
+  int16_t correcaoRumo_ = 0;
+  bool temErroRumoAnterior_ = false;
+  bool temRumoValido_ = false;
 };
 
 }  // namespace micromouse

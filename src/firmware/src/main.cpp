@@ -27,6 +27,8 @@
 #include "Configuracao.h"
 #include "ConfiguracaoDeslocamento.h"
 #include "ConfiguracaoImu.h"
+#include "ControleGiro.h"
+#include "ControleMovimento.h"
 #include "ConversorDeslocamento.h"
 #include "DeslocamentoEstimado.h"
 #include "DetectorObjetivo.h"
@@ -168,6 +170,12 @@ static portMUX_TYPE travaGiro = portMUX_INITIALIZER_UNLOCKED;
   portEXIT_CRITICAL(&travaGiro);
   return copia;
 }
+
+/// Controle de giro no próprio eixo (90° e 180°) em malha fechada pelo giroscópio (#190).
+[[maybe_unused]] static micromouse::ControleGiro controleGiro;
+
+/// Controle de movimento: avanço com centralização e controle de rumo pelo giroscópio (#190, #191).
+[[maybe_unused]] static micromouse::ControleMovimento controleMovimento;
 
 /// Calibração do boot (#240, RNF-08): desvio de cada ToF e viés do giroscópio, em até 1 s, com o robô
 /// parado na célula de partida. O `corrigirTof` é aplicado a toda leitura dos ToF (navegação) e o viés

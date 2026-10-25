@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { analisarId, validarCriacao, validarEncerramento } from "./logica.ts";
+import { analisarId, validarCriacao, validarEncerramento, validarMapa } from "./logica.ts";
 
 test("criação aceita os três tipos de labirinto", () => {
   for (const tipo of ["4x4", "8x4", "12x4"]) {
@@ -33,10 +33,17 @@ test("encerramento aceita os dois status finais, sem métricas", () => {
   assert.deepEqual(validarEncerramento({ status: "nao_concluida" }), { ok: true, valor: { status: "nao_concluida" } });
 });
 
-test("encerramento recusa status em andamento, desconhecido ou ausente", () => {
-  for (const corpo of [{}, { status: "em_andamento" }, { status: "ok" }, { status: 1 }, { status: null }]) {
-    assert.equal(validarEncerramento(corpo).ok, false);
+test("encerramento recusa status em andamento ou desconhecido", () => {
+  for (const corpo of [{ status: "em_andamento" }, { status: "ok" }, { status: 1 }, { status: true }, { status: "" }]) {
+    assert.equal(validarEncerramento(corpo).ok, false, JSON.stringify(corpo));
   }
+});
+
+test("encerramento sem status é aceito: o banco decide pela telemetria", () => {
+  assert.deepEqual(validarEncerramento({}), { ok: true, valor: {} });
+  assert.deepEqual(validarEncerramento(undefined), { ok: true, valor: {} });
+  assert.deepEqual(validarEncerramento({ status: null }), { ok: true, valor: {} });
+  assert.deepEqual(validarEncerramento({ tempo_final: 12.5 }), { ok: true, valor: { tempo_final: 12.5 } });
 });
 
 test("encerramento repassa as métricas numéricas informadas", () => {
@@ -66,7 +73,7 @@ test("encerramento ignora métrica nula", () => {
 });
 
 test("encerramento recusa corpo que não é objeto", () => {
-  for (const corpo of [undefined, null, "concluida", []]) {
+  for (const corpo of [null, "concluida", 7, []]) {
     assert.equal(validarEncerramento(corpo).ok, false);
   }
 });
@@ -76,5 +83,16 @@ test("identificador da corrida: inteiro positivo dentro do limite do banco", () 
   assert.equal(analisarId("2147483647"), 2147483647);
   for (const texto of ["0", "-1", "1.5", "abc", "", "2147483648", "1e3", " 1", "01a"]) {
     assert.equal(analisarId(texto), null, texto);
+  }
+});
+
+test("mapa aceita um objeto com a lista de células e ignora os outros campos do MapaJson", () => {
+  const celulas = [{ linha: 0, coluna: 0, parede_norte: false, parede_sul: true, parede_leste: false, parede_oeste: true }];
+  assert.deepEqual(validarMapa({ dimensao: "4x4", linhas: 4, colunas: 4, celulas }), { ok: true, valor: { celulas } });
+});
+
+test("mapa recusa corpo que não é objeto ou sem lista de células", () => {
+  for (const corpo of [undefined, null, "mapa", 7, [], { celulas: [] }, { celulas: "x" }, { celulas: {} }, {}]) {
+    assert.equal(validarMapa(corpo).ok, false, JSON.stringify(corpo));
   }
 });
