@@ -56,6 +56,9 @@ class IntegradorGiro {
   /// @return O estado da calibração depois da amostra. Fora de `Calibrando`, a amostra é ignorada.
   EstadoCalibracao adicionarAmostraCalibracao(int16_t taxaDecimosDps);
 
+  /// Adota um viés já medido (por exemplo, o da rotina de calibração do boot, #240) e dá a
+  /// calibração por feita. O ângulo volta a zero.
+  void definirVies(int16_t viesDecimosDps);
   /// Estado da última calibração.
   EstadoCalibracao estadoCalibracao() const { return estado_; }
 

@@ -62,6 +62,13 @@ class AcompanhadorGiro {
   /// Começa (ou recomeça) a calibração do viés. Chame com o robô parado. O ângulo volta a zero.
   void iniciarCalibracao();
 
+  /// Adota um viés já medido, sem esperar a calibração própria: o ângulo vale (zero) desde já.
+  /// Use com o viés da rotina de calibração do boot (#240). Chame antes de criar a tarefa da IMU.
+  void definirVies(int16_t viesDecimosDps);
+
+  /// Situação da calibração do viés neste instante.
+  EstadoCalibracao estadoCalibracao() const { return integrador_.estadoCalibracao(); }
+
   /// Lê a IMU uma vez e calibra ou integra.
   /// @param dtMs Tempo desde o ciclo anterior, em ms.
   /// @return A situação depois deste ciclo (a mesma de `ultima()`).

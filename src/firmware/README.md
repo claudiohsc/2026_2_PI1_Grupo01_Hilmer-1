@@ -21,6 +21,7 @@ src/firmware/
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
 | `hal` | Interfaces de hardware | Interfaces abstratas (`ISensorDistancia`, `IEncoder`, `IMotores`, `IBarramentoI2c` e `IImu`) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` para os 3 sensores ToF (VL53L0X) com limiares por lado, filtro digital e saturação defensiva (#379) |
+| `calibracao` | Calibração | Desvio de cada VL53L0X contra distância conhecida (`CalibradorTof`), calibração do giroscópio (`CalibradorGiro`) e rotina unificada de calibração dentro de 1 s (#240, HU-13 / RF-13 / RNF-08) |
 | `inicializacao` | Boot | Autoteste do boot (`AutotesteBoot`): varredura do I²C, conferência dos 4 dispositivos e relatório (`RelatorioBoot`), com os parâmetros em `ConfiguracaoBoot.h` |
 | `tof` | Sensoriamento | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros provisórios (`ConfiguracaoTof.h`), sem Arduino |
 | `imu` | Sensoriamento | Giroscópio: conversão da leitura do MPU6050, calibração do viés, ângulo de giro (`IntegradorGiro`) e o ciclo da tarefa da IMU (`AcompanhadorGiro`) |
@@ -28,7 +29,7 @@ src/firmware/
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula) e armazenamento em memória |
-| `navegacao` | Navegação | Localização (`Odometria`: pose pela odometria diferencial dos encoders), decisão de movimento (`Navegacao`) e detecção do objetivo (`DetectorObjetivo`) |
+| `navegacao` | Navegação | Localização (`Odometria`: pose pela odometria diferencial dos encoders), decisão de movimento (`Navegacao`), detecção do objetivo (`DetectorObjetivo`) e as fases do robô na telemetria (`FaseCorrida`, #242) |
 | `atuacao` | Atuação | Controle dos motores, correção de trajetória e rumo pelo giroscópio, giros de 90° e 180° em malha fechada (`ControleGiro`) e trava dos motores (`MotoresComTrava`) (#190, #191) |
 | `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `SensorDistanciaSimulado`, um `ISensorDistancia` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `SensorDistanciaSimulado`, `TofSimulado`, os 3 VL53L0X no labirinto, com amostras brutas pelo `CombinadorTof` real, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, `MotoresSimulados`, um `IMotores` que guarda o último comando, `BarramentoI2cSimulado`, um `IBarramentoI2c` com os dispositivos escolhidos pelo teste, e `ImuSimulado`, um `IImu` com taxa, viés, ruído e falha definidos pelo teste, sem hardware |
@@ -36,7 +37,7 @@ src/firmware/
 
 ## Regras de dependência
 
-- As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
+- As camadas de lógica (`nucleo`, `percepcao`, `calibracao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Assim elas compilam e são testadas no computador, sem a placa.
 - O acesso ao hardware passa pelas interfaces de `hal`. Os drivers reais ficam em `drivers_esp32`, e `src/main.cpp` liga cada driver à sua interface.
 - Para testar a lógica sem sensor, use o `SensorDistanciaSimulado` (`lib/simulacao`): `definirLeituraFixa` repete uma leitura, `enfileirarLeitura` entrega leituras em sequência, `simularFalha(true)` faz o sensor parar de responder e, com um `LabirintoSimulado`, `posicionar` faz a leitura vir da posição do robô (veja [Labirinto simulado](#labirinto-simulado)).
 - Evite alocação dinâmica na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo (`MAX_LINHAS_LABIRINTO` × `MAX_COLUNAS_LABIRINTO`) bastam.
@@ -100,6 +101,64 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `temParede(celula, direcao)` | `true` se há parede naquele lado; célula fora do labirinto conta como parede |
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
 | `SensorDistanciaSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
+
+## Calibração dos Sensores e Giroscópio (`lib/calibracao`)
+
+A camada `lib/calibracao` implementa a autocalibração dos sensores de distância VL53L0X e do giroscópio MPU6050 com o robô parado na célula de partida ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240), HU-13 / RF-13 / RNF-08).
+
+A rotina unificada atende a todos os critérios de pronto da issue:
+1. **Viés do giroscópio:** calculado pela média aritmética de amostras com o robô parado; a rotina é recusada/abortada se o robô se mover durante a calibração (`CalibradorGiro`).
+2. **Desvio dos ToF:** calculado e guardado por sensor (frente, esquerda e direita) contra referências conhecidas, aplicado diretamente nas leituras com saturação (`CalibradorTof`).
+3. **Orçamento de 1 segundo (RNF-08):** duração medida e controlada pela `RotinaCalibracao`; caso a calibração ultrapasse 1000 ms, o estado é marcado como `TempoExcedido`.
+4. **Testes no computador:** testável sem hardware usando `ImuSimulado` e `SensorDistanciaSimulado`/`TofSimulado`.
+
+**Tudo ou nada.** A rotina só entrega resultado em `Sucesso`. Em qualquer outro estado, `desviosTof()` e `viesGiroDecimosDps()` devolvem zero e `corrigirTof()`/`corrigirGiro()` devolvem a leitura como veio: um ToF calibrado enquanto o giroscópio acusava movimento não é confiável.
+
+### Na placa (`main.cpp`)
+
+1. No `setup()`, depois do autoteste aprovado e da IMU iniciada, `calibrarSensores()` roda a `RotinaCalibracao` a cada 10 ms até ela terminar (no máximo 1 s) e escreve `{"status":"calibracao","estado":"sucesso","duracao_ms":...,"no_prazo":true}` no log. O robô precisa estar parado na célula de partida.
+2. **Giroscópio:** com `Sucesso`, o viés vai para o `AcompanhadorGiro` (`definirVies`) e o ângulo já vale. Sem `Sucesso`, a tarefa da IMU calibra o viés sozinha nos primeiros 2 s (`AMOSTRAS_CALIBRACAO_GIRO` de `ConfiguracaoImu.h`), como antes.
+3. **ToF:** a tarefa de navegação aplica `corrigirTof()` a toda leitura válida; a telemetria e o deslocamento já recebem a leitura corrigida.
+4. **Referências da largada** (`REFERENCIAS_TOF_NA_LARGADA`): paredes dos dois lados a 54 mm da face do sensor e **frente sem referência** (`SEM_REFERENCIA_TOF_MM`), porque a frente da célula de partida é o caminho do labirinto. Um lado sem referência fica fora da calibração (desvio zero, variação ignorada). Para calibrar o ToF frontal, ponha uma parede a uma distância conhecida e use `iniciar(referencias)`.
+5. **Desvio máximo** (`DESVIO_MAXIMO_TOF_MM`, 30 mm): um desvio maior é quase sempre referência errada (o robô não estava onde se esperava). A calibração é descartada (`DesvioForaDaFaixa`) e as leituras seguem sem correção.
+
+```cpp
+RotinaCalibracao rotina;  // ConfiguracaoRotinaCalibracao padrão
+rotina.iniciar();
+
+// Execução passo a passo ou via método executar:
+EstadoRotinaCalibracao resultado = rotina.executar(sensorDistancia, imu);
+if (resultado == EstadoRotinaCalibracao::Sucesso) {
+  DistanciasLaterais distCorrigida = rotina.corrigirTof(distBruta);
+  int16_t taxaCorrigida = rotina.corrigirGiro(taxaBruta);
+  uint32_t duracaoMs = rotina.duracaoMedidaMs(); // <= 1000 ms (RNF-08)
+}
+```
+
+| Componente | Responsabilidade | Comportamento em caso de movimento |
+|---|---|---|
+| `CalibradorTof` | Desvio por lado: `média arredondada − referência` (mm) | Se `maior − menor > variacaoMaximaMm`, estado `Recusada` e mantém desvios anteriores; desvio acima de `desvioMaximoMm`, `ForaDaFaixa` |
+| `CalibradorGiro` | Viés do giroscópio Z: `média arredondada das amostras` (décimos de °/s) | Se `maior − menor > variacaoMaximaDecimosDps`, estado `Recusada` e mantém viés anterior |
+| `RotinaCalibracao` | Orquestração simultânea dos sensores e controle da duração | Estado `RecusadaPorMovimento` se qualquer sensor acusar movimento; `TempoExcedido` se passar de 1 s; `DesvioForaDaFaixa` se a referência dos ToF estiver errada |
+
+### Valores nominais e provisórios (`ConfiguracaoCalibracao.h`)
+
+| Parâmetro | Constante | Valor | Nota |
+|---|---|---|---|
+| Orçamento total | `ORCAMENTO_CALIBRACAO_MS` | **1000 ms** | RNF-08; duração medida e verificada na rotina |
+| Fatia prevista ToF | `ORCAMENTO_CALIBRACAO_TOF_MS` | **400 ms** | 10 amostras × ~33 ms ≈ 330 ms |
+| Fatia prevista Giro | `ORCAMENTO_CALIBRACAO_GIRO_MS` | **500 ms** | 50 amostras × 10 ms = 500 ms |
+| Amostras ToF | `AMOSTRAS_CALIBRACAO_TOF` | **10** | Período de ~33 ms do VL53L0X |
+| Amostras Giro | `AMOSTRAS_CALIBRACAO_BOOT_GIRO` | **50** | Período de 10 ms da IMU |
+| Variação máx. ToF | `VARIACAO_MAXIMA_CALIBRACAO_TOF_MM` | **8 mm** | Acima disso assume oscilação ou robô mexendo |
+| Variação máx. Giro | `VARIACAO_MAXIMA_CALIBRACAO_GIRO_DECIMOS_DPS` | **50** (5 °/s) | Acima disso assume robô em movimento |
+| Distância referência | `DISTANCIA_REFERENCIA_TOF_MM` | **54 mm** | Geometria nominal da célula com sensores recuados |
+| Desvio máximo ToF | `DESVIO_MAXIMO_TOF_MM` | **30 mm** | Acima disso a referência provavelmente está errada |
+
+Testes:
+- `pio test -e native -f test_calibracao_tof` (testes unitários dos ToF)
+- `pio test -e native -f test_rotina_calibracao` (testes do giroscópio, orquestração e RNF-08 com `ImuSimulado`)
+- `pio test -e native -f test_integracao_calibracao` (integração: ToF desviado → calibração → mapa do 4×4 idêntico ao labirinto; viés do giroscópio → ângulo parado em zero e giro de 90°)
 
 ## Percepção ToF (VL53L0X) e classificação de paredes
 
@@ -488,6 +547,101 @@ O `boot_ms` é o `millis()` no fim do `setup()`, contado desde o início do prog
 
 Os parâmetros ficam em `lib/inicializacao/src/ConfiguracaoBoot.h`. O `WHO_AM_I` esperado é **provisório**: módulos com clone do MPU6050 respondem outro valor (0x70, 0x72, 0x98); se a bancada mostrar um desses em `mpu6050_who_am_i`, confirme com a eletrônica e troque lá. Repetir as tentativas durante a corrida é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava (`motoresComTrava.travar()`).
 
+## Envio da telemetria ao Supabase
+
+A telemetria vai ao Supabase pelas Edge Functions, por HTTPS, a cada 1 s e sem atrasar a navegação (#236), sem perder amostras quando o Wi-Fi cai e sem duplicá-las quando ele volta (#238). O robô nunca escreve direto nas tabelas: a chave `anon` só lê.
+
+```mermaid
+flowchart LR
+    tel["tarefaTelemetria (1 s)<br/>coletarAmostra"] -->|"registrar(): nunca usa a rede"| buf["ControladorEnvio<br/>buffer de 600 amostras"]
+    buf -->|"ciclo() a cada 100 ms"| rede["tarefaRede<br/>ReconexaoWifi + EnvioHttpSupabase"]
+    rede -->|"POST /functions/v1/telemetria"| sb[("Supabase")]
+```
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| `ControladorEnvio`, `BufferCircular`, `PoliticaReenvio` | `lib/comunicacao` | Guardam as amostras até o servidor confirmar, reenviam em ordem com espera crescente e classificam as respostas |
+| `ContratoTelemetria` | `lib/comunicacao` | JSON do lote, da criação e do encerramento da corrida, e a leitura das respostas |
+| `ReconexaoWifi` | `lib/comunicacao` | Conecta e reconecta o Wi-Fi com espera crescente (1 s até 30 s), sem travar a tarefa |
+| `CredenciaisSupabase` | `lib/comunicacao` | Confere as credenciais e monta as URLs das funções |
+| `EnvioHttpSupabase` | `lib/drivers_esp32` | `IEnvioTelemetria` real: `HTTPClient` com `WiFiClientSecure`, cabeçalhos `apikey`, `Authorization` e `x-device-token` |
+| `RedeWifiEsp32`, `TravaSecaoCritica` | `lib/drivers_esp32` | O Wi-Fi do ESP32 e a `ITrava` real (seção crítica do FreeRTOS) |
+| `tarefaRede` | `src/main.cpp` | Prioridade 1 e pilha de 10 KB (TLS): Wi-Fi, criação da corrida, um lote por ciclo e o encerramento |
+
+**Fluxo de uma corrida.** Com o Wi-Fi conectado, a tarefa de rede cria a corrida (`POST /corridas`, labirinto 4×4 por enquanto) e só então a coleta começa a registrar amostras, numeradas na hora (`numero_sequencia` 1, 2, 3...). Na chegada ao objetivo, ou aos 10 minutos, a coleta registra a última amostra e pede o encerramento; o `POST /corridas/{id}/encerrar` só sai depois de o buffer esvaziar, com `status` `concluida` ou `nao_concluida`.
+
+### Credenciais
+
+As credenciais **não vão para o Git**. Copie `include/credenciais.exemplo.h` para `include/credenciais.h` (ignorado pelo Git) e preencha:
+
+| Campo | De onde vem |
+|---|---|
+| `CREDENCIAL_WIFI_SSID` e `CREDENCIAL_WIFI_SENHA` | Rede de 2,4 GHz do laboratório |
+| `CREDENCIAL_SUPABASE_URL` | Supabase → Settings → API → Project URL |
+| `CREDENCIAL_SUPABASE_ANON` | Supabase → Settings → API → chave `anon` |
+| `CREDENCIAL_DEVICE_TOKEN` | O mesmo `DEVICE_TOKEN` dos segredos das Edge Functions (peça a quem administra o Supabase) |
+| `CREDENCIAL_CERTIFICADO_RAIZ` | Certificado raiz do HTTPS do projeto, em PEM (cadeado do navegador → certificado → o primeiro da cadeia → exportar) |
+
+Sem `include/credenciais.h`, o firmware compila, inicia e não envia nada: o log mostra `{"status":"envio_desligado","motivo":"sem_credenciais"}`. `CREDENCIAL_SEM_VALIDAR_CERTIFICADO 1` aceita qualquer servidor (`setInsecure`): **só na bancada**, nunca na versão da competição (o log avisa com `https_sem_validar_certificado`).
+
+### Log
+
+| Mensagem | Quando |
+|---|---|
+| `corrida_criada` (com o `corrida_id`) | O servidor criou a corrida; a coleta começa |
+| `falha_criar_corrida` (com o `codigo`) | Não criou; tenta de novo em 1 s, 2 s, 4 s... até 30 s |
+| `envio` (a cada 10 s) | Contadores: `ocupacao` do buffer, `perdidas` por buffer cheio, `confirmadas`, `existentes` (reenvios que o servidor já tinha), `descartadas`, `tentativas`, `falhas`, `reenvios`, `wifi_quedas` e `pausado` |
+| `envio_pausado` | O servidor respondeu `401`/`403`: a chave ou o token estão errados; o envio para |
+| `corrida_encerrada` | O servidor confirmou o encerramento |
+
+### Valores provisórios e memória
+
+| Parâmetro | Arquivo | Valor |
+|---|---|---|
+| Capacidade do buffer | `ConfiguracaoReenvio.h` | 600 amostras (10 min a 1/s), 24 bytes cada: cerca de 14 KB |
+| Maior lote | `ConfiguracaoReenvio.h` | 100 amostras (o limite do servidor) |
+| Espera entre tentativas de envio | `ConfiguracaoReenvio.h` | 1 s, dobrando até 30 s; volta a 1 s depois de um sucesso |
+| Tempo limite do encerramento | `ConfiguracaoReenvio.h` | 10 s (depois disso o robô pode seguir; o envio continua tentando) |
+| Tempo limite de uma chamada HTTPS | `ConfiguracaoRede.h` | 5 s |
+| Ciclo da tarefa de rede | `ConfiguracaoRede.h` | 100 ms (um lote por ciclo, no máximo) |
+| Tempo para o Wi-Fi conectar e esperas entre tentativas | `ConfiguracaoRede.h` | 10 s; 1 s dobrando até 30 s |
+| Espaço do JSON do lote | `ConfiguracaoRede.h` | 280 bytes por amostra, cerca de 28 KB reservados no cliente HTTP |
+
+O envio ocupa cerca de 45 KB de RAM fixa (buffer, cópia do lote e JSON), de 320 KB do ESP32-C3.
+
+**Ainda falta, fora deste firmware:** a Edge Function `telemetria` (#229), que recebe o lote e responde `{"gravadas": n, "existentes": m}`. Enquanto ela não existir, o servidor responde `404` e o `ControladorEnvio` descarta os lotes (contados em `descartadas`). A velocidade vai zerada até o cálculo da velocidade instantânea entrar na telemetria, e a tensão e a corrente vão zeradas porque a Rev 2.0 não mede a bateria.
+
+## Aguardando Largada (`lib/navegacao`, #242)
+
+Depois de calibrar, o robô avisa que está pronto: envia amostras com `estado_corrida = aguardando`, na célula de partida, com tempo e velocidade zerados, e o dashboard mostra o Frame 01_Idle (robô na partida e cards zerados) até ele largar. A `FaseCorrida` decide, a cada ciclo da telemetria, o que registrar.
+
+```
+AguardandoCalibracao --calibração bem-sucedida--> AguardandoLargada --largou--> EmCorrida --objetivo ou 10 min--> Encerrada
+```
+
+| Fase | O que o robô faz | Telemetria |
+|---|---|---|
+| `aguardando_calibracao` | Calibrando (boot) | Nada. A corrida nem é criada no servidor |
+| `aguardando_largada` | Parado na partida | `aguardando`, tempo 0, velocidade 0: a primeira logo ao entrar e uma a cada `PERIODO_AMOSTRA_AGUARDANDO_MS` (5 s). Uma espera de 5 min gera 60 amostras, e não 300 |
+| `em_corrida` | Largou: deslocamento ≥ `DESLOCAMENTO_MINIMO_LARGADA_MM` (20 mm) | `explorando`, uma por ciclo; o cronômetro dos 10 min começa na largada |
+| `encerrada` | Objetivo alcançado ou 10 min | Última amostra `parado`, e o encerramento da corrida |
+
+**Quando o robô passa a aguardar.** (1) A `RotinaCalibracao` do boot termina com `Sucesso` (log `{"status":"aguardando_largada"}`). (2) Se ela falha mas o autoteste foi aprovado e o giroscópio calibra sozinho (tarefa da IMU), o robô também passa a aguardar (`"calibracao":"giroscopio"` no log). Sem calibração, nenhuma corrida é criada.
+
+**A corrida é criada depois da calibração**, e não ao ligar o Wi-Fi como antes: assim o dashboard só vê uma corrida `em_andamento` com o robô pronto. O tempo de espera não gasta os 10 minutos.
+
+**Largada.** O log mostra `{"status":"largada"}`. O comando serial `Z` (robô recolocado na partida à mão) volta a `aguardando_largada`; uma corrida encerrada continua encerrada. A telemetria serial traz o campo `fase`.
+
+**Dashboard.** Uma corrida `em_andamento` sem leitura de depois da largada aparece como "AGUARDANDO LARGADA DO ROBÔ". As leituras `aguardando` mostram o robô na célula de partida, mas não contam para o gráfico, a velocidade média nem o cronômetro; a primeira leitura `explorando` passa a tela para "CORRIDA EM ANDAMENTO".
+
+Valores **provisórios** em `ConfiguracaoLargada.h`: o deslocamento mínimo (acima da oscilação da estimativa parado e abaixo de meia célula) e o período da amostra de espera. Confira na bancada com o robô parado e depois empurrado.
+
+**Validação do limiar de 20 mm na bancada.** Hoje, sem encoder, o deslocamento vem da potência comandada aos motores, então mexer o robô à mão (alinhar contra as paredes da partida) não soma deslocamento e não dispara a largada. Com os encoders instalados isso muda: o deslocamento passa a ser medido nas rodas. Nesse caso, posicione o robô encostando nas paredes da célula de partida, confira que nenhum `{"status":"largada"}` sai no log e, se sair, aumente `DESLOCAMENTO_MINIMO_LARGADA_MM` (sem passar de meia célula, 90 mm).
+
+**Nova tentativa.** Depois do objetivo ou dos 10 minutos a corrida está encerrada no servidor. O comando `Z` zera a odometria, mas **não** começa outra tentativa: o log mostra `{"status":"aviso","motivo":"corrida_encerrada_reinicie_a_placa_para_nova_tentativa"}`, e é preciso reiniciar a placa (cada tentativa é uma corrida nova).
+
+Testes: `pio test -e native -f test_fase_corrida` (fases, limiares, volta do `millis()` e o caminho até o servidor simulado, com o JSON do lote).
+
 ## Instalação
 
 Instale o PlatformIO por uma das opções:
@@ -547,7 +701,7 @@ if (uso.conseguiu()) {
 }
 ```
 
-**Na largada.** Nos primeiros 2 s (200 leituras), o robô precisa ficar parado: a média vira o viés. A mensagem `{"status":"giroscopio_calibrado"}` sai no log quando a calibração termina. Ao iniciar, o log mostra `imu_iniciada` com o `who_am_i` (0x68 no MPU6050) ou `falha_imu` se o sensor não respondeu.
+**Na largada.** A calibração do boot (`lib/calibracao`, 50 leituras em 0,5 s) dá o viés; se ela falhar, nos primeiros 2 s (200 leituras) a tarefa da IMU calibra sozinha. Em ambos os casos o robô precisa ficar parado: a média vira o viés. A mensagem `{"status":"giroscopio_calibrado"}` sai no log quando a calibração termina. Ao iniciar, o log mostra `imu_iniciada` com o `who_am_i` (0x68 no MPU6050) ou `falha_imu` se o sensor não respondeu.
 
 **Valores provisórios**, para conferir na bancada:
 

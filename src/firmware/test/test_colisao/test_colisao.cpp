@@ -218,6 +218,15 @@ void test_a_referencia_acompanha_a_inclinacao_devagar() {
   TEST_ASSERT_EQUAL_UINT32(0, detector.colisoes());
 }
 
+void test_a_referencia_e_media_lenta_e_nao_a_ultima_leitura_calma() {
+  DetectorColisao detector;
+  detector.atualizar(parado(0, 0));
+  // Uma leitura calma (400 mg) move a referência só 1/16 do caminho (25 mg), e não até 400 mg.
+  TEST_ASSERT_EQUAL(TipoColisao::Nenhuma, detector.atualizar(andando(400, 0)));
+  // Desvio de 1275 mg passa de 1 g; se a referência pulasse para 400 mg seria 900 mg e passaria batido.
+  TEST_ASSERT_EQUAL(TipoColisao::Impacto, detector.atualizar(andando(1300, 0)));
+}
+
 void test_um_impacto_nao_vira_o_novo_repouso() {
   DetectorColisao detector;
   detector.atualizar(parado(0, 0));
@@ -410,6 +419,7 @@ int main(int, char**) {
   RUN_TEST(test_abaixo_do_limiar_nao_e_impacto_e_no_limiar_e);
   RUN_TEST(test_o_zero_e_a_inclinacao_do_sensor_nao_contam);
   RUN_TEST(test_a_referencia_acompanha_a_inclinacao_devagar);
+  RUN_TEST(test_a_referencia_e_media_lenta_e_nao_a_ultima_leitura_calma);
   RUN_TEST(test_um_impacto_nao_vira_o_novo_repouso);
   RUN_TEST(test_confirmacao_exige_leituras_seguidas);
   RUN_TEST(test_zero_amostras_de_confirmacao_vale_uma);

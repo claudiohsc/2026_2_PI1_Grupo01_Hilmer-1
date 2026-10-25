@@ -23,6 +23,14 @@ void IntegradorGiro::iniciarCalibracao() {
   somaAmostras_ = 0;
 }
 
+void IntegradorGiro::definirVies(int16_t viesDecimosDps) {
+  vies_ = viesDecimosDps;
+  estado_ = EstadoCalibracao::Calibrado;
+  amostras_ = 0;
+  somaAmostras_ = 0;
+  acumulado_ = 0;
+}
+
 EstadoCalibracao IntegradorGiro::adicionarAmostraCalibracao(int16_t taxaDecimosDps) {
   if (estado_ != EstadoCalibracao::Calibrando) {
     return estado_;

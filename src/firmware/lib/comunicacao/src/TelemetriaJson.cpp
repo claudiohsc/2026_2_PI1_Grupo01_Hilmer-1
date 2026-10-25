@@ -50,6 +50,7 @@ size_t TelemetriaJson::serializar(const PacoteTelemetria& pacote, char* saida, s
   doc["boot_ok"] = pacote.bootOk;
   doc["boot_falhas"] = pacote.falhasBoot != nullptr ? pacote.falhasBoot : "";
   doc["boot_ms"] = pacote.bootMs;
+  doc["fase"] = pacote.fase != nullptr ? pacote.fase : "";
 
   if (measureJson(doc) >= capacidade) {
     return 0;

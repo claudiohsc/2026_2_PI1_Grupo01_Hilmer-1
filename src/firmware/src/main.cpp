@@ -13,6 +13,8 @@
 /// executa um movimento por vez (avançar uma célula, girar 90° ou 180°, #184), depois da largada
 /// pelo gesto da mão na frente do ToF frontal (ou do comando serial `L`). As paredes corrigem o erro
 /// acumulado da odometria, e o robô se realinha ao centro do corredor antes de girar no lugar (#188).
+/// Uma terceira tarefa, a de rede, envia a telemetria ao Supabase sem nunca fazer a navegação
+/// esperar (#238).
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -32,13 +34,19 @@
 #include "Configuracao.h"
 #include "ConfiguracaoDeslocamento.h"
 #include "ConfiguracaoImu.h"
+#include "ConfiguracaoRede.h"
+#include "ContratoTelemetria.h"
+#include "ControladorEnvio.h"
 #include "ConversorDeslocamento.h"
 #include "CorrecaoPelasParedes.h"
 #include "CorretorDeslocamentoTof.h"
+#include "CredenciaisSupabase.h"
 #include "DeslocamentoEstimado.h"
 #include "DetectorColisao.h"
 #include "DetectorObjetivo.h"
 #include "EncoderEsp32.h"
+#include "EnvioHttpSupabase.h"
+#include "FaseCorrida.h"
 #include "GatilhoLargada.h"
 #include "ImuMpu6050.h"
 #include "MedidorDeslocamento.h"
@@ -47,10 +55,24 @@
 #include "MotoresDrv8833.h"
 #include "Odometria.h"
 #include "Pinos.h"
+#include "PoliticaReenvio.h"
+#include "ReconexaoWifi.h"
+#include "RedeWifiEsp32.h"
 #include "RegistradorPotencia.h"
 #include "RelatorioBoot.h"
+#include "RotinaCalibracao.h"
 #include "TelemetriaJson.h"
 #include "TofVl53l0x.h"
+#include "TravaSecaoCritica.h"
+
+// Credenciais do Wi-Fi e do Supabase: ficam em `include/credenciais.h`, que o Git ignora (o modelo é
+// `include/credenciais.exemplo.h`). Sem o arquivo, o firmware compila e funciona sem enviar nada.
+#if __has_include("credenciais.h")
+#include "credenciais.h"
+#define MICROMOUSE_TEM_CREDENCIAIS 1
+#else
+#define MICROMOUSE_TEM_CREDENCIAIS 0
+#endif
 
 /// Dono do mapa da corrida. Fica fora das tarefas para sobreviver ao reinício delas (HU-04).
 /// A navegação recebe `armazenamentoMapa.mapa()` para registrar paredes; a telemetria, a versão
@@ -230,13 +252,52 @@ static uint32_t colisoesPendentes = 0;
 static bool pedidoReinicioNavegacao = false;
 static bool pedidoLargada = false;
 
+/// Calibração do boot (#240, RNF-08): desvio de cada ToF e viés do giroscópio, em até 1 s, com o robô
+/// parado na célula de partida. O `corrigirTof` é aplicado a toda leitura dos ToF (navegação) e o viés
+/// vai para o `acompanhadorGiro`. Falhou, o robô segue sem correção de ToF e a tarefa da IMU calibra o
+/// viés sozinha.
+static micromouse::RotinaCalibracao rotinaCalibracao;
+
+/// Roda a `RotinaCalibracao` com os sensores reais, a cada 10 ms, até ela terminar (sucesso, falha ou
+/// 1 s). Só pode ser chamada no `setup()`, antes de criar as tarefas, porque usa o ToF e a IMU sem
+/// outra tarefa disputando o I²C. Conta como amostra de ToF só a leitura com medida nova.
+static micromouse::EstadoRotinaCalibracao calibrarSensores() {
+  rotinaCalibracao.iniciar(micromouse::REFERENCIAS_TOF_NA_LARGADA);
+  uint32_t anteriorMs = millis();
+  uint32_t instanteUltimaLeituraTof = 0;
+  bool leuTof = false;
+  while (rotinaCalibracao.estado() == micromouse::EstadoRotinaCalibracao::EmAndamento) {
+    delay(micromouse::PERIODO_AMOSTRAGEM_GIRO_MS);
+    const uint32_t agoraMs = millis();
+
+    int16_t taxaGiro = 0;
+    const bool giroValido = imu.lerTaxaGiroZ(taxaGiro);
+
+    micromouse::DistanciasLaterais distancias = {0, 0, 0};
+    const bool tofLido = tof.lerDistanciasLaterais(distancias);
+    const uint32_t instanteLeitura = agoraMs - tof.idadeUltimaLeituraMs();
+    const bool tofNovo = tofLido && (!leuTof || instanteLeitura != instanteUltimaLeituraTof);
+    if (tofNovo) {
+      leuTof = true;
+      instanteUltimaLeituraTof = instanteLeitura;
+    }
+
+    rotinaCalibracao.atualizar(distancias, tofNovo, taxaGiro, giroValido, agoraMs - anteriorMs);
+    anteriorMs = agoraMs;
+  }
+  return rotinaCalibracao.estado();
+}
+
 /// Tarefa da IMU: lê o giroscópio a cada `PERIODO_LEITURA_IMU_MS` (10 ms), em intervalo fixo.
 ///
 /// Prioridade 3, a maior: a leitura é curta (menos de 1 ms) e o ângulo só fica certo se o intervalo
-/// entre leituras não variar. Nos primeiros 2 s calibra o viés, com o robô parado na largada; se o
-/// robô se mexer, a calibração recomeça sozinha.
+/// entre leituras não variar. Se a calibração do boot (`calibrarSensores`) não deu o viés, calibra
+/// por conta própria nos primeiros 2 s, com o robô parado na largada; se o robô se mexer, a
+/// calibração recomeça sozinha.
 static void tarefaImu(void*) {
-  acompanhadorGiro.iniciarCalibracao();
+  if (acompanhadorGiro.estadoCalibracao() != micromouse::EstadoCalibracao::Calibrado) {
+    acompanhadorGiro.iniciarCalibracao();
+  }
   bool calibradoAnunciado = false;
   TickType_t ultimoInstante = xTaskGetTickCount();
   for (;;) {
@@ -257,6 +318,196 @@ static void tarefaImu(void*) {
       Serial.printf("{\"status\":\"giroscopio_calibrado\",\"recusadas\":%lu}\n",
                     static_cast<unsigned long>(leitura.calibracoesRecusadas));
     }
+  }
+}
+
+// ---------------------------------------------------------------- envio da telemetria (#238, #236)
+
+/// Credenciais do envio, lidas de `include/credenciais.h` (vazias sem o arquivo).
+static micromouse::CredenciaisSupabase lerCredenciais() {
+  micromouse::CredenciaisSupabase c;
+#if MICROMOUSE_TEM_CREDENCIAIS
+  c.ssidWifi = CREDENCIAL_WIFI_SSID;
+  c.senhaWifi = CREDENCIAL_WIFI_SENHA;
+  c.urlProjeto = CREDENCIAL_SUPABASE_URL;
+  c.chaveAnon = CREDENCIAL_SUPABASE_ANON;
+  c.tokenDispositivo = CREDENCIAL_DEVICE_TOKEN;
+  c.certificadoRaiz = CREDENCIAL_CERTIFICADO_RAIZ;
+  c.semValidarCertificado = CREDENCIAL_SEM_VALIDAR_CERTIFICADO != 0;
+#endif
+  return c;
+}
+static const micromouse::CredenciaisSupabase credenciais = lerCredenciais();
+
+/// Wi-Fi, cliente HTTPS e o buffer com reenvio. Só a tarefa de rede faz chamadas de rede; a coleta
+/// (tarefa de telemetria) só chama `controladorEnvio.registrar()`, que nunca usa a rede.
+static micromouse::RedeWifiEsp32 redeWifi(credenciais.ssidWifi, credenciais.senhaWifi);
+static micromouse::ReconexaoWifi reconexaoWifi(redeWifi);
+static micromouse::EnvioHttpSupabase clienteSupabase(credenciais);
+static micromouse::TravaSecaoCritica travaBufferEnvio;
+static micromouse::ControladorEnvio controladorEnvio(clienteSupabase, travaBufferEnvio);
+
+/// O que a coleta e a tarefa de rede combinam sobre a corrida, protegido por `travaCorrida`.
+struct EstadoCorridaEnvio {
+  bool ativa = false;               ///< A corrida existe no servidor: a coleta pode registrar.
+  uint32_t inicioMs = 0;            ///< `millis()` da criação da corrida (o cronômetro dos 10 min é o da `faseCorrida`, da largada).
+  bool encerramentoPedido = false;  ///< A coleta registrou a última amostra (objetivo ou tempo).
+  bool concluida = false;           ///< Chegou ao objetivo.
+};
+static EstadoCorridaEnvio estadoCorrida;
+static portMUX_TYPE travaCorrida = portMUX_INITIALIZER_UNLOCKED;
+
+/// Fase do robô na telemetria (#242): aguardando a calibração, aguardando a largada, em corrida ou
+/// encerrada. Também protegida por `travaCorrida`: a tarefa de rede decide criar a corrida por ela e a de
+/// telemetria a atualiza a cada ciclo.
+static micromouse::FaseCorrida faseCorrida;
+
+static EstadoCorridaEnvio lerEstadoCorrida() {
+  portENTER_CRITICAL(&travaCorrida);
+  const EstadoCorridaEnvio copia = estadoCorrida;
+  portEXIT_CRITICAL(&travaCorrida);
+  return copia;
+}
+
+/// `true` se `agoraMs` já alcançou `alvoMs`, correto mesmo quando o contador de ms dá a volta.
+static bool chegouAoInstante(uint32_t agoraMs, uint32_t alvoMs) {
+  return static_cast<int32_t>(agoraMs - alvoMs) >= 0;
+}
+
+/// Coleta: chamada pela tarefa de telemetria a cada `PERIODO_TELEMETRIA_MS`. Guarda a amostra no
+/// buffer, com o número de sequência dado agora (e que nunca muda num reenvio). A chegada ao objetivo
+/// ou o fim do tempo (10 min) registram a última amostra e pedem o encerramento da corrida.
+static void coletarAmostra(const micromouse::Pose& pose, bool chegouAoObjetivo, int32_t deslocamentoMm) {
+  const EstadoCorridaEnvio corrida = lerEstadoCorrida();
+  if (!corrida.ativa || corrida.encerramentoPedido) {
+    return;
+  }
+  portENTER_CRITICAL(&travaCorrida);
+  // Aguardando a largada: a amostra mostra o robô parado na partida. Largou: o cronômetro dos 10 min
+  // começa. Chegou ao objetivo ou o tempo acabou: última amostra.
+  const micromouse::DecisaoColeta decisao = faseCorrida.decidir(deslocamentoMm, millis(), chegouAoObjetivo);
+  if (decisao.ultima) {
+    estadoCorrida.encerramentoPedido = true;
+    estadoCorrida.concluida = chegouAoObjetivo;
+  }
+  portEXIT_CRITICAL(&travaCorrida);
+
+  if (decisao.largouAgora) {
+    Serial.println("{\"status\":\"largada\"}");
+  }
+  if (!decisao.registrar) {
+    return;
+  }
+  const micromouse::AmostraTelemetria amostra = micromouse::montarAmostra(
+      pose, decisao.tempoDecorridoMs, 0,  // velocidade: 0 até a estimativa sem encoder (#380) entrar na telemetria
+      decisao.estado,
+      chegouAoObjetivo ? micromouse::EventoTelemetria::ObjetivoAlcancado : micromouse::EventoTelemetria::Nenhum);
+  controladorEnvio.registrar(amostra);
+}
+
+/// Se a calibração do boot falhou, mas o autoteste foi aprovado e o giroscópio calibrou sozinho (tarefa da
+/// IMU), o robô também está pronto na largada: a partida sem a correção dos ToF funciona. Chamada a cada
+/// ciclo da telemetria; depois de calibrado, não faz nada (e nem toca na seção crítica do giroscópio).
+static void atualizarFaseDaCalibracao() {
+  if (!estadoBoot.ok) {
+    return;
+  }
+  portENTER_CRITICAL(&travaCorrida);
+  const bool jaCalibrado = faseCorrida.calibrado();
+  portEXIT_CRITICAL(&travaCorrida);
+  if (jaCalibrado || lerGiro().calibracao != micromouse::EstadoCalibracao::Calibrado) {
+    return;
+  }
+  portENTER_CRITICAL(&travaCorrida);
+  faseCorrida.calibracaoConcluida();
+  portEXIT_CRITICAL(&travaCorrida);
+  Serial.println("{\"status\":\"aguardando_largada\",\"calibracao\":\"giroscopio\"}");
+}
+
+/// Uma linha de log com os contadores do envio, para a bancada e o dashboard.
+static void registrarContadoresEnvio() {
+  const micromouse::ContadoresEnvio& c = controladorEnvio.contadores();
+  Serial.printf(
+      "{\"status\":\"envio\",\"ocupacao\":%u,\"perdidas\":%lu,\"confirmadas\":%lu,\"existentes\":%lu,"
+      "\"descartadas\":%lu,\"tentativas\":%lu,\"falhas\":%lu,\"reenvios\":%lu,\"wifi_quedas\":%lu,"
+      "\"pausado\":%s}\n",
+      static_cast<unsigned>(controladorEnvio.ocupacao()), static_cast<unsigned long>(controladorEnvio.amostrasPerdidas()),
+      static_cast<unsigned long>(c.amostrasConfirmadas), static_cast<unsigned long>(c.amostrasJaExistentes),
+      static_cast<unsigned long>(c.amostrasDescartadas), static_cast<unsigned long>(c.tentativas),
+      static_cast<unsigned long>(c.falhas), static_cast<unsigned long>(c.reenvios),
+      static_cast<unsigned long>(reconexaoWifi.quedas()), controladorEnvio.pausado() ? "true" : "false");
+}
+
+/// Tarefa de rede: Wi-Fi, criação da corrida, envio dos lotes e encerramento.
+///
+/// Prioridade 1, a menor, com pilha maior por causa do TLS. As chamadas HTTPS bloqueiam esta tarefa
+/// por até `TEMPO_LIMITE_REDE_MS`, nunca a navegação: a coleta só deixa a amostra no buffer.
+static void tarefaRede(void*) {
+  if (!micromouse::credenciaisValidas(credenciais)) {
+    Serial.println("{\"status\":\"envio_desligado\",\"motivo\":\"sem_credenciais\"}");
+    vTaskDelete(nullptr);
+    return;
+  }
+  if (credenciais.semValidarCertificado) {
+    Serial.println("{\"status\":\"aviso\",\"motivo\":\"https_sem_validar_certificado\"}");
+  }
+  redeWifi.iniciar();
+  clienteSupabase.iniciar();
+
+  micromouse::PoliticaReenvio esperaCriacao;  // 1 s, 2 s, 4 s... até 30 s entre tentativas de criar a corrida
+  uint32_t proximaCriacaoMs = millis();
+  uint32_t proximoLogMs = millis() + micromouse::PERIODO_LOG_ENVIO_MS;
+  bool corridaCriada = false;
+  bool avisouPausa = false;
+  bool avisouEncerrada = false;
+
+  for (;;) {
+    const uint32_t agora = millis();
+    if (reconexaoWifi.ciclo(agora)) {
+      // A corrida só é criada no servidor depois da calibração (o estado Aguardando Largada, #242).
+      portENTER_CRITICAL(&travaCorrida);
+      const bool calibrado = faseCorrida.calibrado();
+      portEXIT_CRITICAL(&travaCorrida);
+      if (!corridaCriada) {
+        if (calibrado && chegouAoInstante(agora, proximaCriacaoMs)) {
+          uint32_t corridaId = 0;
+          const micromouse::ResultadoEnvio r =
+              clienteSupabase.criarCorrida(micromouse::LABIRINTO_CORRIDA_PADRAO, corridaId);
+          if (r.codigoHttp >= 200 && r.codigoHttp < 300) {
+            controladorEnvio.iniciarCorrida(corridaId);
+            corridaCriada = true;
+            portENTER_CRITICAL(&travaCorrida);
+            estadoCorrida.ativa = true;
+            estadoCorrida.inicioMs = agora;
+            portEXIT_CRITICAL(&travaCorrida);
+            Serial.printf("{\"status\":\"corrida_criada\",\"corrida_id\":%lu}\n", static_cast<unsigned long>(corridaId));
+          } else {
+            proximaCriacaoMs = agora + esperaCriacao.registrarFalha();
+            Serial.printf("{\"status\":\"falha_criar_corrida\",\"codigo\":%d}\n", r.codigoHttp);
+          }
+        }
+      } else {
+        const EstadoCorridaEnvio corrida = lerEstadoCorrida();
+        if (corrida.encerramentoPedido && !controladorEnvio.encerramentoSolicitado()) {
+          clienteSupabase.definirResultadoCorrida(corrida.concluida);
+          controladorEnvio.solicitarEncerramento(agora);  // sai só depois de o buffer esvaziar
+        }
+        const micromouse::ResultadoCiclo r = controladorEnvio.ciclo(agora);
+        if (r == micromouse::ResultadoCiclo::Pausado && !avisouPausa) {
+          avisouPausa = true;  // 401/403: a chave ou o token estão errados; não adianta insistir
+          Serial.println("{\"status\":\"envio_pausado\",\"motivo\":\"credenciais_recusadas\"}");
+        }
+        if (controladorEnvio.encerrada() && !avisouEncerrada) {
+          avisouEncerrada = true;
+          Serial.println("{\"status\":\"corrida_encerrada\"}");
+        }
+      }
+    }
+    if (chegouAoInstante(agora, proximoLogMs)) {
+      proximoLogMs = agora + micromouse::PERIODO_LOG_ENVIO_MS;
+      registrarContadoresEnvio();
+    }
+    vTaskDelay(pdMS_TO_TICKS(micromouse::PERIODO_CICLO_REDE_MS));
   }
 }
 
@@ -292,6 +543,10 @@ static void tarefaNavegacao(void*) {
     {
       micromouse::BarramentoI2c::Uso uso(barramentoI2c);
       leituraTof.valida = uso.conseguiu() && tof.lerDistanciasLaterais(leituraTof.distancias);
+    }
+    if (leituraTof.valida) {
+      // Desvio de cada sensor medido na calibração do boot (zero se ela não aconteceu).
+      leituraTof.distancias = rotinaCalibracao.corrigirTof(leituraTof.distancias);
     }
     leituraTof.idadeMs = tof.idadeUltimaLeituraMs();
     portENTER_CRITICAL(&travaTof);
@@ -376,8 +631,9 @@ static void tarefaNavegacao(void*) {
     // Ciclo percepção → mapa → decisão → atuação (#184).
     const micromouse::LeituraGiro giro = lerGiro();
     const micromouse::DistanciasLaterais* tofNovo = leituraNova ? &leituraTof.distancias : nullptr;
-    // Permissão provisória para mover, até a `FaseCorrida` da #242: boot aprovado, giroscópio
-    // calibrado e gatilho da largada disparado. Antes de o robô estar pronto, o gesto não é observado.
+    // Permissão para mover: boot aprovado, giroscópio calibrado, gatilho da largada disparado e a corrida
+    // não encerrada pela `FaseCorrida` (#242: o objetivo ou os 10 minutos). Antes de o robô estar
+    // pronto, o gesto não é observado.
     const bool pronto = estadoBoot.ok && giro.calibracao == micromouse::EstadoCalibracao::Calibrado;
     largadaPendente = largadaPendente || largarAgora;
     if (pronto) {
@@ -392,7 +648,10 @@ static void tarefaNavegacao(void*) {
     }
 
     micromouse::EntradaCiclo entrada;
-    entrada.liberado = pronto && gatilhoLargada.disparado();
+    portENTER_CRITICAL(&travaCorrida);
+    const bool corridaEncerrada = faseCorrida.encerrada();
+    portEXIT_CRITICAL(&travaCorrida);
+    entrada.liberado = pronto && gatilhoLargada.disparado() && !corridaEncerrada;
     entrada.pose = pose;
     entrada.poseValida = posicaoNaMalha;
     entrada.posicaoAvancoUm = posicaoAvancoUm;
@@ -497,6 +756,13 @@ static void tarefaTelemetria(void*) {
     pacote.bootOk = estadoBoot.ok;
     pacote.falhasBoot = estadoBoot.falhas;
     pacote.bootMs = estadoBoot.duracaoMs;
+    portENTER_CRITICAL(&travaCorrida);
+    pacote.fase = micromouse::nomeDaFase(faseCorrida.fase());
+    portEXIT_CRITICAL(&travaCorrida);
+
+    // Envio ao Supabase: a amostra vai para o buffer; quem envia é a tarefa de rede.
+    atualizarFaseDaCalibracao();
+    coletarAmostra(pose, dispararEvento, medio);
 
     // Comporta o pior caso do JSON; com menos, a linha seria descartada em silêncio.
     char buffer[micromouse::TAMANHO_MAX_JSON_TELEMETRIA];
@@ -521,7 +787,15 @@ static void tarefaTelemetria(void*) {
         detectorObjetivo.resetar();
         pedidoReinicioNavegacao = true;
         portEXIT_CRITICAL(&travaOdometria);
+        portENTER_CRITICAL(&travaCorrida);
+        faseCorrida.reiniciar();  // recolocado na partida à mão: volta a aguardar a largada
+        const bool corridaEncerrada = faseCorrida.encerrada();
+        portEXIT_CRITICAL(&travaCorrida);
         Serial.println("{\"status\":\"encoders_zerados\"}");
+        if (corridaEncerrada) {
+          // A corrida já foi encerrada no servidor: o `Z` zera a odometria, mas não começa outra tentativa.
+          Serial.println("{\"status\":\"aviso\",\"motivo\":\"corrida_encerrada_reinicie_a_placa_para_nova_tentativa\"}");
+        }
       } else if (c == 'B' || c == 'b') {
         imprimirRelatorioBoot();
       } else if (c == 'L' || c == 'l') {
@@ -538,8 +812,8 @@ static void tarefaTelemetria(void*) {
 
 /// Sequência de boot da Rev 2.0 (#50): motores freados e travados, barramento I²C, sensores de
 /// distância com os endereços novos, autoteste do I²C e, só com ele aprovado, motores liberados;
-/// depois a IMU (#378) e as tarefas. As tarefas sobem mesmo com falha, para a telemetria continuar
-/// informando o que falhou.
+/// depois a IMU (#378) e as tarefas de navegação, telemetria e rede. As tarefas sobem mesmo com
+/// falha, para a telemetria continuar informando o que falhou.
 void setup() {
   // Primeira linha: freia os motores antes de qualquer outra coisa, porque o GPIO20/21 (IN3/IN4)
   // recebe um tranco da ROM durante o reset (ver README, "Tranco no boot").
@@ -588,15 +862,34 @@ void setup() {
   imprimirRelatorioBoot();
 
   // MPU6050 (#378). Sem a IMU o firmware segue, sem ângulo de giro válido.
-  if (imu.iniciar()) {
+  const bool imuIniciada = imu.iniciar();
+  if (imuIniciada) {
     Serial.printf("{\"status\":\"imu_iniciada\",\"who_am_i\":\"0x%02X\"}\n", imu.identificacao());
   } else {
     Serial.println("{\"status\":\"falha_imu\"}");
   }
 
+  // Calibração dos ToF e do giroscópio (#240, RNF-08), com o robô parado na célula de partida. Só
+  // com o autoteste aprovado e a IMU de pé: sem isso, não há o que calibrar.
+  if (estadoBoot.ok && imuIniciada) {
+    const micromouse::EstadoRotinaCalibracao calibracao = calibrarSensores();
+    if (calibracao == micromouse::EstadoRotinaCalibracao::Sucesso) {
+      acompanhadorGiro.definirVies(rotinaCalibracao.viesGiroDecimosDps());
+      // Calibrado e na partida: aguarda a largada (#242). A corrida é criada no servidor e o
+      // dashboard passa a mostrar o robô parado na célula de partida.
+      faseCorrida.calibracaoConcluida();
+      Serial.println("{\"status\":\"aguardando_largada\"}");
+    }
+    Serial.printf("{\"status\":\"calibracao\",\"estado\":\"%s\",\"duracao_ms\":%lu,\"no_prazo\":%s}\n",
+                  micromouse::nomeEstadoRotina(calibracao),
+                  static_cast<unsigned long>(rotinaCalibracao.duracaoMedidaMs()),
+                  rotinaCalibracao.dentroDoOrcamento() ? "true" : "false");
+  }
+
   xTaskCreate(tarefaImu, "imu", 3072, nullptr, 3, nullptr);
   xTaskCreate(tarefaNavegacao, "navegacao", 4096, nullptr, 2, nullptr);
   xTaskCreate(tarefaTelemetria, "telemetria", 4096, nullptr, 1, nullptr);
+  xTaskCreate(tarefaRede, "rede", 10240, nullptr, 1, nullptr);
 }
 
 /// Laço principal do Arduino. Fica ocioso: o trabalho acontece nas tarefas.
