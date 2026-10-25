@@ -1,26 +1,29 @@
 #pragma once
 
 /// @file ImuMpu6050.h
-/// @brief Driver do giroscópio do MPU6050 pelo I²C (#378).
+/// @brief Driver do giroscópio e do acelerômetro do MPU6050 pelo I²C (#378, #192).
 ///
-/// Implementa `IImu` (camada `hal`). A conversão da leitura e o ajuste do sinal ficam em
-/// `ConversorGiro.h` (camada `imu`), testados no computador; aqui só se fala com os registradores,
-/// sempre segurando o `BarramentoI2c`, que é compartilhado com os 3 VL53L0X.
+/// Implementa `IImu` e `IAcelerometro` (camada `hal`). A conversão da leitura e o ajuste do sinal
+/// ficam em `ConversorGiro.h` e `ConversorAceleracao.h` (camada `imu`), testados no computador; aqui
+/// só se fala com os registradores, sempre segurando o `BarramentoI2c`, que é compartilhado com os 3
+/// VL53L0X.
 
 #include <Arduino.h>
 
 #include "BarramentoI2c.h"
 #include "ConfiguracaoImu.h"
+#include "IAcelerometro.h"
 #include "IImu.h"
 
 namespace micromouse {
 
-/// MPU6050 no barramento I²C, lido só no eixo Z do giroscópio.
+/// MPU6050 no barramento I²C, lido no eixo Z do giroscópio e nos eixos X e Y do acelerômetro.
 ///
 /// `iniciar()` reinicia o sensor, tira-o do modo de economia, escolhe o relógio do giroscópio,
 /// liga o filtro passa-baixa (cerca de 42 Hz, abaixo da metade da taxa de 100 leituras por segundo)
-/// e configura a faixa `FAIXA_GIRO`. Depois disso, `lerTaxaGiroZ()` lê os dois bytes do eixo Z e os
-/// converte para décimos de °/s.
+/// e configura as faixas `FAIXA_GIRO` e `FAIXA_ACELEROMETRO`. Depois disso, `lerTaxaGiroZ()` lê os
+/// dois bytes do eixo Z e os converte para décimos de °/s, e `lerAceleracaoPlano()` lê os eixos X e
+/// Y do acelerômetro e os converte para mg.
 ///
 /// Exemplo (a montagem real fica em `main.cpp`):
 /// @code
@@ -30,7 +33,7 @@ namespace micromouse {
 /// if (!imu.iniciar()) { /* sem resposta no endereço 0x68 */ }
 /// IImu& giro = imu;
 /// @endcode
-class ImuMpu6050 : public IImu {
+class ImuMpu6050 : public IImu, public IAcelerometro {
  public:
   /// @param barramento Barramento I²C já iniciado.
   /// @param endereco Endereço I²C (0x68 com AD0 no GND).
@@ -56,6 +59,10 @@ class ImuMpu6050 : public IImu {
   /// Falha se o sensor não foi iniciado, se o barramento não foi conseguido a tempo ou se a
   /// transação I²C não foi confirmada.
   bool lerTaxaGiroZ(int16_t& taxaDecimosDps) override;
+
+  /// @copydoc IAcelerometro::lerAceleracaoPlano
+  /// Falha nas mesmas condições de `lerTaxaGiroZ()` e também conta em `falhasLeitura()`.
+  bool lerAceleracaoPlano(int16_t& axMg, int16_t& ayMg) override;
 
   /// Leituras que falharam desde o último `iniciar()`.
   uint32_t falhasLeitura() const { return falhasLeitura_; }

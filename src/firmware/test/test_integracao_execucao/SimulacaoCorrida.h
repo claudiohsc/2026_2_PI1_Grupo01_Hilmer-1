@@ -20,6 +20,7 @@
 #include "CombinadorTof.h"
 #include "CorrecaoPelasParedes.h"
 #include "CorretorDeslocamentoTof.h"
+#include "DetectorColisao.h"
 #include "DeslocamentoEstimado.h"
 #include "Direcao.h"
 #include "EncoderSimulado.h"
@@ -27,6 +28,7 @@
 #include "ImuSimulado.h"
 #include "LabirintoSimulado.h"
 #include "Odometria.h"
+#include "RegistradorPotencia.h"
 #include "RoboSimulado.h"
 
 namespace micromouse {
@@ -51,6 +53,10 @@ struct OpcoesSimulacao {
   /// Deriva do giroscópio depois da calibração, em décimos de °/s (o viés muda sozinho).
   int16_t derivaGiroDecimosDps = 0;
   ConfiguracaoRealinhamento realinhamento = ConfiguracaoRealinhamento{};
+  /// Liga a detecção de colisão (#192): `DetectorColisao` com o acelerômetro e o ToF frontal, ligado
+  /// ao `CicloNavegacao`. Sem isto, o ciclo nunca recebe colisão (como antes da #192).
+  bool detectarColisao = false;
+  ConfiguracaoColisao colisao = ConfiguracaoColisao{};
 };
 
 /// O robô, os sensores e o firmware, ligados como no `main.cpp`.
@@ -60,8 +66,10 @@ class Simulacao {
       : opcoes_(opcoes),
         robo_(labirinto_, opcoes.robo),
         deslocamento_(robo_),
+        registrador_(opcoes.encoders ? static_cast<IMotores&>(robo_) : deslocamento_.motores()),
+        detector_(opcoes.colisao),
         ciclo_(armazenamento_.mapa(), ConfiguracaoExecucao{}, ConfiguracaoControle{}, ConfiguracaoGiro{},
-               opcoes.realinhamento),
+               opcoes.realinhamento, opcoes.colisao),
         executor_(ConfiguracaoExecucao{}, ConfiguracaoControle{}, ConfiguracaoGiro{}, opcoes.realinhamento) {
     TEST_ASSERT_EQUAL(ResultadoCarga::Carregado, labirinto_.carregar(texto));
     armazenamento_.iniciarCorrida(labirinto_.obterDimensao());
@@ -79,8 +87,12 @@ class Simulacao {
     ciclo_.reiniciar(opcoes.inicial, motores());
   }
 
-  /// Motores que o firmware aciona: pelo estimador no modo sem encoder, direto no robô com encoders.
-  IMotores& motores() { return opcoes_.encoders ? static_cast<IMotores&>(robo_) : deslocamento_.motores(); }
+  /// Motores que o firmware aciona: pelo estimador no modo sem encoder, direto no robô com encoders,
+  /// sempre pelo registrador da última potência comandada (a camada de fora, como no `main.cpp`).
+  IMotores& motores() { return registrador_; }
+
+  /// Cega o ToF frontal (a leitura vira "fora de alcance"): o robô não vê a parede da frente.
+  void cegarTofFrontal(bool cego) { tofFrontalCego_ = cego; }
 
   /// Um ciclo de 10 ms do mundo, dos sensores e da odometria; devolve a leitura nova do ToF, se
   /// houver. `movimento` diz se a leitura serve de referência para as correções.
@@ -88,16 +100,24 @@ class Simulacao {
     agoraMs_ += CICLO_MS;
     robo_.avancar(CICLO_MS);
     imu_.definirTaxa(robo_.taxaGiroDecimosDps());
+    int16_t ax = 0;
+    int16_t ay = 0;
+    robo_.aceleracaoPlanoMg(ax, ay);
+    imu_.definirAceleracao(ax, ay);
     giro_ = acompanhador_.ciclo(CICLO_MS);
 
     bool nova = false;
     if (agoraMs_ - ultimaTofMs_ >= PERIODO_TOF_MS) {
       ultimaTofMs_ = agoraMs_;
-      const DistanciasLaterais bruta = robo_.medirTof();
+      DistanciasLaterais bruta = robo_.medirTof();
+      if (tofFrontalCego_) {
+        bruta.frenteMm = 8190;
+      }
       tof_.registrar(Lado::Frente, bruta.frenteMm, false, agoraMs_);
       tof_.registrar(Lado::Esquerda, bruta.esquerdaMm, false, agoraMs_);
       tof_.registrar(Lado::Direita, bruta.direitaMm, false, agoraMs_);
       nova = tof_.distancias(agoraMs_, leitura_);
+      temLeitura_ = temLeitura_ || nova;
     }
     // Como no `main.cpp`: fora dos giros, a direção da odometria é a do giroscópio, a cada ciclo.
     if (sincronizarDirecao) {
@@ -134,7 +154,23 @@ class Simulacao {
     e.leituraNova = nova;
     e.giro = giro_;
     e.dtMs = CICLO_MS;
+    e.colisao = detectarColisao();
     return ciclo_.atualizar(e, motores());
+  }
+
+  /// Roda o `DetectorColisao` como a tarefa de navegação: lê o acelerômetro, a última potência e o
+  /// ToF frontal, e devolve a colisão percebida (sempre `Nenhuma` se a detecção está desligada).
+  TipoColisao detectarColisao() {
+    if (!opcoes_.detectarColisao) {
+      return TipoColisao::Nenhuma;
+    }
+    EntradaDeteccao d;
+    d.ativo = ciclo_.emMovimento();
+    d.aceleracaoValida = imu_.lerAceleracaoPlano(d.axMg, d.ayMg);
+    d.potencia = registrador_.ultimaPotencia();
+    d.medidas = MedidasProtecao{temLeitura_, leitura_.frenteMm, giro_.taxaDecimosDps};
+    d.dtMs = CICLO_MS;
+    return detector_.atualizar(d);
   }
 
   /// Corre até o ciclo parar (objetivo, sem caminho ou falha) ou o tempo acabar.
@@ -178,6 +214,9 @@ class Simulacao {
   const CorrecaoPelasParedes& correcao() const { return correcao_; }
   uint32_t agoraMs() const { return agoraMs_; }
   const LeituraGiro& giro() const { return giro_; }
+  const DetectorColisao& detector() const { return detector_; }
+  ImuSimulado& imu() { return imu_; }
+  RoboSimulado& roboMutavel() { return robo_; }
 
  private:
   EstadoExecucao terminarMovimento(Movimento movimento, Direcao& direcao) {
@@ -206,6 +245,8 @@ class Simulacao {
   LabirintoSimulado labirinto_;
   RoboSimulado robo_;
   DeslocamentoEstimado deslocamento_;
+  RegistradorPotencia registrador_;
+  DetectorColisao detector_;
   Odometria odometria_;
   EncoderSimulado encoderEsq_;
   EncoderSimulado encoderDir_;
@@ -217,6 +258,8 @@ class Simulacao {
   CicloNavegacao ciclo_;
   ExecutorMovimentos executor_;
   DistanciasLaterais leitura_ = {0, 0, 0};
+  bool temLeitura_ = false;
+  bool tofFrontalCego_ = false;
   LeituraGiro giro_;
   uint32_t agoraMs_ = 0;
   uint32_t ultimaTofMs_ = 0;

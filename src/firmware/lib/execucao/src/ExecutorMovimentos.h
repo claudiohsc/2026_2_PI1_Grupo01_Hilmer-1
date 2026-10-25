@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "AcompanhadorGiro.h"
+#include "ConfiguracaoColisao.h"
 #include "ConfiguracaoControle.h"
 #include "ConfiguracaoExecucao.h"
 #include "ConfiguracaoGiro.h"
@@ -32,7 +33,8 @@ enum class FalhaExecucao : uint8_t {
   ParedeNaFrente,     ///< O avanço parou numa parede antes do centro de destino.
   SemLeituraTof,      ///< Sem leitura nova do ToF por `tempoMaximoSemLeituraMs` durante o avanço.
   TempoEsgotado,      ///< O avanço (ou um trecho do realinhamento) passou do tempo máximo.
-  GiroTempoEsgotado   ///< O giro não chegou ao rumo no tempo limite (inclusive sem giroscópio válido).
+  GiroTempoEsgotado,  ///< O giro não chegou ao rumo no tempo limite (inclusive sem giroscópio válido).
+  ColisoesSeguidas    ///< O ciclo desistiu: colisões demais seguidas, sem concluir uma célula (#192).
 };
 
 /// Plano de um realinhamento: o giro pequeno e o trecho reto que levam o robô ao centro do corredor.
@@ -109,6 +111,12 @@ class ExecutorMovimentos {
   /// @return `false` se outro movimento está em andamento, ou se for `Realinhar` (nada muda).
   bool iniciar(Movimento movimento);
 
+  /// Começa o recuo de uma colisão (#192): anda de ré, reto, mantendo o rumo alvo pelo giroscópio, até
+  /// `distanciaMm` pela odometria. Termina antes se a parede da frente mostrar que o robô voltou ao
+  /// centro da célula: o centro fica a `DISTANCIA_CENTRO_A_PAREDE_MM` dela.
+  /// @return `false` se outro movimento está em andamento ou se a distância é zero.
+  bool iniciarRecuo(uint16_t distanciaMm);
+
   /// Começa um realinhamento ao centro do corredor (#188), pelo plano dado.
   /// @return `false` se outro movimento está em andamento ou se o plano não desloca nada.
   bool iniciarRealinhamento(const PlanoRealinhamento& plano);
@@ -168,6 +176,10 @@ class ExecutorMovimentos {
   EstadoExecucao atualizarAvanco(const EntradaExecucao& entrada, IMotores& motores);
   EstadoExecucao atualizarGiro(const EntradaExecucao& entrada, IMotores& motores);
   EstadoExecucao atualizarRealinhamento(const EntradaExecucao& entrada, IMotores& motores);
+  EstadoExecucao atualizarRecuo(const EntradaExecucao& entrada, IMotores& motores);
+
+  /// `true` se a leitura mostra a parede da frente da própria célula e o robô já no centro dela.
+  bool noCentroPelaFrente(const DistanciasLaterais& leitura) const;
 
   /// Um ciclo de giro até `alvoMiligraus`; começa o `ControleGiro` no primeiro ciclo de cada giro.
   /// @return `Executando` enquanto gira, `Concluido` no rumo, `Falha` no tempo limite.
@@ -211,6 +223,7 @@ class ExecutorMovimentos {
 
   // Realinhamento: as quatro etapas do plano.
   enum class EtapaRealinhamento : uint8_t { GiroIda, Trecho, GiroVolta, Volta };
+  int32_t recuoUm_ = 0;  ///< Distância do recuo (negativa, de ré), em µm.
   PlanoRealinhamento plano_;
   EtapaRealinhamento etapa_ = EtapaRealinhamento::GiroIda;
   bool etapaComecou_ = false;
@@ -221,8 +234,8 @@ class ExecutorMovimentos {
 /// Nome do estado para o log: `ocioso`, `executando`, `concluido` ou `falha`.
 const char* nomeDoEstadoExecucao(EstadoExecucao estado);
 
-/// Nome da falha para o log: `nenhuma`, `parede_na_frente`, `sem_leitura_tof`, `tempo_esgotado` ou
-/// `giro_tempo_esgotado`.
+/// Nome da falha para o log: `nenhuma`, `parede_na_frente`, `sem_leitura_tof`, `tempo_esgotado`,
+/// `giro_tempo_esgotado` ou `colisoes_seguidas`.
 const char* nomeDaFalhaExecucao(FalhaExecucao falha);
 
 }  // namespace micromouse
