@@ -1,0 +1,1216 @@
+# Firmware: implementação
+
+Esta página documenta o código do firmware do micromouse em `src/firmware`. Ela complementa a [arquitetura de software](software.md), que define as decisões de alto nível, e o [README do firmware](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/firmware), que traz os comandos do dia a dia.
+
+O firmware começou no **projeto base** ([#172](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/172), Sprint 2) e hoje tem percepção, mapa, navegação, odometria, controle de movimento e telemetria, todos testados no computador. Desde 21/10/2026 ele segue a **Rev 2.0 do hardware**, descrita na seção [Hardware Rev 2.0](#hardware-rev-20) ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)).
+
+## Visão geral
+
+O firmware roda no **ESP32-C3** com o **Arduino Core** (C++17) e é compilado com o **PlatformIO**. O código segue o ciclo *sense-think-act* (perceber, decidir, agir) e é dividido em camadas, uma biblioteca por camada em `lib/`.
+
+```mermaid
+flowchart TB
+    main["src/main.cpp<br/>tarefas FreeRTOS"]
+    subgraph logica["Lógica (compila no computador)"]
+        percepcao["percepcao"]
+        mapeamento["mapeamento"]
+        navegacao["navegacao"]
+        comunicacao["comunicacao"]
+    end
+    atuacao["atuacao"]
+    hal["hal<br/>interfaces (sensores de distância, IMU, encoders, motores)"]
+    nucleo["nucleo<br/>tipos, constantes, pinagem"]
+    simulacao["simulacao<br/>falsos para teste"]
+    drivers["drivers_esp32<br/>drivers reais (Arduino)"]
+
+    main --> logica
+    main --> atuacao
+    main --> drivers
+    logica --> hal
+    logica --> nucleo
+    atuacao --> hal
+    hal --> nucleo
+    simulacao -. implementa .-> hal
+    drivers -. implementa .-> hal
+```
+
+**Figura 1.** Camadas do firmware e dependências entre elas: a lógica depende só das interfaces de `hal`, implementadas pelos drivers reais (`drivers_esp32`) e pelos falsos de teste (`simulacao`).
+
+A lógica conhece só as **interfaces** de `hal`. Na placa, `main.cpp` liga cada interface ao driver real de `drivers_esp32`; nos testes, ela é ligada aos falsos de `simulacao`. É isso que permite testar percepção e mapeamento no computador, antes de o hardware estar montado.
+
+## Hardware Rev 2.0
+
+Em 21/10/2026, a eletrônica enviou o esquemático e a lista de componentes da **Rev 2.0**, que é a referência do firmware até nova versão ([4.3 Hardware](hardware.md)).
+
+| Parte | Antes | Rev 2.0 | Efeito no firmware |
+|---|---|---|---|
+| Placa | ESP32-C3 DevKit | **ESP32-C3 Super Mini** | O log sai pela USB nativa (GPIO18/19), porque a UART0 (GPIO20/21) passou a acionar os motores ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377)) |
+| Sensores de distância | LiDAR 360° por UART | **3 VL53L0X** (esquerdo, frontal e direito) por I²C | A interface dos sensores de distância continua (renomeada de `ILidar` para `ISensorDistancia` no PR #391); muda o driver por trás dela ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344), PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391), em revisão) |
+| Orientação | Só encoders | **IMU MPU6050** no mesmo I²C | Ângulo de giro pelo giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378), PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
+| Motores | Motor TT | **N20** pelo DRV8833 | Pinos novos; detecção de motor travado ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) |
+| Encoders | Encoder óptico | Encoders dos N20, em GPIO4 a 7 | A odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)) continua; os parâmetros precisam ser recalibrados para o N20 |
+
+Enquanto os encoders não eram integrados à Rev 2.0, o plano previa estimar o deslocamento pelo comando dos motores, corrigido pelos sensores de distância (modo sem encoder, [#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)). Com os encoders disponíveis, esse modo passa a ser o plano B.
+
+**O LiDAR não é mais usado.** O código dele (`lib/lidar`, decodificador LD06 e `FonteBytesSerial`) ainda está na `main` e deve sair num PR de código. Os registros de teste anteriores a 21/10 em [Testes de software](../07-testes/software.md) foram feitos com o LiDAR simulado e continuam como histórico.
+
+## Dois ambientes: placa e computador
+
+O `platformio.ini` define dois ambientes de compilação para o mesmo código:
+
+```mermaid
+flowchart TB
+    ini["platformio.ini"]
+    ini --> placa["<b>esp32c3</b><br/>compilar para a placa"]
+    ini --> pc["<b>native</b><br/>compilar e testar no computador"]
+    placa --> p1["compilador RISC-V da Espressif<br/>+ Arduino Core + FreeRTOS"]
+    pc --> c1["compilador do computador<br/>+ Unity (framework de testes)"]
+    p1 --> p2["firmware.bin<br/>gravado no ESP32-C3"]
+    c1 --> c2["programa de teste<br/>executado no computador"]
+```
+
+**Figura 2.** Os dois ambientes de compilação definidos no `platformio.ini`: `esp32c3` gera o firmware gravado na placa e `native` compila e executa os testes no computador.
+
+A lógica do robô (direções, mapa, classificação de paredes) não usa nada do Arduino, por isso compila nos dois ambientes. Assim, ela pode ser testada no computador, sem a placa e sem o sensor. Quando a lógica precisa dos sensores de distância, os testes usam o `SensorDistanciaSimulado`, um sensor simulado que devolve as leituras escolhidas pelo próprio teste.
+
+| | `esp32c3` | `native` |
+|---|---|---|
+| Onde roda | No ESP32-C3 | No computador de quem está desenvolvendo |
+| O que inclui | Toda a lógica, `drivers_esp32` e `main.cpp` | A lógica e os falsos de `simulacao` (ignora `drivers_esp32`) |
+| Comando | `pio run -e esp32c3` | `pio test -e native` |
+| Resultado | `firmware.bin` e o uso de RAM e Flash | Relatório dos testes (aprovados ou com falha) |
+
+Há ainda o ambiente **`bancada_tof`**, que herda o `esp32c3` mas compila só `src/bancada/bancada_tof.cpp`: um firmware de teste dos sensores de distância, usado na bancada com a eletrônica (veja [Bancada dos VL53L0X](#bancada-dos-vl53l0x)). O `esp32c3` exclui a pasta `src/bancada/` (`build_src_filter`), então o firmware do robô não muda.
+
+## Estrutura de pastas
+
+| Caminho | Conteúdo |
+|---|---|
+| `platformio.ini` | Ambientes `esp32c3` (placa) e `native` (testes no computador, com Unity) |
+| `src/main.cpp` | Ponto de entrada: inicializa o log e cria as tarefas de navegação e telemetria |
+| `lib/nucleo` | Tipos compartilhados, constantes do desafio e pinagem |
+| `lib/hal` | Interfaces de hardware: `ISensorDistancia` (sensores de distância), `IEncoder`, `IMotores`, `IBarramentoI2c` ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e `IImu` (PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
+| `lib/inicializacao` | Autoteste do boot: varredura do I²C, conferência dos 4 dispositivos e relatório (`AutotesteBoot`, `RelatorioBoot`), com os parâmetros em `ConfiguracaoBoot.h` ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
+| `lib/tof` | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros (`ConfiguracaoTof.h`), sem Arduino ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) |
+| `lib/encoders` | Decodificação em quadratura dos encoders, conversão de pulsos em mm e distância por roda ([#186](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/186)) |
+| `lib/percepcao` | Classificação `parede`/`livre` (tarefa [#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174)) |
+| `lib/mapeamento` | Mapa do labirinto, atualização, armazenamento em memória e mapa final ([#176](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/176), [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177), [#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179), [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) |
+| `lib/navegacao` | Algoritmo de resolução do labirinto por *flood fill* ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)), localização por odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)) e detecção do objetivo ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) |
+| `lib/atuacao` | Controle de movimento: centralização no corredor e parada frontal ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191)), e trava dos motores (`MotoresComTrava`, [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
+| `lib/imu` | Calibração do viés e ângulo de giro do giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378), PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
+| `lib/lidar` | Código do LiDAR da versão anterior do hardware; **não é usado** e deve ser removido |
+| `lib/comunicacao` | Telemetria e eventos pontuais (`TelemetriaJson`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)), serialização do mapa em JSON ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)) e *buffer* de reenvio (Épico 03) |
+| `lib/simulacao` | Falsos para os testes: `SensorDistanciaSimulado`, `LabirintoSimulado` ([#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224)), `TofSimulado` ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)), `EncoderSimulado`, `MotoresSimulados`, `BarramentoI2cSimulado` ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e `ImuSimulado` (PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
+| `lib/drivers_esp32` | Drivers que dependem do Arduino: 3 VL53L0X pelo I²C (`TofVl53l0x`), varredura do I²C (`BarramentoI2cEsp32`), encoders, motores pelo DRV8833 e Wi-Fi; o driver do MPU6050 está em desenvolvimento ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)) |
+| `src/bancada/` | Programas de bancada, fora do firmware do robô: `bancada_tof.cpp` testa os VL53L0X no hardware ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) |
+| `scripts/` | Ferramentas de bancada no computador: `bancada_tof.py` (menu dos VL53L0X) e `calibrar_deslocamento_18cm.py` (encoders); os testes dos scripts ficam em `scripts/testes/` |
+| `test/` | Testes Unity, uma pasta `test_<modulo>` por módulo |
+
+As pastas ainda vazias têm um arquivo `.gitkeep` para existirem no repositório.
+
+## Regras de dependência
+
+- As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Por isso o ambiente `native` ignora `drivers_esp32` (`lib_ignore` no `platformio.ini`).
+- Todo acesso ao hardware passa por uma interface de `hal`.
+- **Sem alocação dinâmica** na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo bastam.
+- Todo o código fica no namespace `micromouse`, com um `.h` por conceito e `#pragma once`.
+
+## Núcleo: tipos e operações
+
+Definidos em `lib/nucleo/src/Tipos.h` e `Direcao.h`.
+
+| Tipo | Valores ou campos | Uso |
+|---|---|---|
+| `Direcao` | `Norte`, `Leste`, `Sul`, `Oeste` | Direção absoluta no labirinto |
+| `Lado` | `Frente`, `Esquerda`, `Direita` | Lado relativo ao robô (leituras dos sensores de distância) |
+| `EstadoParede` | `Desconhecido`, `Livre`, `Parede` | Estado de uma parede no mapa |
+| `PosicaoCelula` | `linha`, `coluna` | Célula do labirinto; a partida é (0, 0) |
+| `Pose` | `celula`, `direcao` | Onde o robô está e para onde está virado |
+| `DistanciasLaterais` | `frenteMm`, `esquerdaMm`, `direitaMm` | Leitura dos sensores de distância (os 3 VL53L0X na Rev 2.0), em milímetros |
+
+A ordem de `Direcao` segue o **sentido horário**. As operações de `Direcao.h` usam essa ordem com soma módulo 4, por isso os valores não devem ser reordenados.
+
+| Função | O que faz | Exemplo |
+|---|---|---|
+| `girarDireita(d)` | Giro de 90° no sentido horário | Norte → Leste |
+| `girarEsquerda(d)` | Giro de 90° no sentido anti-horário | Norte → Oeste |
+| `oposta(d)` | Giro de 180° | Norte → Sul |
+| `direcaoAbsoluta(direcaoDoRobo, lado)` | Converte um lado do robô em direção do labirinto | Robô virado para Leste: esquerda = Norte, direita = Sul |
+
+A `direcaoAbsoluta` é a ponte entre a percepção e o mapa: os sensores de distância medem à frente, à esquerda e à direita do robô, e o mapa guarda as paredes por Norte, Sul, Leste e Oeste.
+
+## Constantes
+
+Definidas em `lib/nucleo/src/Configuracao.h`.
+
+| Constante | Valor | Origem |
+|---|---|---|
+| `MAX_LINHAS_LABIRINTO` | 4 | Maior labirinto da competição (12×4) |
+| `MAX_COLUNAS_LABIRINTO` | 12 | Maior labirinto da competição (12×4) |
+| `TAMANHO_CELULA_MM` | 180 | Célula de 18 × 18 cm |
+| `PERIODO_TELEMETRIA_MS` | 1000 | Envio a cerca de 1 s (arquitetura), dentro dos 2 s do RNF05 |
+| `LIMITE_TEMPO_CORRIDA_MS` | 600 000 | 10 minutos por tentativa (RNF03) |
+
+## Pinagem
+
+Definida em `lib/nucleo/src/Pinos.h` ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377)), conforme o [esquemático Rev 2.0](hardware.md#42-pinagem-do-esp32-c3).
+
+| Componente | Sinal | GPIO |
+|---|---|---|
+| I²C dos 3 VL53L0X e do MPU6050 | SDA / SCL | 9 / 8 |
+| VL53L0X esquerdo, frontal e direito | XSHUT | 0 / 1 / 2 |
+| DRV8833, motor esquerdo | IN1 / IN2 | 10 / 3 |
+| DRV8833, motor direito | IN3 / IN4 | 20 / 21 |
+| Encoder esquerdo | A / B | 4 / 5 |
+| Encoder direito | A / B | 6 / 7 |
+| USB nativa (log e gravação) | D− / D+ | 18 / 19 |
+
+**Conferência com o esquemático (23/10/2026):** os 15 pinos do `Pinos.h` da `main` são iguais aos da tabela de pinagem da [4.3 Hardware](hardware.md), publicada no commit `ca175d9`. A versão anterior do esquemático, com o I²C em GPIO6/7, foi substituída pela Rev 2.0 nesse mesmo PR da eletrônica. O teste `test_pinos` confere que nenhum GPIO é usado duas vezes.
+
+!!! warning "Pontos a validar com a eletrônica"
+    - **GPIO20/21 (UART0) acionam o motor direito.** O ESP32-C3 manda o log de boot por eles antes de o firmware assumir, o que pode dar um tranco no motor ao ligar. O próprio esquemático pede validação.
+    - **GPIO2, GPIO8 e GPIO9 são pinos de *strapping*** (definem o modo de boot). Eles estão com o XSHUT direito e o I²C; a placa precisa iniciar normalmente com esses circuitos ligados.
+    - **Leitura da bateria:** o divisor termina em `BAT_ADC_TEST`, sem GPIO, porque o GPIO2, que tem ADC, ficou com o XSHUT. Ainda não há pino definido para medir a bateria.
+    - O esquemático ainda descreve os encoders como "reservados; encoder não instalado". Com os encoders disponíveis, a eletrônica precisa atualizar essa nota.
+
+## Sensores de distância: interface `ISensorDistancia` e `SensorDistanciaSimulado`
+
+Na Rev 2.0, o robô mede as paredes com **3 sensores VL53L0X** (esquerdo, frontal e direito), que medem a distância por tempo de voo da luz (*Time of Flight*, ToF). A lógica do firmware recebe essas distâncias pela interface `ISensorDistancia`. Até o PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391), ela se chamava `ILidar` (e o simulado, `LidarSimulado`), nome herdado da primeira versão do hardware; a troca do nome foi feita num commit só, e a percepção, o mapa e o controle de movimento não mudaram ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)).
+
+```mermaid
+classDiagram
+    class ISensorDistancia {
+        <<interface: sensores de distância>>
+        +lerDistanciasLaterais(saida) bool
+        +idadeUltimaLeituraMs() uint32_t
+    }
+    class SensorDistanciaSimulado {
+        +CAPACIDADE_FILA = 16
+        +definirLeituraFixa(leitura)
+        +enfileirarLeitura(leitura) bool
+        +usarLabirinto(labirinto)
+        +posicionar(pose)
+        +simularFalha(falha)
+        +lerDistanciasLaterais(saida) bool
+    }
+    class TofVl53l0x {
+        <<drivers_esp32, Rev 2.0>>
+        +iniciar() bool
+        +lerDistanciasLaterais(saida) bool
+        +idadeUltimaLeituraMs() uint32_t
+        +amostra(lado) AmostraTof
+    }
+    class TofSimulado {
+        <<simulacao: amostras brutas>>
+        +posicionar(pose)
+        +forcarAmostra(lado, mm)
+        +simularFalha(lado, falha)
+        +lerDistanciasLaterais(saida) bool
+    }
+    class LidarUart {
+        <<lidar, sem uso desde a Rev 2.0>>
+        +lerDistanciasLaterais(saida) bool
+    }
+    ISensorDistancia <|.. SensorDistanciaSimulado
+    ISensorDistancia <|.. TofVl53l0x
+    ISensorDistancia <|.. TofSimulado
+    ISensorDistancia <|.. LidarUart
+```
+
+**Figura 3.** Interface `ISensorDistancia` e suas implementações: o `SensorDistanciaSimulado`, que devolve as leituras escolhidas pelo teste, o `TofVl53l0x`, driver dos 3 VL53L0X da Rev 2.0, o `TofSimulado`, que simula os 3 VL53L0X num labirinto passando pelo `CombinadorTof` real, e o `LidarUart`, do LiDAR da primeira versão do hardware, que fica no código sem uso até depois da ED1.
+
+**Contrato de `ISensorDistancia::lerDistanciasLaterais`:** retorna `true` e preenche `saida` (em mm) quando há leitura válida das três direções; retorna `false` quando o sensor não responde ou a leitura é inválida. Nesse caso, o conteúdo de `saida` não deve ser usado. Medida fora da faixa do sensor **não** é inválida: sai limitada à faixa (no `TofVl53l0x`, "sem alvo" vira o alcance máximo, lado livre, e "perto demais" vira o mínimo, parede).
+
+**Contrato de `ISensorDistancia::idadeUltimaLeituraMs`:** idade, em ms, da amostra mais antiga que compõe a última leitura, medida no momento da chamada. Serve para a navegação não reagir duas vezes ao mesmo dado. A implementação padrão devolve 0 (leitura sempre nova), o que vale para o `SensorDistanciaSimulado`.
+
+**`SensorDistanciaSimulado`** devolve o que o teste configurar. A cada leitura, segue esta ordem:
+
+1. com a falha ligada (`simularFalha(true)`), a leitura falha e a fila não é consumida;
+2. se houver leituras na fila, entrega a mais antiga e a remove;
+3. se o modo labirinto estiver ativo (`usarLabirinto` e `posicionar`), entrega o que o [`LabirintoSimulado`](#labirinto-simulado-labirintosimulado) mostra na pose atual, e a leitura falha se a pose estiver fora do labirinto;
+4. se houver leitura fixa, entrega a leitura fixa;
+5. caso contrário, a leitura falha.
+
+A fila é circular, com capacidade fixa de 16 leituras; `enfileirarLeitura` retorna `false` quando ela está cheia.
+
+```cpp
+SensorDistanciaSimulado lidar;
+lidar.definirLeituraFixa({500, 500, 500});  // corredor livre
+lidar.enfileirarLeitura({90, 90, 270});     // depois, parede à frente e à esquerda
+ISensorDistancia& sensor = lidar;           // a lógica recebe só a interface
+```
+
+## Sensores de distância: 3 VL53L0X (`TofVl53l0x`)
+
+Na Rev 2.0 do hardware (21/10/2026), o LiDAR por UART deu lugar a **3 sensores VL53L0X** pelo I²C: um à esquerda, um à frente e um à direita. O `TofVl53l0x` (`lib/drivers_esp32`) implementa a `ISensorDistancia`, então o resto do firmware não mudou ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344), [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36)). A regra que decide se uma leitura vale fica no `CombinadorTof` (`lib/tof`), sem Arduino, e é testada no computador; o driver só conversa com os sensores pela biblioteca `pololu/VL53L0X` (1.3.1), que entra apenas no ambiente `esp32c3`.
+
+```mermaid
+flowchart LR
+    s1["VL53L0X frente<br/>0x31"] --> drv
+    s2["VL53L0X esquerda<br/>0x30"] --> drv
+    s3["VL53L0X direita<br/>0x32"] --> drv
+    drv["TofVl53l0x<br/>I²C, XSHUT, modo contínuo"] -- "medida bruta,<br/>falha e instante" --> comb["CombinadorTof<br/>faixa, limitação e idade"]
+    comb -- "DistanciasLaterais limitadas<br/>ou false" --> interface["ISensorDistancia<br/>percepção, navegação, controle"]
+    comb -- "amostra(lado)" --> diag["Bancada e diagnóstico<br/>estado bruto de cada sensor"]
+```
+
+**Figura 4.** Caminho de uma leitura: o driver lê cada sensor que tem medida pronta, o `CombinadorTof` classifica a medida, limita à faixa as que ficaram fora dela e monta a leitura das três direções, e quem precisar do valor bruto (a bancada, por exemplo) consulta a amostra do sensor.
+
+### Ligação e endereços
+
+Os três sensores dividem o barramento I²C com o MPU6050. Todos saem do reset no endereço de fábrica, 0x29, por isso cada um tem o seu pino XSHUT. Os valores ficam em `Pinos.h`, e o driver os recebe por parâmetro.
+
+| Sensor | XSHUT | Endereço I²C |
+|---|:-:|:-:|
+| Esquerdo (J3) | GPIO0 | 0x30 |
+| Frontal (J4) | GPIO1 | 0x31 |
+| Direito (J5) | GPIO2 | 0x32 |
+| Barramento | SDA GPIO9, SCL GPIO8 | MPU6050 em 0x68 |
+
+Um `static_assert` em `Pinos.h` reprova a compilação se dois endereços coincidirem ou se algum deles for o 0x29 ou o 0x68.
+
+### Regras de Negócio e Algoritmo
+
+* **Inicialização (`iniciar()`):** os três XSHUT vão a nível baixo (sensores em reset); depois, um sensor por vez é solto, inicializado e recebe o seu endereço, e só então o próximo é solto. Cada sensor fica em modo contínuo com o tempo de medição configurado. Um sensor que não responde volta para o reset, para não ocupar o 0x29 e atrapalhar os seguintes; `sensorIniciado(lado)` diz quais iniciaram.
+* **Leitura sem espera:** a cada `lerDistanciasLaterais()`, o driver consulta o registrador de medida pronta de cada sensor e só lê os que têm medida nova. Nunca espera o sensor terminar, então a tarefa de navegação (10 ms) não trava.
+* **Classificação de cada medida** (`CombinadorTof::classificar`):
+
+| Estado | Quando |
+|---|---|
+| `Valida` | Entre 30 e 1200 mm |
+| `AbaixoDoMinimo` | Abaixo de 30 mm, onde o VL53L0X perde a precisão |
+| `ForaDeAlcance` | Acima de 1200 mm, incluindo os 8190/8191 mm que o sensor devolve sem alvo |
+| `Falha` | Sem resposta no I²C ou tempo de espera estourado |
+| `SemAmostra` | O sensor ainda não entregou nenhuma medida |
+
+* **Fora da faixa não derruba a leitura:** a medida sai limitada à faixa, como a percepção ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) trata. `ForaDeAlcance` vira 1200 mm, lado livre: no 12×4, "nada à frente" é uma leitura normal. `AbaixoDoMinimo` vira 30 mm, parede muito perto: o sensor lateral pode ler menos de 30 mm com o robô desviado. Antes da revisão do PR #391, um lado fora da faixa derrubava a leitura dos três.
+* **Leitura válida:** `lerDistanciasLaterais()` devolve `true` com os três sensores respondendo (nenhum em `Falha` ou `SemAmostra`) e com a amostra mais antiga dentro de 100 ms. Um sensor que para de medir faz a leitura falhar pela idade.
+* **Amostra bruta exposta:** `amostra(lado)` devolve a última medida de cada sensor, com o estado e a distância brutos e o instante, mesmo quando a leitura sai limitada.
+* **Referência das distâncias:** as medidas partem da face de cada sensor, não do centro do robô. A conversão para a geometria do robô e os limiares de parede são da [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379); a compensação do desvio de cada sensor, da calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)).
+
+**Parâmetros** (`ConfiguracaoTof.h`, todos **provisórios**, a validar na bancada da [#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)):
+
+| Parâmetro | Valor | Origem |
+|---|---|---|
+| Tempo de medição (*timing budget*) | 33 ms | Padrão do VL53L0X: cerca de 30 medidas por segundo, precisão razoável até 1,2 m |
+| Período no modo contínuo | 0 (uma medida emendada na outra) | Biblioteca `pololu/VL53L0X` |
+| Faixa válida | 30 a 1200 mm | Datasheet do VL53L0X, modo padrão em ambiente interno |
+| Idade máxima da leitura | 100 ms | Cerca de 3 medidas perdidas |
+| Tempo limite no I²C | 50 ms | Estimativa |
+| Espera depois de soltar o XSHUT | 10 ms | O datasheet dá até 1,2 ms; a folga cobre o regulador do módulo |
+
+### Interface da Classe
+
+* **`TofVl53l0x(TwoWire&, frente, esquerda, direita, config)`:** recebe o barramento já iniciado (`Wire.begin(SDA, SCL)`) e a `ConexaoTof` (pino XSHUT e endereço) de cada sensor.
+* **`bool iniciar()`:** sequência de XSHUT e endereços; `true` se os três iniciaram. Pode ser chamado de novo para reiniciar os sensores.
+* **`bool lerDistanciasLaterais(DistanciasLaterais&)`** e **`uint32_t idadeUltimaLeituraMs() const`:** o contrato da `ISensorDistancia`; a idade é `CombinadorTof::IDADE_DESCONHECIDA` enquanto algum sensor não entregou amostra.
+* **`const AmostraTof& amostra(Lado) const`:** distância bruta, `EstadoAmostraTof` e instante da última medida do sensor.
+* **`CombinadorTof`:** `classificar(distancia, falhou)`, `registrar(lado, distancia, falhou, agoraMs)`, `distancias(agoraMs, saida)` (já com as distâncias limitadas), `idadeMs(agoraMs)` e `reiniciar()`.
+
+**No `main.cpp`.** O `setup()` inicia o barramento e chama `iniciar()`; o autoteste do boot (próxima seção) confere o resultado e diz qual sensor falhou. A tarefa de navegação lê os sensores a cada 10 ms e guarda uma cópia, protegida por seção crítica, que a telemetria envia nos campos `tof_frente_mm`, `tof_esq_mm`, `tof_dir_mm`, `tof_valida` e `tof_idade_ms`.
+
+### Bancada dos VL53L0X
+
+Para a equipe de software e a eletrônica validarem o driver no hardware montado, há um firmware de bancada (`src/bancada/bancada_tof.cpp`, ambiente `bancada_tof`) e um menu no computador (`scripts/bancada_tof.py`). O firmware mantém os motores freados e responde a comandos pela serial; o menu grava esse firmware e conduz o roteiro, com resultado APROVADO, REPROVADO ou OBSERVADO em cada verificação e um relatório em Markdown no fim.
+
+| Etapa | O que verifica | Critério provisório |
+|---|---|---|
+| 1. Fiação | Com os outros em reset, cada XSHUT liga só o seu sensor, que aparece no 0x29 | O sensor aparece sozinho; com todos em reset, ninguém no 0x29 |
+| 2. Inicialização | `iniciar()` e varredura do barramento | 0x30, 0x31 e 0x32 presentes e 0x29 livre |
+| 3. Taxa e tempo | Estatística de 5 s com obstáculo diante dos três | 20 a 40 Hz por sensor, leitura em até 5 ms, ≥ 95% de leituras válidas |
+| 4. Régua | Média, erro e desvio contra distâncias medidas | Erro até ±10 mm ou ±5% |
+| 5. Fora da faixa | Sensor sem alvo e sensor encostado | Leitura válida, limitada a 1200 mm ou 30 mm (campo `limitada`), com `ForaDeAlcance` ou `AbaixoDoMinimo` na amostra; outro estado do sensor fica registrado como OBSERVADO para a [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) |
+| 6. Sensor ausente (opcional) | Um sensor desconectado com a placa desligada | Os outros dois iniciam e a leitura falha |
+
+O passo a passo de uso está no [README do firmware](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/main/src/firmware/README.md#bancada-dos-vl53l0x). O CI compila o `bancada_tof` junto com o firmware do robô e roda os testes do menu (`scripts/testes/test_bancada_tof.py`, job "Scripts de bancada"), que conferem cada etapa com respostas falsas da placa, sem hardware nem `pyserial`.
+
+### Simulação dos VL53L0X e integração com o mapa
+
+O `TofSimulado` (`lib/simulacao`) faz no computador o papel do driver: gera a amostra bruta de cada sensor no [`LabirintoSimulado`](#labirinto-simulado-labirintosimulado) e a passa pelo `CombinadorTof` real. Assim a regra de validade entra nos testes de integração.
+
+* **Amostra bruta:** a distância do centro do robô à parede menos 30 mm (o recuo provisório dos sensores, o mesmo da [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)); além de 1200 mm, o sensor devolve 8190 mm (sem alvo), como o real.
+* **Casos do sensor real:** `forcarAmostra(lado, mm)` troca a próxima amostra de um lado (por exemplo, sensor encostado na parede) e `simularFalha(lado, true)` faz um sensor parar de responder.
+* **`test_integracao_tof`:** explora os labirintos 4×4, 8×4 e 12×4 por `TofSimulado → CombinadorTof → ClassificadorParede → AtualizadorMapa → Mapa` e confere que o mapa final é igual ao labirinto. Como os exemplos não passam de 1140 mm brutos, há também um 12×4 em serpentina, com corredores de uma linha inteira (2070 mm do centro), que só se fecha com o "sem alvo" tratado como livre.
+
+## Boot do sistema: autoteste do I²C (`AutotesteBoot`)
+
+Na Rev 2.0, o boot passa pelo I²C: os 3 VL53L0X precisam receber os endereços e o MPU6050 precisa responder antes de o robô poder andar. O `AutotesteBoot` (`lib/inicializacao`) confere o barramento depois do `TofVl53l0x::iniciar()` e só então os motores são liberados ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50), RNF-09). A lógica não usa Arduino e é testada no computador com o `BarramentoI2cSimulado`; na placa, o `BarramentoI2cEsp32` faz a varredura pelo `Wire`.
+
+```mermaid
+flowchart TD
+    a["setup(), 1ª linha: motores.iniciar()<br/>freados e travados (MotoresComTrava)"] --> b["Wire.begin(SDA, SCL)"]
+    b --> c["tof.iniciar()<br/>XSHUT um por vez: 0x30, 0x31, 0x32"]
+    c --> d["AutotesteBoot::verificar<br/>varre 0x08 a 0x77"]
+    d --> e{"4 dispositivos ok<br/>e ninguém no 0x29?"}
+    e -- "sim" --> f["motoresComTrava.liberar()"]
+    e -- "não" --> g["motores travados até reiniciar<br/>log diz o que falhou"]
+    f --> h["relatório do boot (linha JSON)<br/>e criação das tarefas"]
+    g --> h
+```
+
+**Figura 5.** Sequência de boot da Rev 2.0: os motores começam travados e só são liberados com o autoteste aprovado; as tarefas sobem nos dois casos, para a telemetria continuar informando a falha.
+
+### Regras de Negócio e Algoritmo
+
+* **Dispositivos exigidos:** ToF esquerdo (0x30), frontal (0x31) e direito (0x32), e MPU6050 (0x68). Os endereços vêm de `Pinos.h`, a única fonte deles.
+* **Estado de cada dispositivo:**
+
+| Situação | Estado | Reprova o boot? |
+|---|---|---|
+| Responde no endereço esperado (no MPU6050, com o `WHO_AM_I` certo) | `ok` | Não |
+| Ninguém no endereço | `ausente` | Sim |
+| ToF responde no endereço novo, mas o driver não conseguiu configurá-lo | `nao_iniciou` | Sim |
+| Algo no 0x68 com outro `WHO_AM_I`, ou sem leitura | `nao_identificado` | Sim |
+| Algo no 0x29: um VL53L0X ficou no endereço de fábrica (não trocou de endereço ou o XSHUT está trocado) | `tof_0x29` | Sim |
+| Outro endereço respondendo | `inesperados` | Não, só aviso |
+| Boot acima de 2 s | `no_prazo: false` | Não, só aviso |
+
+* **Identidade do MPU6050:** além de responder no 0x68, o registrador `WHO_AM_I` (0x75) precisa valer 0x68, para outro chip nesse endereço não passar pela IMU. Usa só o `Wire`, sem depender do driver da IMU ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)).
+* **Falha:** os motores ficam travados **até o robô ser reiniciado**. Repetir as tentativas durante a corrida e reiniciar um ToF pelo XSHUT é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava.
+* **Trava dos motores:** a `MotoresComTrava` envolve o driver e começa travada. Travada, todo `definirPotencia` vira `parar()`; o `parar()` sempre passa. O `motores.iniciar()` é a primeira linha do `setup()`, para frear antes de tudo, porque o GPIO20/21 (IN3/IN4) recebe um tranco da ROM durante o reset.
+* **Camadas dos motores:** no `main.cpp`, cada camada tem o próprio nome: `motores` é o driver e `motoresComTrava`, a trava. Quem aciona as rodas (o detector do objetivo hoje e o controle de movimento depois) usa só `motoresTracao`, uma referência (`IMotores&`) à camada de fora. Ordem combinada para quando as outras camadas entrarem: `MotoresComTrava` (#50) → `MotoresComProtecao` ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) → `MotoresComEstimativa` ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)) → `MotoresDrv8833`. Com a trava por fora, a proteção recebe freio enquanto o robô não foi liberado e não acusa um motor travado falso; quando as camadas se juntarem, só a referência `motoresTracao` muda.
+* **I²C compartilhado com a IMU:** o `BarramentoI2c` do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) (com mutex) vai tomar o lugar do `Wire.begin` do `setup()`, com `barramentoI2c.iniciar(SDA, SCL)` antes do `tof.iniciar()`. O `tof.iniciar()` e o autoteste não precisam do mutex, porque rodam antes dos `xTaskCreate` (inclusive o da IMU). Fica para essa integração unificar o `BarramentoI2cEsp32` com o `BarramentoI2c`, por exemplo com o `BarramentoI2cEsp32` usando o `BarramentoI2c::Uso` por dentro.
+* **Tempo do boot (RNF-09):** `boot_ms` é o `millis()` no fim do `setup()`, contado desde o início do programa. A ROM e o bootloader do ESP32-C3 rodam antes e ficam de fora; o tempo desde o ligar precisa ser medido na bancada.
+
+**Parâmetros:** em `lib/inicializacao/src/ConfiguracaoBoot.h`.
+
+| Parâmetro | Valor | Observação |
+|---|---|---|
+| `TEMPO_MAXIMO_BOOT_MS` | 2000 | RNF-09 |
+| `WHO_AM_I_MPU6050` | 0x68 | **Provisório:** clones do MPU6050 respondem outro valor (0x70, 0x72, 0x98); conferir na bancada pelo `mpu6050_who_am_i` do relatório |
+| Faixa varrida | 0x08 a 0x77 | Fora dela ficam os endereços reservados do I²C |
+| `MAXIMO_ENDERECOS_INESPERADOS` | 8 | Os seguintes só entram na contagem |
+
+### Interface das Classes
+
+* **`IBarramentoI2c`** (`lib/hal`): `bool responde(endereco)` e `bool lerRegistrador(endereco, registrador, valor&)`.
+* **`ResultadoBoot AutotesteBoot::verificar(IBarramentoI2c&, InicializacaoTof)`:** varre o barramento e devolve o estado de cada dispositivo, o 0x29, o `WHO_AM_I` lido e os endereços inesperados. `InicializacaoTof` traz o `sensorIniciado` de cada ToF.
+* **`ResultadoBoot::aprovado()`:** `true` com os 4 `ok` e ninguém no 0x29.
+* **`AutotesteBoot::dentroDoPrazo(duracaoMs)`** e **`descreverFalhas(resultado, saida, capacidade)`:** prazo do RNF-09 e texto das falhas (por exemplo, `tof_frontal,mpu6050`).
+* **`RelatorioBoot::serializar(resultado, autoteste, duracaoMs, saida, capacidade)`:** a linha JSON do boot, em até `TAMANHO_MAX_JSON_RELATORIO_BOOT` (512) bytes.
+* **`MotoresComTrava`** (`lib/atuacao`): `IMotores` com `travar()`, `liberar()` e `travado()`.
+
+```json
+{"tipo":"boot","ok":false,"motores_liberados":false,"falhas":"tof_frontal","boot_ms":412,"prazo_ms":2000,"no_prazo":true,"dispositivos":{"tof_esquerdo":"ok","tof_frontal":"ausente","tof_direito":"ok","mpu6050":"ok"},"tof_0x29":false,"mpu6050_who_am_i":104,"inesperados":[],"inesperados_total":0}
+```
+
+**Figura 6.** Relatório de um boot com o ToF frontal ausente: os motores ficam travados e a falha é nomeada.
+
+**No `main.cpp`.** A sequência da Figura 5 roda no `setup()`, antes de criar as tarefas. Como a linha do boot se perde se o monitor serial abrir depois do reset (a USB nativa reconecta), a telemetria repete `boot_ok`, `boot_falhas` e `boot_ms` em todo pacote, e o comando `B` no monitor reimprime o relatório. Com os campos do boot, o pior caso do JSON de telemetria chegou a 516 bytes, e o buffer (`TAMANHO_MAX_JSON_TELEMETRIA`) passou de 512 para 768 bytes.
+
+## Labirinto simulado: `LabirintoSimulado`
+
+O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes conhecidas, usado como verdade de referência nos testes. Com ele, o `SensorDistanciaSimulado` deixa de depender de leituras digitadas à mão: basta posicionar o robô numa célula, e o sensor simulado devolve o que os sensores de distância reais veriam ali. Isso permite testar a classificação de paredes ([#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174)) e a atualização do mapa ([#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)) num labirinto inteiro, sem hardware.
+
+**Formato do labirinto.** O labirinto é escrito em texto, no formato clássico de micromouse. Cada célula ocupa 4 colunas e 2 linhas de texto; `+` marca os cantos, `---` uma parede horizontal e `|` uma parede vertical. A primeira linha é a borda Norte, e a partida (0, 0) é a célula do canto inferior esquerdo, com as mesmas convenções do `Mapa` e de `Direcao.h`.
+
+```text
++---+---+---+---+
+|       |       |
++   +---+   +   +
+|   |       |   |
++   +   +---+   +
+|       |       |
++   +---+   +---+
+|   |           |
++---+---+---+---+
+```
+
+**Figura 7.** Labirinto 4×4 de exemplo (`LABIRINTO_4X4`), com a partida (0, 0) no canto inferior esquerdo.
+
+Cada parede aparece uma única vez no texto, entre as duas células que ela separa. Por isso, o lado leste de uma célula e o lado oeste da vizinha nunca discordam. Ao carregar o texto, o `LabirintoSimulado` recusa:
+
+| Resultado de `carregar` | Quando acontece |
+|---|---|
+| `Carregado` | Texto válido |
+| `TamanhoInvalido` | O tamanho não é 4×4, 8×4 nem 12×4, ou as linhas têm larguras diferentes |
+| `CaractereInvalido` | Caractere fora do formato |
+| `ParedeIncompleta` | Parede pela metade, como `- -` |
+| `PerimetroAberto` | Falta parede na borda externa |
+
+**Distâncias.** Com o robô no centro da célula, a parede da própria célula está a 90 mm, e cada célula livre no caminho soma 180 mm (`TAMANHO_CELULA_MM`). No labirinto acima, com o robô em (0, 0) virado para o Norte, há três células livres à frente e paredes dos dois lados:
+
+| Pose | Frente | Esquerda | Direita |
+|---|:-:|:-:|:-:|
+| (0, 0) Norte | 630 mm | 90 mm | 90 mm |
+| (1, 0) Norte | 450 mm | 90 mm | 270 mm |
+| (3, 0) Leste | 270 mm | 90 mm | 630 mm |
+
+| Operação | O que faz |
+|---|---|
+| `carregar(texto)` | Lê o labirinto; se o texto for inválido, mantém o anterior |
+| `temParede(celula, direcao)` | Se há parede naquele lado da célula (fora do labirinto conta como parede) |
+| `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; devolve `false` sem labirinto carregado ou com a célula fora dele |
+| `SensorDistanciaSimulado::usarLabirinto(labirinto)` e `posicionar(pose)` | Modo labirinto: a leitura passa a vir do labirinto, depois da falha e da fila e antes da leitura fixa. O labirinto não é copiado e precisa continuar existindo; sem `posicionar`, vale a leitura fixa |
+
+Os testes ficam em `test/test_labirinto_simulado/`, com um labirinto de exemplo de cada tamanho da competição (4×4, 8×4 e 12×4) em `LabirintosExemplo.h`. Os três têm o perímetro fechado e todas as células alcançáveis a partir da partida, e os testes conferem essas duas propriedades a cada execução. O uso do simulador também está no [README do firmware](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/main/src/firmware/README.md#labirinto-simulado).
+
+## Percepção: classificação de paredes
+
+O módulo de percepção (`lib/percepcao`) implementa a classe `ClassificadorParede`, responsável por processar as medições de distância e classificar se cada lado ao redor do robô (frente, esquerda e direita) está desimpedido (`Livre`) ou obstruído (`Parede`) para alimentar a atualização do mapa (HU-02, [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)).
+
+Com a revisão eletrônica Rev 2.0, o LiDAR 360° por UART foi substituído por **3 sensores Time-of-Flight (ToF) VL53L0X** via barramento I²C. Diferentemente do LiDAR centralizado único anterior, os sensores ToF possuem características ópticas distintas, limites físicos operacionais bem delimitados e são fixados em pontos específicos da estrutura mecânica do robô.
+
+### Geometria dos sensores e dedução dos limiares
+
+Os parâmetros físicos do labirinto e do micromouse determinam a faixa nominal de leituras de distância esperadas:
+
+* **Largura do corredor livre:** A célula do labirinto mede 180 mm (`TAMANHO_CELULA_MM`, `Configuracao.h`) e a espessura das paredes de madeira é de 12 mm (`ESPESSURA_PAREDE_MM`, `ConfiguracaoControle.h`), resultando em um vão livre de $180 - 12 = 168\text{ mm}$.
+* **Centro do corredor:** Com o robô perfeitamente centralizado, a distância do centro geométrico até a face de cada parede lateral é de $d_{\text{centro\_parede}} = (180 - 12) / 2 = 84\text{ mm}$ (`DISTANCIA_CENTRO_A_PAREDE_MM`).
+* **Dimensões do chassi:** O chassi possui meia-largura de 60 mm e meio-comprimento de 50 mm (`estruturas.md`). Se os sensores laterais fossem montados na borda externa do chassi, a distância medida até a parede seria de $84 - 60 = 24\text{ mm}$. Como o datasheet do VL53L0X (ST DocID029104) especifica distância mínima confiável em torno de **30 mm**, a montagem física exige necessariamente sensores recuados em relação à borda externa.
+* **Cálculo analítico do limiar de decisão:**
+  Para um sensor montado com deslocamento $d_{\text{offset}}$ em relação ao centro do robô na direção de visada:
+  $$\begin{aligned}
+  d_{\text{parede}} &= d_{\text{centro\_parede}} - d_{\text{offset}} = 84\text{ mm} - d_{\text{offset}} \\
+  d_{\text{livre}} &= d_{\text{parede}} + \text{TAMANHO\_CELULA\_MM} = d_{\text{parede}} + 180\text{ mm} \\
+  \text{Limiar ideal} &= \frac{d_{\text{parede}} + d_{\text{livre}}}{2} = d_{\text{parede}} + 90\text{ mm}
+  \end{aligned}$$
+  Adotando provisoriamente um recuo de montagem de $d_{\text{offset}} = 30\text{ mm}$ (sensores a 30 mm do centro):
+  - $d_{\text{parede}} = 84 - 30 = 54\text{ mm}$ (garantindo folga segura acima dos 30 mm mínimos).
+  - $d_{\text{livre}} = 54 + 180 = 234\text{ mm}$ (ou saturação de fora de alcance em corredores contínuos).
+  - Ponto médio ótimo: $54 + 90 = 144\text{ mm}$, parametrizado provisoriamente como **140 mm**.
+
+Esse limiar de 140 mm também assegura perfeita compatibilidade com o ambiente simulado (`LabirintoSimulado`), no qual a parede imediata lê nominalmente 90 mm ($\le 140\text{ mm} \to \text{Parede}$) e o corredor aberto lê $\ge 270\text{ mm}$ ($> 140\text{ mm} \to \text{Livre}$).
+
+### Valores provisórios de configuração (`ConfiguracaoPercepcao.h`)
+
+Os parâmetros da camada de percepção estão isolados em `ConfiguracaoPercepcao.h`:
+
+| Parâmetro | Constante | Valor provisório | Origem / Justificativa |
+|---|---|---|---|
+| Limiar frontal | `limiarFrenteMm` | **140 mm** | Ponto médio para offset frontal de 30 mm (54 mm vs 234 mm) |
+| Limiar esquerdo | `limiarEsquerdaMm` | **140 mm** | Ponto médio para offset lateral de 30 mm (54 mm vs 234 mm) |
+| Limiar direito | `limiarDireitaMm` | **140 mm** | Ponto médio para offset lateral de 30 mm (54 mm vs 234 mm) |
+| Distância mínima | `distanciaMinimaMm` | **30 mm** | Limite operacional inferior do VL53L0X (datasheet ST DocID029104) |
+| Distância máxima | `distanciaMaximaMm` | **1200 mm** | Limite superior operacional confiável para alvos difusos em ambiente interno |
+| Código fora de alcance | `DISTANCIA_OUT_OF_RANGE_TOF_MM` | **8190 mm** | Código retornado pelo hardware/driver VL53L0X na ausência de retorno infravermelho |
+| Tipo de filtro | `tipoFiltro` | **`Mediana`** | Filtro de mediana de até 16 amostras, imune a ruídos impulsivos pontuais |
+
+> [!WARNING]
+> **Valores provisórios:** os limiares e offsets foram calculados a partir da geometria teórica do labirinto e do esquemático Rev 2.0. A calibração final dos offsets e limiares reais depende da validação física na bancada de ensaios com os sensores montados no chassi ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
+
+### Regras de Negócio e Algoritmo
+
+1. **Tratamento defensivo de limites operacionais:**
+   - **Fora de alcance ($> 1200\text{ mm}$ ou $\ge 8190\text{ mm}$):** Indica ausência de eco refletor próximo (lado livre). O método `tratarDistancia()` satura a medida em $1200\text{ mm}$ ($> \text{limiar} \to \text{Livre}$).
+   - **Abaixo do mínimo ($< 30\text{ mm}$):** Indica robô muito próximo ou colado à parede. O método satura a medida em $30\text{ mm}$ ($\le \text{limiar} \to \text{Parede}$).
+2. **Filtragem digital contra ruídos espúrios:**
+   - Em vez de uma média aritmética simples — suscetível a desvios severos causados por leituras espúrias isoladas (por exemplo, uma perda momentânea de reflexão infravermelha retornando 8190 mm elevaria a média aritmética mesmo em frente a uma parede real) —, o classificador utiliza por padrão um **filtro de mediana** sobre uma janela estática de até 16 amostras.
+   - O algoritmo ordena os valores tratados em ordem crescente (via *insertion sort* local, sem alocação dinâmica no heap) e seleciona o elemento mediano, eliminando *outliers* espúrios com custo computacional mínimo. Também suporta o modo `TipoFiltroPercepcao::Media` quando configurado.
+3. **Decisão por direção independente:**
+   - Cada direção avalia a distância filtrada contra o seu respectivo limiar (`limiarFrenteMm`, `limiarEsquerdaMm`, `limiarDireitaMm`). Se a distância filtrada for $\le \text{limiar}$, classifica como `EstadoParede::Parede`; caso contrário, `EstadoParede::Livre`.
+4. **Comportamento Fail-Safe:** Se o vetor de amostras for nulo ou vazio (`quantidade == 0`), retorna `EstadoParede::Desconhecido` para todos os lados.
+
+### Interface da Classe
+
+* **Construtores:**
+  - `ClassificadorParede()`: inicializa com a `ConfiguracaoPercepcao` padrão.
+  - `explicit ClassificadorParede(uint16_t limiarMm)`: limiar uniforme para todos os lados (compatibilidade).
+  - `ClassificadorParede(const ConfiguracaoPercepcao& config)`: configuração customizada completa.
+  - `ClassificadorParede(uint16_t frente, uint16_t esquerda, uint16_t direita)`: limiares específicos por direção.
+* **Métodos de ajuste e consulta:**
+  - `void definirLimiar(uint16_t limiarMm)` / `void definirLimiar(Lado lado, uint16_t limiarMm)`.
+  - `void definirLimiares(uint16_t frente, uint16_t esquerda, uint16_t direita)`.
+  - `uint16_t obterLimiar() const` / `uint16_t obterLimiar(Lado lado) const`.
+  - `const ConfiguracaoPercepcao& obterConfiguracao() const` / `void definirConfiguracao(...)`.
+* **Métodos de tratamento e inspeção:**
+  - `uint16_t tratarDistancia(uint16_t distanciaBrutaMm) const`: aplica saturação de limites.
+  - `bool ehAbaixoDoMinimo(uint16_t distanciaMm) const`: valida se a medida viola o piso confiável.
+  - `bool ehForaDeAlcance(uint16_t distanciaMm) const`: valida se a medida excede o teto confiável.
+  - `EstadoParede classificarDistancia(Lado lado, uint16_t distanciaMm) const`: classifica uma leitura individual tratada.
+* **Classificação de lotes e filtragem:**
+  - `uint16_t filtrarAmostras(const uint16_t* valores, size_t quantidade) const`: filtra lote numérico via mediana/média.
+  - `ResultadoClassificacao classificar(const DistanciasLaterais* amostras, size_t quantidade) const`.
+  - `ResultadoClassificacao classificar(const DistanciasLaterais& leitura) const`: sobrecarga conveniente para amostra única.
+
+## Mapeamento: atualização do mapa
+
+O módulo de mapeamento (`lib/mapeamento`) implementa a classe `AtualizadorMapa`, responsável por integrar a percepção à representação espacial: converte as observações relativas dos sensores de distância (frente, esquerda e direita) na pose atual do robô em direções cardeais absolutas (Norte, Leste, Sul e Oeste) e registra as paredes no `Mapa` ([#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)).
+
+### Regras de Negócio e Algoritmo
+
+* **Conversão de Eixos:** A partir de `pose.direcao`, calcula a direção absoluta para cada lado via `direcaoAbsoluta`:
+  * Robô ao Norte: Frente $\rightarrow$ Norte, Esquerda $\rightarrow$ Oeste, Direita $\rightarrow$ Leste.
+  * Robô a Leste: Frente $\rightarrow$ Leste, Esquerda $\rightarrow$ Norte, Direita $\rightarrow$ Sul.
+  * Robô ao Sul: Frente $\rightarrow$ Sul, Esquerda $\rightarrow$ Leste, Direita $\rightarrow$ Oeste.
+  * Robô a Oeste: Frente $\rightarrow$ Oeste, Esquerda $\rightarrow$ Sul, Direita $\rightarrow$ Norte.
+* **Espelhamento Automático:** Cada parede registrada na célula atual atualiza automaticamente a aresta correspondente na célula vizinha via `Mapa::registrarParede`.
+* **Tratamento de Conflito:** Se a leitura contradiz o mapa (ex.: sensor detecta livre onde já havia parede), o mapa **preserva o valor antigo** e o atualizador sinaliza `temConflito = true` em `ResultadoAtualizacao`. A política de decisão fica a cargo do algoritmo de navegação (#188).
+* **Fail-Safe / Desconhecido:** Classificações com valor `Desconhecido` ou poses fora das dimensões válidas do mapa retornam `Invalida` e não alteram o mapa.
+
+### Interface da Classe
+
+* **Entrada principal:** `Mapa &mapa`, `const Pose &pose`, `const ClassificadorParede::ResultadoClassificacao &classificacao`
+* **Sobrecarga de conveniência:** `Mapa &mapa`, `const Pose &pose`, `const ClassificadorParede &classificador`, `const DistanciasLaterais *amostras`, `size_t quantidadeAmostras`, realizando a classificação internamente antes do registro.
+* **Saída:** `ResultadoAtualizacao` (`frente`, `esquerda`, `direita` e a flag `temConflito`).
+
+## Mapeamento: mapa final da corrida
+
+Quando o robô alcança a célula objetivo, o mapa do labirinto percorrido precisa ficar guardado e pronto para ser enviado ao servidor, vinculado ao registro da corrida (HU-04, [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)). O `ArmazenamentoMapa` (`lib/mapeamento`), que já era o dono do mapa da corrida ([#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179)), passou a guardar também o **mapa final**: uma cópia feita no momento do congelamento.
+
+```mermaid
+stateDiagram-v2
+    [*] --> SemCorrida
+    SemCorrida --> Explorando: iniciarCorrida()
+    Explorando --> Explorando: registrar paredes em mapa()
+    Explorando --> Congelado: congelarMapa() ao alcançar o objetivo
+    Congelado --> Congelado: novo congelarMapa() é recusado e escritas em mapa() não mudam o mapa final
+    Congelado --> Explorando: iniciarCorrida() (nova corrida)
+```
+
+**Figura 8.** Ciclo de vida do mapa final no `ArmazenamentoMapa`: o congelamento só acontece uma vez por corrida e só uma nova corrida o destrava.
+
+### Regras de Negócio e Algoritmo
+
+* **Congelamento por cópia:** `congelarMapa()` copia o mapa da corrida para `mapaFinal_`. A cópia isola o resultado: a navegação pode continuar escrevendo no mapa da corrida (por exemplo, no caminho de volta à partida) sem alterar o mapa final, nem o JSON gerado a partir dele.
+* **Uma vez por corrida:** congelar antes de `iniciarCorrida()` ou congelar de novo é recusado (`false`), e o mapa final continua o da primeira vez. `iniciarCorrida()` destrava o congelamento para a próxima corrida.
+* **Leitura protegida:** `mapaFinal()` devolve `nullptr` enquanto o mapa não foi congelado e, depois, um ponteiro `const`, só para leitura.
+* **Serialização no formato da [#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178) (tarefa 5.3.3):** `MapaJson::serializarFinal(armazenamento, saida, capacidade)` gera o mesmo JSON de `serializar()`, mas do mapa final. Sem mapa congelado, devolve `0` e deixa `saida` com uma string vazia.
+* **Memória sem alocação dinâmica:** os dois mapas ficam dentro do objeto, que passou de 196 para 392 bytes (dois `Mapa` de 195 bytes e dois indicadores), cerca de 0,1% dos 320 KB de RAM do ESP32-C3.
+
+### Interface da Classe
+
+* **`bool congelarMapa()`:** `true` se congelou; `false` se a corrida não foi iniciada ou se o mapa já estava congelado.
+* **`bool mapaCongelado() const`:** `true` depois do congelamento, até a próxima `iniciarCorrida()`.
+* **`const Mapa* mapaFinal() const`:** o mapa final, ou `nullptr` se ainda não congelou.
+* **`static size_t MapaJson::serializarFinal(const ArmazenamentoMapa&, char* saida, size_t capacidade)`:** número de caracteres escritos sem o `\0`; `0` se não congelou, se `saida` é nulo ou se o buffer não comporta o JSON.
+
+## Navegação: algoritmo de resolução do labirinto
+
+O módulo de navegação (`lib/navegacao`) implementa a classe `Navegacao`, que decide para qual célula vizinha o robô deve ir para chegar à célula objetivo, usando só o que o `Mapa` já sabe sobre as paredes (HU-01, [#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)). Ela não aciona os motores: devolve uma **direção** e a **célula esperada**, e só atualiza a posição do robô quando os sensores a confirmam. Como não depende do Arduino nem aloca memória dinâmica, é testada no ambiente `native`.
+
+O objetivo padrão é o canto diametralmente oposto à partida, `(linhas − 1, colunas − 1)`: (3, 3) no 4×4, (3, 7) no 8×4 e (3, 11) no 12×4. Ele pode ser trocado por `definirObjetivo()`.
+
+### Lógica de decisão de movimentação
+
+A cada decisão, a `Navegacao` executa três etapas:
+
+1. **Calcula a distância de cada célula até o objetivo (*flood fill*).** Uma busca em largura (BFS) parte do objetivo, com distância 0, e se espalha pelas células vizinhas; cada célula recebe o número mínimo de células até o objetivo. A fila é um vetor estático de 48 posições (o maior labirinto, 12×4), sem alocação dinâmica.
+2. **Considera o mapa de forma otimista.** Só uma parede confirmada (`EstadoParede::Parede`) bloqueia a passagem, conferida nas duas células que ela separa. Paredes `Livre` e `Desconhecido` são tratadas como passagem. Por isso o algoritmo funciona com o mapa parcial: ele planeja como se o desconhecido estivesse aberto e, quando os sensores de distância revelam uma parede nova, o próximo cálculo já desvia dela. O *flood fill* é refeito em toda decisão, porque o mapa muda a cada célula visitada.
+3. **Escolhe a vizinha mais próxima do objetivo.** Entre as quatro vizinhas que estão dentro do mapa e não têm parede conhecida no caminho, escolhe a de **menor distância**. No empate, a preferência é, nesta ordem: **frente** (mantém a direção atual, sem giro), **direita**, **esquerda** e **trás**. Seguir em frente evita manobras, que gastam tempo e acumulam erro de odometria.
+
+A decisão devolve `false`, sem direção, quando o robô já está no objetivo ou quando o objetivo é inalcançável pelas paredes conhecidas (a distância da célula atual é `DISTANCIA_INFINITA`, 255).
+
+| 3 | 2 | 1 | **0** |
+|:---:|:---:|:---:|:---:|
+| 4 | 3 | 2 | 1 |
+| 5 | 4 | 3 | 2 |
+| **6** | 5 | 4 | 3 |
+
+**Figura 9.** Distâncias calculadas pelo *flood fill* num mapa 4×4 sem paredes internas conhecidas, com o objetivo (3, 3) no canto superior direito (0) e a partida (0, 0) no canto inferior esquerdo (6). Na partida, virado para o Norte, as vizinhas Norte (1, 0) e Leste (0, 1) empatam com distância 5; o desempate escolhe a frente, o Norte. Se os sensores revelarem uma parede ao Norte, o próximo cálculo descarta essa vizinha e o robô segue para Leste.
+
+### Ciclo de um passo: decisão, movimento e confirmação pelos sensores
+
+A `Navegacao` não considera que o robô andou só porque decidiu andar. Um passo tem três etapas, e cada uma tem um responsável:
+
+| Etapa | Responsável | O que acontece |
+|---|---|---|
+| 1. Decidir | `Navegacao::darPasso(direcao)` | Aplica a lógica acima, devolve a direção e registra a célula esperada (`obterCelulaEsperada()`). A pose **não muda** |
+| 2. Mover | Controle de movimento ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)), com os motores da [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) | Gira até a direção e anda uma célula (18 cm) |
+| 3. Confirmar | Sensores, como a odometria dos encoders ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)), por `Navegacao::confirmarPose(pose)` | Informa a célula e a direção medidas; a pose medida passa a ser a pose da navegação |
+
+```mermaid
+stateDiagram-v2
+    [*] --> SemPasso
+    SemPasso --> PassoPendente: darPasso() decide a direção e registra a célula esperada
+    PassoPendente --> PassoPendente: confirmarPose() → EmAndamento (ainda na célula de origem)
+    PassoPendente --> PassoPendente: confirmarPose() → Invalida (pose fora do mapa, ignorada)
+    PassoPendente --> SemPasso: confirmarPose() → Confirmada (chegou à célula esperada)
+    PassoPendente --> SemPasso: confirmarPose() → Divergente (outra célula, replaneja a partir dela)
+```
+
+**Figura 10.** Estados de um passo na `Navegacao`: enquanto há passo pendente, `darPasso()` recusa um novo passo, e só a confirmação dos sensores conclui ou cancela o passo.
+
+| `ResultadoConfirmacao` | Quando | Efeito |
+|---|---|---|
+| `Confirmada` | A pose medida está na célula esperada (ou não havia passo pendente) | Adota a pose medida e conclui o passo |
+| `EmAndamento` | A pose medida ainda está na célula de origem | Adota a pose (por exemplo, a nova direção depois do giro) e mantém o passo pendente |
+| `Divergente` | A pose medida está em outra célula (patinagem, deriva) | Adota a pose medida e cancela o passo; o próximo `darPasso()` replaneja a partir dela |
+| `Invalida` | A pose medida está fora do mapa | Ignora a medida; a pose e o passo pendente não mudam |
+
+A pose medida é sempre a referência: a navegação nunca “teletransporta” o robô para a célula que ela mesma escolheu. Se uma roda patinar ou uma parede impedir o movimento, os sensores informam onde o robô de fato está, e a decisão seguinte parte dali.
+
+### Regras de Negócio e Algoritmo
+
+* **Leitura antes da decisão:** a decisão usa as paredes da célula atual que já estão no mapa. Por isso o ciclo da navegação deve ler os sensores de distância e atualizar o mapa (`AtualizadorMapa`, [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)) antes de cada `darPasso()`; se a leitura falhar, o robô não decide e lê de novo, em vez de avançar com a parede da frente desconhecida. Os testes nos labirintos simulados seguem essa ordem; na `tarefaNavegacao` ela entra com a integração ao movimento.
+* **Parede de trás:** os sensores de distância medem frente, esquerda e direita. A parede de trás é a passagem por onde o robô veio ou, na partida, a borda do labirinto, que o `Mapa` já conhece.
+* **Becos sem saída:** ao entrar num beco, as paredes reveladas aumentam a distância da célula, e o *flood fill* passa a apontar para trás; o robô volta sem precisar de regra especial.
+* **Sem custo de giro:** a distância conta células, não giros. O desempate pela frente reduz manobras, mas o caminho escolhido não é necessariamente o de menos curvas.
+* **Erros de sensor:** uma parede classificada como `Livre` por engano é tratada como passagem. A correção do erro acumulado pelas paredes é a [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188).
+
+### Interface da Classe
+
+* **Construtores:** `Navegacao(const Mapa&)`, com o objetivo no canto oposto e a partida em (0, 0) virada para o Norte; `Navegacao(const Mapa&, PosicaoCelula objetivo, Pose poseInicial)`, com objetivo e pose inicial escolhidos.
+* **`bool darPasso(Direcao& direcao)`:** decide e inicia um passo; `false` se já há passo pendente, se não há caminho ou se o robô já está no objetivo.
+* **`ResultadoConfirmacao confirmarPose(const Pose& poseMedida)`:** atualiza a pose com a medida dos sensores e a compara com o passo pendente.
+* **`bool passoPendente() const`** e **`PosicaoCelula obterCelulaEsperada() const`:** estado do passo, para o controle de movimento saber para onde levar o robô.
+* **`bool decidirProximaDirecao(Direcao& direcao)`:** só a decisão, sem iniciar passo; usada por `darPasso()`.
+* **`uint8_t obterDistancia(PosicaoCelula) const`:** distância calculada para uma célula; `DISTANCIA_INFINITA` (255) se inalcançável ou fora do mapa.
+* **`bool atingiuObjetivo() const`**, **`obterPose()`**, **`obterPosicao()`**, **`obterDirecao()`**, **`obterObjetivo()`:** consultas.
+* **`definirPose(const Pose&)`** e **`moverPara(linha, coluna, direcao)`:** reposicionam o robô sem comparar com um passo (por exemplo, na partida) e cancelam o passo pendente. **`definirObjetivo(PosicaoCelula)`** troca o objetivo e recalcula as distâncias.
+
+## Comunicação: serialização do mapa em JSON
+
+O módulo de comunicação (`lib/comunicacao`) implementa a classe `MapaJson`, responsável por converter o `Mapa` em JSON para o envio na telemetria com a biblioteca ArduinoJson ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)). O formato foi combinado com os nomes das colunas da tabela `mapa_celulas` do banco, para que a lista de células possa ser inserida nela só acrescentando o `corrida_id`. Como não depende do Arduino, a serialização é testada no ambiente `native`.
+
+```json
+{
+  "dimensao": "4x4",
+  "linhas": 4,
+  "colunas": 4,
+  "celulas": [
+    {"linha": 0, "coluna": 0, "parede_norte": null, "parede_sul": true,
+     "parede_leste": null, "parede_oeste": true}
+  ]
+}
+```
+
+**Figura 11.** JSON de um mapa 4×4 recém-criado (só o perímetro conhecido), formatado aqui para leitura: a saída real não tem espaços nem quebras de linha.
+
+| Campo | Valor |
+|---|---|
+| `dimensao` | `"4x4"`, `"8x4"` ou `"12x4"` (colunas × linhas, como `labirintos.tipo`) |
+| `linhas`, `colunas` | Tamanho do labirinto |
+| `linha`, `coluna` | Posição da célula, da linha 0 à última e, em cada linha, da coluna 0 à última; a partida é (0, 0) |
+| `parede_norte`, `parede_sul`, `parede_leste`, `parede_oeste` | `true` se há parede, `false` se está livre e `null` se ainda é desconhecida |
+
+### Regras de Negócio e Algoritmo
+
+* **Buffer do chamador:** `MapaJson::serializar(mapa, saida, capacidade)` escreve o JSON num buffer de tamanho fixo fornecido por quem chama, terminado em `\0`. A ArduinoJson usa memória dinâmica só durante a conversão e a libera ao final.
+* **Tamanho máximo:** `TAMANHO_MAX_JSON_MAPA` (5.100 bytes) é o maior tamanho, sem o `\0`, do JSON de um mapa 12×4 com as 48 células conhecidas e todas as paredes internas `Livre`. É o pior caso, porque `false` ocupa mais caracteres que `true` ou `null`, e o perímetro continua `true`. Esse buffer é maior que a pilha das tarefas (4.096 bytes), então precisa ser `static` ou global.
+* **Fail-safe de capacidade:** se o buffer não comporta o JSON inteiro, ou é nulo, ou tem capacidade zero, a função devolve `0` e deixa `saida` com uma string vazia, sem escrever além da capacidade informada.
+* **Imutabilidade e determinismo:** serializar não altera o `Mapa` (a telemetria só lê; a navegação segue com o mesmo mapa, HU-04), e duas serializações do mesmo mapa produzem o mesmo texto.
+
+### Interface da Classe
+
+* **Entrada:** `const Mapa &mapa`, `char *saida`, `size_t capacidade` (tamanho de `saida` em bytes, incluindo o `\0`)
+* **Saída:** `size_t`, o número de caracteres escritos sem o `\0`; `0` quando a serialização falha
+* **Mapa final:** `MapaJson::serializarFinal(const ArmazenamentoMapa &armazenamento, char *saida, size_t capacidade)` serializa o mapa congelado ao alcançar o objetivo, com as mesmas regras de buffer (veja [Mapeamento: mapa final da corrida](#mapeamento-mapa-final-da-corrida))
+
+## Navegação: odometria
+
+A `Odometria` (`lib/navegacao`) estima a **pose do robô**, isto é, a célula (linha e coluna) e a direção (Norte, Leste, Sul ou Oeste), a partir das contagens dos dois encoders ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187), HU-05). A arquitetura não tem IMU: a rotação vem da diferença entre as rodas e o avanço vem da média delas (odometria diferencial). A lógica não depende do Arduino e só usa inteiros, porque o ESP32-C3 não tem unidade de ponto flutuante.
+
+```mermaid
+flowchart LR
+    E["IEncoder esquerdo"] --> D["Δ esquerda − Δ direita<br/>(giro)"]
+    R["IEncoder direito"] --> D
+    E --> M["(Δ esquerda + Δ direita) ÷ 2<br/>(avanço)"]
+    R --> M
+    D --> H["Direção<br/>múltiplo de 90° mais próximo"]
+    H --> P["Posição na malha"]
+    M --> P
+    P --> C["Pose: célula e direção"]
+    H --> C
+```
+
+**Figura 12.** Da contagem dos encoders à pose: a diferença entre as rodas gira a direção, e a média das rodas avança o robô na direção atual.
+
+### Regras de Negócio e Algoritmo
+
+* **Convenção de sinal:** a contagem de cada roda aumenta quando ela avança (`IEncoder`). Girar para a direita (sentido horário, Norte para Leste) faz a roda esquerda avançar mais, então `contagem esquerda − contagem direita` cresce.
+* **Orientação:** o giro acumulado é a diferença entre as rodas dividida por `pulsosDiferenciaisPor90Graus`, arredondada para o múltiplo de 90° mais próximo. Uma roda um pouco mais rápida em linha reta não muda a direção, e a direção só passa para a seguinte depois de 45°.
+* **Posição:** o avanço (média dos deslocamentos das rodas) soma-se à posição na direção atual. A pose inicial é o centro da célula informada (partida em (0, 0)), e a célula muda ao cruzar a parede, a meia célula do centro. Um giro no lugar não muda a célula, e a marcha à ré funciona. Norte aumenta a linha e Leste aumenta a coluna.
+* **Limites:** fora de 0 a 255, a célula é limitada a esses valores e `posicaoValida()` devolve `false`. As contas usam inteiros de 64 bits, sem estouro.
+* **Reinício:** `reiniciar(pose, contagens)` reposiciona o robô e sincroniza a referência com contagens que não estão em zero, por exemplo depois de zerar os encoders.
+* **Erro acumulado:** a odometria acumula erro (patinagem, arredondamento). A correção pelas paredes é a [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188).
+
+**Parâmetros** (`ConfiguracaoOdometria.h`):
+
+| Parâmetro | Valor | Origem |
+|---|---|---|
+| Distância por pulso | 251 µm | π × 32 mm ÷ 400 pulsos por volta, do documento de parâmetros da eletrônica (roda de 32 mm; ver `ConfiguracaoEncoder.h`) |
+| Diferença de pulsos por giro de 90° | 625 (**provisório**) | Supõe bitola de 100 mm, que ainda não consta em nenhum documento; a calibração na bancada define o valor |
+| Tamanho da célula | 180 mm | `TAMANHO_CELULA_MM` |
+
+### Interface da Classe
+
+* **`Odometria(configuracao, inicial)`:** parâmetros e pose de partida (padrão: célula (0, 0) virada para o Norte).
+* **`void atualizar(int32_t contagemEsquerda, int32_t contagemDireita)`** e **`atualizar(const IEncoder&, const IEncoder&)`:** atualiza a pose a partir das contagens acumuladas.
+* **`Pose pose() const`:** célula e direção estimadas. **`bool posicaoValida() const`:** `false` se a posição saiu de 0 a 255.
+* **`void reiniciar(Pose, contagemEsquerda, contagemDireita)`:** define a pose e a referência das contagens.
+* **`letraDaDirecao(Direcao)`** (`Direcao.h`): `'N'`, `'L'`, `'S'` ou `'O'`, os valores da coluna `orientacao` do banco.
+
+**No `main.cpp`.** A tarefa de navegação chama `atualizar` a cada 10 ms, um intervalo curto o bastante para cada atualização trazer um giro ou um avanço, e não os dois. A tarefa de telemetria lê a pose e acrescenta à linha de JSON dos encoders os campos `linha`, `coluna`, `orientacao` e `pose_valida`. Como as duas tarefas usam a mesma `Odometria`, todo acesso passa por uma seção crítica. O comando `Z` da bancada zera os encoders e reinicia a odometria na pose atual.
+
+## Navegação: robustez da pose e do passo
+
+A revisão do algoritmo de resolução ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183), PR [#349](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/349)) encontrou dois problemas na `Navegacao` (`lib/navegacao`), corrigidos na [#357](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/357) (PR [#400](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/400)):
+
+1. **Leitura fora do vetor.** `definirPose`, `moverPara` e o construtor aceitavam qualquer célula. Com uma pose fora do mapa, `decidirProximaDirecao` lia `distancias_` fora dos limites (comportamento indefinido, confirmado com o AddressSanitizer). Isso pode acontecer na prática: a `Odometria` limita a célula a 0..255 quando o robô sai da malha, e o `ArmazenamentoMapa::iniciarCorrida` troca o mapa por outro tamanho, deixando a pose antiga fora do mapa novo.
+2. **Passo pendente que nunca terminava.** Se o sensor registrasse uma parede no caminho depois de o passo ser planejado, o robô continuava na origem, `confirmarPose` devolvia `EmAndamento` para sempre e `darPasso` recusava qualquer passo novo: o robô ficava parado.
+
+### Regras de Negócio e Algoritmo
+
+* **Toda pose é validada contra o mapa** (`Mapa::posValida`). Uma pose fora do mapa nunca é usada para ler o vetor de distâncias.
+
+| Entrada da pose | Com célula fora do mapa |
+|---|---|
+| `definirPose(pose)` | Devolve `false` e nada muda: a pose e o passo pendente continuam os anteriores |
+| `moverPara(linha, coluna, direcao)` | Mesmo comportamento (usa `definirPose`) |
+| Construtor com pose inicial | Ignora a célula e começa na partida (0, 0), mantendo a direção informada |
+| `confirmarPose(poseMedida)` | Devolve `Invalida` e nada muda (já era assim) |
+| Pose que ficou fora porque o mapa foi trocado | `decidirProximaDirecao` e `darPasso` devolvem `false`, sem ler o vetor |
+
+* **Passo bloqueado por parede:** se o robô ainda está na célula de origem e o mapa já mostra uma `Parede` entre a origem e a célula esperada, `confirmarPose` cancela o passo e devolve o novo resultado **`Bloqueado`**. O próximo `darPasso` replaneja a partir da pose atual.
+
+| Resultado de `confirmarPose` | Quando | O que acontece |
+|---|---|---|
+| `Confirmada` | Robô na célula esperada (ou sem passo pendente) | Adota a pose; o passo termina |
+| `EmAndamento` | Robô ainda na origem, sem parede no caminho | Adota a pose; o passo continua pendente |
+| **`Bloqueado`** | Robô ainda na origem e há parede no caminho | Adota a pose; **o passo é cancelado** para replanejar |
+| `Divergente` | Robô em outra célula | Adota a pose medida; o passo é cancelado para replanejar |
+| `Invalida` | Pose medida fora do mapa | Ignora a pose; nada muda |
+
+* **Ordem com o mapa da corrida:** a `Navegacao` guarda uma referência ao mapa e calcula o objetivo padrão (canto oposto à partida) na construção. Por isso, ela deve ser criada **depois** de `ArmazenamentoMapa::iniciarCorrida(...)`. Se o mapa for trocado por outro tamanho, é preciso chamar `definirObjetivo()` e `definirPose()` de novo.
+
+### Interface da Classe
+
+* **`bool definirPose(const Pose&)`** e **`bool moverPara(linha, coluna, direcao)`:** passaram de `void` para `bool`; `false` quando a célula está fora do mapa.
+* **`void cancelarPasso()`:** novo; cancela o passo pendente, e o próximo `darPasso()` replaneja.
+* **`ResultadoConfirmacao::Bloqueado`:** novo valor do resultado de `confirmarPose`.
+
+## Orientação: IMU e ângulo de giro
+
+> **Situação:** implementado e integrado ao firmware na `main` ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378), PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403)): a lógica do ângulo de giro, o driver do MPU6050, a tarefa da IMU e a trava do barramento I²C. Os testes rodam no computador, com um giroscópio simulado. **Ainda não houve leitura do sensor real**; a validação na placa faz parte da bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
+Na Rev 2.0 do hardware, o robô tem uma IMU **MPU6050** no mesmo barramento I²C dos três VL53L0X (SDA no GPIO9 e SCL no GPIO8, endereço 0x68). O firmware usa o **giroscópio do eixo Z**, que mede a taxa de giro em torno do eixo vertical, para saber quanto o robô girou (o ângulo de giro, ou *yaw*). É a base dos giros de 90° e 180° ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)) e da calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)).
+
+```mermaid
+flowchart LR
+    bus["BarramentoI2c<br/>(Wire + mutex)"] --- mpu["ImuMpu6050<br/>lê o eixo Z"]
+    mpu -->|"bruto → décimos de °/s<br/>(faixa ±500 °/s)"| acomp["AcompanhadorGiro<br/>calibra o viés na largada,<br/>conta as falhas"]
+    acomp --> integ["IntegradorGiro<br/>tira o viés, zona morta,<br/>soma taxa × dt"]
+    integ -->|"LeituraGiro<br/>(taxa, ângulo, validade)"| nav["Navegação e controle<br/>(giros de 90° e 180°)"]
+    sim["ImuSimulado<br/>(testes)"] -.->|"no lugar do MPU6050"| acomp
+```
+
+**Figura 13.** Do sensor ao ângulo de giro: a tarefa da IMU lê o MPU6050 pelo barramento compartilhado, o `AcompanhadorGiro` calibra o viés e o integrador soma a taxa ao longo do tempo. Nos testes, o `ImuSimulado` entra no lugar do MPU6050.
+
+### Regras de Negócio e Algoritmo
+
+* **Unidade e sinal:** a taxa é dada em **décimos de grau por segundo** (10 = 1 °/s), a mesma unidade usada na detecção de motor travado. É **positiva quando o robô gira para a esquerda** (anti-horário visto de cima) e negativa para a direita.
+* **Viés e calibração:** todo giroscópio parado mede um pequeno valor diferente de zero, o **viés**. Integrado, ele vira deriva: com 1,2 °/s de viés, o ângulo andaria 12° em 10 s com o robô parado. Por isso, na largada, com o robô parado, o integrador lê 200 amostras (2 s) e usa a média como viés. Se a maior e a menor amostra diferirem mais que 5 °/s, o robô provavelmente se mexeu: a calibração é **recusada** e o viés anterior continua.
+* **Zona morta:** depois de tirar o viés, taxas de até 0,3 °/s contam como zero, para o ruído do sensor parado não virar deriva.
+* **Integração:** a cada leitura (10 ms), o ângulo soma `taxa × dt`. A soma é guardada sem arredondar a cada ciclo, para frações pequenas não se perderem.
+* **Ângulo:** o ângulo é **acumulado** (um giro de 360° vale 360 000 mili-graus), o que facilita controlar um giro de 90°. Também há a versão **normalizada**, entre −180° e 180°.
+* **Só inteiros:** o ESP32-C3 não tem unidade de ponto flutuante, então todas as contas usam inteiros.
+* **Falhas de leitura:** uma leitura que falha (sensor sem resposta ou barramento ocupado) não soma nada ao ângulo e é contada. Depois de 5 falhas seguidas (50 ms sem leitura), o ângulo fica **inválido** até a próxima leitura boa: um giro de 300 °/s já andaria 15° sem ser contado.
+* **Calibração automática:** se o robô se mexer durante a calibração e ela for recusada, a calibração recomeça sozinha com as próximas amostras. O ângulo só é válido depois da calibração concluída.
+
+### Leitura na placa: tarefa da IMU e barramento compartilhado
+
+* **Driver (`ImuMpu6050`):** reinicia o sensor, confere o registrador `WHO_AM_I`, liga o filtro passa-baixa de 42 Hz, configura a faixa de ±500 °/s e lê só o eixo Z. Os registradores do MPU6050 ficam só no ambiente `esp32c3`.
+* **Tarefa da IMU:** lê o giroscópio a cada 10 ms, em intervalo fixo (`vTaskDelayUntil`), com **prioridade 3**, a maior do firmware. A leitura é curta (menos de 1 ms), e o ângulo só fica certo se o intervalo entre leituras não variar. As outras tarefas leem a última `LeituraGiro` por `lerGiro()`, copiada numa seção crítica.
+* **Barramento I²C compartilhado (`BarramentoI2c`):** a tarefa da IMU (MPU6050) e a de navegação (3 VL53L0X) usam o mesmo I²C. Uma transação não pode ser interrompida por outra, senão os bytes de um sensor se misturam com os do outro. Por isso toda transação segura um **mutex do FreeRTOS**. É mutex, e não seção crítica, porque o driver I²C do ESP32 depende das interrupções. Se o barramento não vier em até 8 ms, a leitura falha e é contada, em vez de atrasar a tarefa além do seu ciclo de 10 ms.
+* **Ordem no boot:** o `setup()` inicia o barramento (mutex e `Wire`), os VL53L0X e o autoteste do I²C ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)), e só depois a IMU e as tarefas. Sem a IMU, o firmware segue, sem ângulo de giro válido.
+
+| Parâmetro (`ConfiguracaoImu.h`) | Valor | Origem |
+|---|---|---|
+| Endereço I²C | 0x68 | Pino AD0 no GND, esquemático Rev 2.0 |
+| Faixa do giroscópio | ±500 °/s (65,5 LSB por °/s) | Um giro de 90° em 0,3 s passa de 300 °/s; ±250 °/s saturaria |
+| Período de leitura | 10 ms | Ciclo da tarefa de navegação |
+| Amostras da calibração | 200 (2 s) | **Provisório** |
+| Variação máxima na calibração | 5 °/s | **Provisório** |
+| Zona morta | 0,3 °/s | **Provisório**; ajustar com o ruído medido na bancada |
+| Falhas seguidas que invalidam o ângulo | 5 (50 ms) | Um giro de 300 °/s andaria 15° sem leitura |
+| Sensor de cabeça para baixo (`INVERTER_GIRO_Z`) | `false` | **Provisório**; confirmar na bancada girando o robô para a esquerda (taxa positiva) |
+| Frequência do I²C (`Configuracao.h`) | 100 kHz | **Provisório**; os sensores aceitam 400 kHz, falta confirmar os resistores de *pull-up* |
+| Espera máxima pelo barramento (`Configuracao.h`) | 8 ms | **Provisório**; menor que o ciclo de 10 ms |
+
+### Interface das Classes
+
+* **`IImu`** (`lib/hal`): `bool lerTaxaGiroZ(int16_t& taxaDecimosDps)`; `false` se o sensor não respondeu.
+* **`ImuSimulado`** (`lib/simulacao`): giroscópio falso para os testes, com `definirTaxa`, `definirVies`, `definirRuidoAlternado` e `simularFalha`.
+* **`converterBrutoParaDecimosDps(bruto, faixa)`** (`ConversorGiro.h`): converte a leitura bruta do MPU6050, com arredondamento.
+* **`IntegradorGiro`** (`lib/imu`): `iniciarCalibracao()`, `adicionarAmostraCalibracao(taxa)`, `atualizar(taxa, dtMs)`, `anguloMiligraus()`, `anguloNormalizadoMiligraus()` e `zerarAngulo()`.
+* **`valorGyroConfig(faixa)`, `juntarBytesGiro(alto, baixo)` e `ajustarSinalGiro(taxa, inverter)`** (`ConversorGiro.h`): os bits da faixa no registrador `GYRO_CONFIG`, os dois bytes do sensor em complemento de dois e a inversão de sinal do sensor de cabeça para baixo. Ficam fora do driver para serem testadas no computador.
+* **`AcompanhadorGiro`** (`lib/imu`): `iniciarCalibracao()`, `ciclo(dtMs)`, `ultima()` e `zerarAngulo()`; devolve a `LeituraGiro` (taxa sem o viés, ângulo, `valida`, estado da calibração, falhas de leitura e calibrações recusadas).
+* **`ImuMpu6050`** (`lib/drivers_esp32`): `iniciar()`, `identificacao()` e `lerTaxaGiroZ(taxa)`, implementando `IImu`.
+* **`BarramentoI2c`** (`lib/drivers_esp32`): `iniciar(sda, scl)`, `wire()`, `esperasEsgotadas()` e a classe `Uso`, que segura o barramento enquanto existir e o libera ao sair do escopo.
+
+## Navegação: detecção do objetivo e evento na telemetria
+
+O módulo de navegação (`lib/navegacao`) implementa a classe `DetectorObjetivo`, responsável por identificar o instante em que o robô alcança a célula de destino (canto diametralmente oposto à partida), acionar a parada imediata dos motores, disparar o congelamento do mapa final e sinalizar o evento pontual correspondente ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), HU-07 / RF-07).
+
+Em conjunto, a camada de comunicação (`lib/comunicacao`) provê a classe `TelemetriaJson`, que encapsula os dados de telemetria periódica e insere o evento pontual `"objetivo_alcancado"` em um único payload JSON transmitido via serial (USB nativa CDC), formatado com estrutura compatível com a tabela `telemetria` do Supabase para futura ingestão na nuvem ([#236](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/236)) e acompanhamento no dashboard web (HU-14).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant N as tarefaNavegacao (10 ms)
+    participant O as Odometria
+    participant D as DetectorObjetivo
+    participant M as IMotores (DRV8833)
+    participant A as ArmazenamentoMapa
+    participant T as tarefaTelemetria (100 ms)
+    participant J as TelemetriaJson
+    participant S as Serial (USB nativa CDC)
+
+    Note over N,A: Seção crítica com travaOdometria
+    N->>O: atualizar(encoderEsq, encoderDir)
+    N->>O: pose()
+    O-->>N: Pose (linha, coluna, direcao)
+    N->>D: processarChegada(pose, motores, &armazenamentoMapa)
+    alt Chegou à célula objetivo
+        D->>M: parar() [freio elétrico imediato]
+        D->>A: congelarMapa() [mapa final imutável]
+        D-->>N: true (alcancado_ = true, eventoChegadaPendente_ = true)
+    else Em trânsito
+        D-->>N: false
+    end
+    Note over T,S: Ciclo periódico de telemetria (100 ms)
+    T->>D: consumirEventoChegada() [dentro da travaOdometria]
+    D-->>T: true no 1º pacote após chegada / false nos seguintes
+    T->>J: serializar(PacoteTelemetria {..., evento: "objetivo_alcancado" ou null})
+    J-->>T: JSON formatado
+    T->>S: Serial.println(buffer)
+```
+
+**Figura 14.** Fluxo de detecção da célula objetivo: ao confirmar que a célula da pose coincide com o destino sob a seção crítica `travaOdometria`, o robô freia imediatamente, congela o mapa explorado e envia o evento pontual único pela telemetria serial.
+
+### Regras de Negócio e Algoritmo
+
+* **Cálculo da célula objetivo:**
+  O labirinto do micromouse inicia na célula `(0, 0)` no canto inferior esquerdo. O objetivo padrão do desafio situa-se no canto diametralmente oposto: linha `linhas - 1` e coluna `colunas - 1`.
+  * $4 \times 4$: célula objetivo em `(3, 3)`.
+  * $8 \times 4$: célula objetivo em `(3, 7)`.
+  * $12 \times 4$: célula objetivo em `(3, 11)`.
+  * Dimensões genéricas ou customizadas são calculadas por `DetectorObjetivo::calcularObjetivo(linhas, colunas)`. Caso alguma dimensão seja zero, retorna de forma segura `(0, 0)` (*fail-safe*).
+* **Critério de detecção na malha:**
+  A verificação de chegada (`alcancouObjetivo`) compara as coordenadas discretas `(linha, coluna)` da célula atual com a célula objetivo configurada. A detecção é **invariante à orientação**: o robô é considerado no objetivo independentemente de estar virado para Norte, Leste, Sul ou Oeste.
+* **Parada imediata dos motores e congelamento do mapa:**
+  Ao detectar que o robô adentrou a célula objetivo, o método `processarChegada` invoca imediatamente `motores.parar()`, aciona `armazenamento->congelarMapa()` e atualiza a flag interna `alcancado_ = true`. No driver de hardware (`MotoresDrv8833`), a parada atua via freio elétrico (entradas IN1 e IN2 em nível alto simultaneamente no DRV8833), eliminando a inércia mecânica e prevenindo ultrapassagens (*overshoot*).
+* **Idempotência do freio:**
+  Após a primeira detecção de chegada, o `DetectorObjetivo` comuta seu estado interno para `alcancado_ = true`. Em todos os ciclos subsequentes de 10 ms da `tarefaNavegacao`, qualquer invocação repetida de `processarChegada` mantém os motores travados em parada (`motores.parar()`), garantindo idempotência e prevenindo qualquer reacionamento de motores.
+* **Congelamento do mapa final:**
+  Caso seja fornecido o ponteiro para `ArmazenamentoMapa`, a chegada ao objetivo aciona automaticamente `armazenamento->congelarMapa()`. Isso cria uma cópia imutável das paredes exploradas até o momento da vitória ([#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180), HU-04), disponibilizando-a para serialização via `MapaJson::serializarFinal`.
+* **Emissão pontual de evento na telemetria:**
+  A estrutura `PacoteTelemetria` transporta as medições e os campos alinhados com a tabela `telemetria`. Para garantir que o evento de chegada seja estritamente **pontual** (uma única linha na telemetria), a `tarefaTelemetria` invoca `detectorObjetivo.consumirEventoChegada()` dentro da seção crítica `travaOdometria`. O campo `const char* evento` recebe `"objetivo_alcancado"` em apenas um único pacote imediatamente após a chegada; nos pacotes seguintes, o método retorna `false` e o campo permanece `nullptr`, sendo serializado como `null` no JSON. O comando serial de zeramento `'Z'` também limpa o evento pendente via `resetar()`.
+* **Reinício de corrida:**
+  O método `resetar()` restaura o indicador `alcancado_` e limpa qualquer evento pendente (`eventoChegadaPendente_ = false`), permitindo que novas corridas ou tentativas sejam iniciadas na mesma sessão sem necessidade de reiniciar o microcontrolador.
+
+### Interface das Classes
+
+#### `DetectorObjetivo` (`lib/navegacao`)
+
+* **`static PosicaoCelula calcularObjetivo(uint8_t linhas, uint8_t colunas)`:** calcula a coordenada `(linhas - 1, colunas - 1)`; devolve `(0, 0)` se alguma dimensão for nula.
+* **`static PosicaoCelula calcularObjetivo(DimensaoMapa dimensao)`:** calcula a coordenada correspondente para os labirintos pré-definidos (4×4, 8×4, 12×4).
+* **`static bool alcancouObjetivo(const PosicaoCelula& atual, const PosicaoCelula& objetivo)`:** devolve `true` se as coordenadas forem coincidentes.
+* **`explicit DetectorObjetivo(DimensaoMapa dimensao = DimensaoMapa::Labirinto4x4)`:** construtor padrão inicializado para a dimensão indicada.
+* **`explicit DetectorObjetivo(PosicaoCelula objetivo)`** e **`DetectorObjetivo(uint8_t linhas, uint8_t colunas)`:** construtores alternativos para célula ou dimensões arbitrárias.
+* **`bool alcancouObjetivo(const PosicaoCelula& atual) const`** e **`alcancouObjetivo(const Pose& pose) const`:** verifica se a célula/pose informada atingiu o objetivo configurado.
+* **`bool processarChegada(const Pose& pose, IMotores& motores, ArmazenamentoMapa* armazenamento = nullptr)`:** verifica a pose, freia os motores imediatamente caso atingido e congela o mapa em `ArmazenamentoMapa` se fornecido. Devolve `true` se o objetivo foi alcançado.
+* **`bool consumirEventoChegada()`:** consulta e consome a flag de evento pontual de chegada. Retorna `true` no primeiro consumo e `false` nos seguintes.
+* **`PosicaoCelula celulaObjetivo() const`** e **`void definirObjetivo(...)`:** consulta e atualização dinâmica da célula alvo.
+* **`bool objetivoAlcancado() const`:** consulta o status do objetivo.
+* **`void resetar()`:** zera o flag de objetivo alcançado e limpa eventos pendentes.
+
+#### `TelemetriaJson` (`lib/comunicacao`)
+
+* **`struct PacoteTelemetria`:** estrutura com campos alinhados à tabela `telemetria` do Supabase (`numeroSequencia`, `pose`, `velocidade`, `tensaoBateria`, `evento`) e diagnósticos de baixo nível (`pulsosEsq`, `pulsosDir`, `esqMm`, `dirMm`, `medioMm`, `poseValida`).
+* **`static size_t serializar(const PacoteTelemetria& pacote, char* saida, size_t capacidade)`:** serializa o pacote para formato JSON compacto. Devolve o total de bytes gravados (sem o `\0`) ou `0` caso o buffer seja insuficiente, nulo ou com capacidade zero (*fail-safe*).
+
+| Campo no JSON | Coluna na tabela `telemetria` | Descrição |
+|---|---|---|
+| `numero_sequencia` | `numero_sequencia` (INT) | Sequencial monotônico incremental por corrida |
+| `posicao_linha` | `posicao_linha` (INT) | Coordenada atual da linha na malha (0 a N-1) |
+| `posicao_coluna` | `posicao_coluna` (INT) | Coordenada atual da coluna na malha (0 a M-1) |
+| `orientacao` | `orientacao` (VARCHAR(2)) | Letra da direção: "N", "S", "L", "O" |
+| `velocidade` | `velocidade` (FLOAT) | Velocidade linear instantânea em m/s |
+| `tensao_bateria` | `tensao_bateria` (FLOAT) | Tensão instantânea da bateria em Volts |
+| `evento` | `evento` (VARCHAR(30)) | Evento pontual (`"objetivo_alcancado"`, `"colisao"` ou `null`) |
+
+**No `main.cpp`:**
+Na `tarefaNavegacao`, a atualização da pose e a chamada `detectorObjetivo.processarChegada(pose, motores, &armazenamentoMapa)` executam sob a seção crítica `travaOdometria`. Caso o objetivo seja alcançado, o loop mantém os motores freados. Na `tarefaTelemetria` (100 ms), o evento pontual é consumido de forma atômica (`detectorObjetivo.consumirEventoChegada()`) também sob `travaOdometria`, garantindo que apenas um pacote envie `"evento": "objetivo_alcancado"` pela Serial (USB CDC) e os pacotes seguintes recebam `null`. O comando serial `'Z'` reinicia a medição de deslocamento e zera o detector via `resetar()`.
+
+> [!NOTE]
+> A inicialização com `Labirinto4x4` no `main.cpp` é **provisória** para validação de bancada. Em labirintos 8x4 ou 12x4, o tamanho deve ser recebido por comando dinâmico antes de iniciar a corrida. A duplicidade entre a instância de `DetectorObjetivo` em `main.cpp` e o `detector_` interno de `Navegacao` será unificada quando a classe `Navegacao` assumir o controle do laço de controle.
+
+## Tarefas do FreeRTOS
+
+Criadas em `src/main.cpp`. Navegação e telemetria rodam de forma concorrente, como no diagrama de atividades: o ESP32-C3 tem um único núcleo, e o FreeRTOS alterna entre as tarefas conforme a prioridade de cada uma.
+
+| Tarefa | Período | Prioridade | Pilha | Responsabilidade |
+|---|---|---|---|---|
+| `tarefaNavegacao` | 10 ms | 2 | 4096 bytes | Ciclo percepção → decisão → atuação |
+| `tarefaTelemetria` | 1000 ms (`PERIODO_TELEMETRIA_MS`) | 1 | 4096 bytes | Coleta e envio de telemetria |
+
+A navegação tem prioridade maior para que o envio de dados nunca atrase o controle do robô. Por enquanto, as duas tarefas têm só o laço e a espera; a lógica entra nas tarefas das próximas sprints.
+
+## Atuação: centralização no corredor e parada frontal
+
+O módulo de atuação (`lib/atuacao`) leva o robô em linha reta mantendo-o no centro do corredor e o faz desacelerar e parar antes de uma parede frontal ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), PR [#359](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/359)). Atende aos critérios 1 e 2 da [HU-12](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/182) (RF-12). Como não depende do Arduino, é testado no ambiente `native`; só o driver do DRV8833 fica em `drivers_esp32`.
+
+```mermaid
+flowchart LR
+    lidar["Sensores de distância (ISensorDistancia)<br/>frente, esquerda, direita"] --> controle["ControleMovimento"]
+    controle --> lateral["ControladorCentralizacao<br/>correção lateral (PD)"]
+    controle --> frontal["PerfilParadaFrontal<br/>potência base"]
+    controle --> motores["IMotores<br/>potência de cada roda"]
+    motores -. implementa .-> drv["MotoresDrv8833<br/>PWM nos GPIO 4 a 7"]
+    motores -. implementa .-> sim["MotoresSimulados<br/>testes"]
+```
+
+**Figura 15.** Fluxo do controle de movimento: a cada leitura dos sensores de distância, a distância frontal define a potência base, as distâncias laterais definem a correção, e o resultado vai para os motores pela interface `IMotores`.
+
+### Geometria considerada
+
+| Medida | Valor | Origem |
+|---|---|---|
+| Célula do labirinto | 180 mm, já com a parede | `TAMANHO_CELULA_MM` e tema do PI1 |
+| Espessura da parede | 12 mm | Tema do PI1 |
+| Chassi | 100 mm de comprimento × 120 mm de largura | [Estruturas](estruturas.md) |
+| Distância do centro do robô a cada parede, centralizado | (180 − 12) / 2 = **84 mm** | `DISTANCIA_CENTRO_A_PAREDE_MM` |
+| Folga entre o chassi e cada parede, centralizado | 84 − 60 = **24 mm** | Calculada |
+| Folga até a parede da frente, parado no centro da célula | 84 − 50 = **34 mm** | Calculada |
+
+O cálculo foi feito para um único sensor no centro do robô, com o feixe abaixo do topo das paredes (5 cm). Na Rev 2.0, cada VL53L0X fica numa posição diferente do chassi, que a estrutura ainda vai informar; os limiares serão recalculados para os 3 sensores na [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379). A folga lateral é pequena: ao virar de volta para o centro, a traseira do chassi gira para o lado da parede. Por isso o controle corrige com ângulos pequenos e ganhos baixos.
+
+### Regras de Negócio e Algoritmo
+
+* **Erro lateral:** deslocamento do robô para a direita do centro, em mm. Com parede dos dois lados, é `(esquerda − direita) / 2`; só com a da esquerda, `esquerda − 84`; só com a da direita, `84 − direita`. Leituras acima de 180 mm contam como lado sem parede; sem parede nenhuma, não há correção e o robô segue reto.
+* **Correção PD:** `(20 × erro + 15 × derivada) / 10`, em unidades de potência, limitada a 250. A derivada é a variação do erro entre leituras, em mm/s, com filtro passa-baixa de 40% contra o ruído dos sensores de distância. Ela recomeça do zero quando a referência muda (por exemplo, quando uma parede lateral acaba), para não reagir ao salto da leitura.
+* **Aplicação nas rodas:** a correção é subtraída da roda esquerda e somada à direita (positiva vira para a esquerda) e nunca passa de 60% da potência base, para nenhuma roda girar para trás perto da parada.
+* **Parada frontal:** potência de cruzeiro (400 de 1000) até 264 mm da parede, rampa linear até a mínima (150) e parada a 84 mm, o centro da célula. Parado, o robô freia e fica travado até a navegação chamar `reiniciar()`.
+* **Fail-safe dos sensores de distância:** sem leitura válida, o robô segue reto na potência mínima e sem correção; depois de 500 ms sem leitura, freia.
+* **Motores:** potência de −1000 a 1000 por roda, positiva para a frente (a mesma convenção do `IEncoder`). O `MotoresDrv8833` usa PWM de 20 kHz e 10 bits, no modo *fast decay* do DRV8833, e freia ligando IN1 e IN2. O motor direito é invertido no `main.cpp`, pela montagem espelhada.
+
+Os ganhos, as potências e as distâncias de desaceleração estão em `ConfiguracaoControle.h` e são **provisórios**: foram ajustados numa simulação do corredor ([Testes de Software](../07-testes/software.md)) e precisam ser confirmados na bancada.
+
+### Interface da Classe
+
+* **`ControleMovimento::atualizar(ISensorDistancia&, IMotores&, dtMs)`:** lê os sensores de distância, calcula e aplica nos motores; chame uma vez por leitura nova (cerca de 100 ms). Devolve o `EstadoMovimento`: `Cruzeiro`, `Desacelerando`, `ParadoNaParede`, `SemLeitura` ou `ParadoSemLeitura`.
+* **`ControleMovimento::calcular(const DistanciasLaterais*, dtMs)`:** a mesma conta sem acessar o hardware; `nullptr` representa a falta de leitura. Devolve `PotenciaRodas` (`esquerda`, `direita`).
+* **`ControleMovimento::reiniciar()`:** destrava a parada e esquece o histórico da centralização, para um novo trecho reto.
+* **`ControladorCentralizacao::calcular(leitura, dtMs)`** e **`PerfilParadaFrontal::potenciaBase(frenteMm)`:** as duas partes, testadas separadamente.
+
+**Rastreabilidade:** `lib/atuacao` (`ControleMovimento`, `ControladorCentralizacao`, `PerfilParadaFrontal`, `SinaisDrv8833`), `lib/hal/IMotores`, `lib/simulacao/MotoresSimulados` e `lib/drivers_esp32/MotoresDrv8833` atendem à tarefa [#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), da [HU-12](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/182) (RF-12).
+
+**Pendências:** o critério 3 da HU-12 (teste de bancada no labirinto sem contato com as paredes) depende do chassi montado e da pista 4×4. O `ControleMovimento` ainda não está na tarefa de navegação: entra junto com os sensores de distância e a navegação ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)).
+
+## Testes
+
+Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. Cada módulo tem sua pasta `test/test_<modulo>/`.
+
+| Arquivo | Teste | Verifica |
+|---|---|---|
+| `test_nucleo/test_direcao.cpp` | `test_girar_direita_percorre_as_quatro_direcoes` | Norte → Leste → Sul → Oeste → Norte |
+| | `test_girar_esquerda_desfaz_girar_direita` | Giro à esquerda é o inverso do giro à direita |
+| | `test_oposta_inverte_a_direcao` | Norte ↔ Sul, Leste ↔ Oeste |
+| | `test_direcao_absoluta_converte_lado_do_robo_em_direcao_do_labirinto` | Frente, esquerda e direita com o robô virado para Leste |
+| `test_simulacao/test_sensor_distancia_simulado.cpp` | `test_sem_leitura_configurada_a_leitura_falha` | Sem configuração, a leitura falha |
+| | `test_leitura_fixa_se_repete_a_cada_chamada` | A leitura fixa se repete |
+| | `test_fila_entrega_as_leituras_em_ordem_e_depois_volta_para_a_fixa` | Fila em ordem e retorno à leitura fixa |
+| | `test_falha_simulada_retorna_false_e_nao_consome_a_fila` | Falha simulada não perde leituras da fila |
+| | `test_fila_cheia_recusa_novas_leituras` | Limite de 16 leituras |
+| | `test_pode_ser_usado_pela_interface_ISensorDistancia` | O simulado funciona por meio da interface |
+| `test_percepcao/test_classificador.cpp` | `test_classificador_parede_proxima` | Média <= 180 mm classificada como Parede |
+| | `test_classificador_passagem_livre` | Média > 180 mm classificada como Livre |
+| | `test_classificador_valor_no_limiar` | Limite exato de 180 mm |
+| | `test_classificador_limiar_configuravel` | Alteração e consulta do limiar dinâmico em tempo de execução |
+| | `test_classificador_leituras_com_ruido` | Atenuação de ruído via média |
+| | `test_classificador_vetor_vazio` | Vetor de amostras vazio assume Desconhecido por segurança (*fail-safe*) |
+| `test_atualizador_mapa/test_atualizador_mapa.cpp` | `test_registro_nova_parede` | Registra parede interior desconhecida como Registrada |
+| | `test_registro_parede_ja_conhecida` | Mesma leitura repetida retorna JaConhecida |
+| | `test_sem_conflito_ao_percorrer_labirinto` | Percorre células mantendo temConflito falso |
+| | `test_parede_desconhecida_nao_registrada` | Desconhecido não altera mapa e retorna Invalida |
+| | `test_parede_compartilhada_sem_conflito` | Paredes compartilhadas entre vizinhas coincidem |
+| | `test_mapa_final_identico_ao_labirinto_4x4` | Exploração completa gera mapa idêntico ao labirinto |
+| | `test_conflito_preserva_mapa_e_sinaliza_tem_conflito` | Conflito marca temConflito e preserva valor antigo |
+| | `test_conversao_direcoes_nas_quatro_orientacoes` | Conversão correta nas 4 orientações cardeais |
+| | `test_pose_fora_do_mapa_retorna_invalida` | Pose fora dos limites retorna Invalida |
+| | `test_sobrecarga_multiplas_amostras_com_classificador` | Sobrecarga com múltiplas amostras filtra ruído |
+| `test_integracao_mapa/test_integracao_mapa.cpp` | `test_mapa_final_identico_ao_labirinto_4x4` | Robô simulado explora labirinto 4×4 e mapa fica idêntico |
+| | `test_mapa_final_identico_ao_labirinto_8x4` | Robô simulado explora labirinto 8×4 e mapa fica idêntico |
+| | `test_mapa_final_identico_ao_labirinto_12x4` | Robô simulado explora labirinto 12×4 e mapa fica idêntico |
+| | `test_mapa_nao_e_identico_antes_de_explorar` | Mapa inicial difere do labirinto antes da exploração |
+| | `test_uma_celula_registra_so_as_tres_paredes_que_o_sensor_ve` | Registra apenas as paredes observadas na célula atual |
+| `test_json_mapa/test_json_mapa.cpp` | `test_mapa_vazio_4x4_tem_so_o_perimetro_conhecido` | Mapa novo: só o perímetro sai `true`, o resto `null` |
+| | `test_cabecalho_traz_dimensao_linhas_e_colunas` | Início do JSON do 12×4 traz `dimensao`, `linhas` e `colunas` corretos |
+| | `test_parede_livre_e_parede_viram_false_e_true` | `Parede` vira `true` e `Livre` vira `false` |
+| | `test_parede_registrada_aparece_nas_duas_celulas_vizinhas` | A mesma parede aparece espelhada nas duas células que ela separa |
+| | `test_json_tem_exatamente_os_campos_combinados_para_a_telemetria` | Objeto raiz com 4 campos e cada célula com 6, sem campo a mais ou a menos |
+| | `test_json_sai_compacto_sem_espacos_nem_quebras_de_linha` | Saída sem espaço, tab ou quebra de linha |
+| | `test_dimensao_combina_com_as_linhas_e_as_colunas_nos_tres_tamanhos` | `"4x4"/4/4`, `"8x4"/4/8` e `"12x4"/4/12` nos três tamanhos da competição |
+| | `test_serializa_mapa_4x4_completo` | Mapa 4×4 com todas as paredes internas: ida e volta bate célula a célula |
+| | `test_serializa_mapa_8x4` | Mapa 8×4 parcialmente preenchido: ida e volta bate célula a célula |
+| | `test_serializa_mapa_12x4_completo` | Mapa 12×4 com todas as paredes internas, dentro de `TAMANHO_MAX_JSON_MAPA` |
+| | `test_serializa_mapa_12x4_parcial` | Mapa 12×4 com poucas paredes conhecidas, como no meio de uma corrida |
+| | `test_mapa_12x4_completo_e_reconstruido_a_partir_do_json` | O JSON do 12×4 completo remonta um `Mapa` idêntico (`==`) ao original |
+| | `test_mapa_parcial_reconstruido_mantem_as_paredes_desconhecidas` | `null` volta como `Desconhecido`, não como `Livre`, na reconstrução |
+| | `test_serializar_nao_altera_o_mapa` | `serializar` não muda o `Mapa` original (HU-04) |
+| | `test_serializacoes_repetidas_do_mesmo_mapa_geram_o_mesmo_json` | Duas serializações do mesmo mapa produzem o mesmo texto |
+| | `test_pior_caso_cabe_em_tamanho_max_json_mapa` | 12×4 com todas as paredes `Livre` (o pior caso) cabe em `TAMANHO_MAX_JSON_MAPA`, com folga menor que 10% |
+| | `test_buffer_pequeno_devolve_zero_e_deixa_string_vazia` | Buffer pequeno demais devolve `0` e deixa string vazia |
+| | `test_buffer_com_o_tamanho_exato_serve_e_um_a_menos_nao` | Capacidade exata (JSON + `\0`) funciona; um byte a menos falha |
+| | `test_buffer_nulo_ou_sem_capacidade_devolve_zero` | Buffer nulo ou capacidade zero devolvem `0` |
+| | `test_nao_escreve_depois_do_fim_da_capacidade_informada` | Nada é escrito além da capacidade informada, no sucesso e na falha |
+| | `test_capacidade_de_um_byte_devolve_zero_e_string_vazia` | Capacidade de 1 byte devolve `0` e grava só o `\0` |
+| | `test_dimensao_fora_do_enum_sai_como_texto_vazio` | Valor fora do enum `DimensaoMapa` sai com `dimensao` vazio, sem travar (*fail-safe*) |
+| `test_armazenamento_mapa/test_armazenamento_mapa.cpp` | `test_congelamento_do_mapa` | Ciclo de vida do congelamento: recusa sem corrida e em dobro, isolamento do mapa final e destrave com nova corrida |
+| `test_mapa_final/test_mapa_final.cpp` | `test_congelamento_ao_sinalizar_objetivo` | Ao sinalizar o objetivo, o mapa é congelado uma única vez e guarda as paredes descobertas |
+| | `test_serializacao_mapa_final_formato_5_3_3` | `serializarFinal` recusa antes de congelar e, depois, gera o JSON da #178 (16 células no 4×4); buffer pequeno devolve `0` |
+| | `test_mapa_final_testado_no_labirinto_simulado` | Robô simulado vai de (0, 0) ao objetivo (3, 3) no labirinto 4×4, congela e serializa o mapa explorado |
+| | `test_mapa_final_permanece_inalterado_apos_novos_registros` | Escritas depois do congelamento mudam só o mapa da corrida; o JSON do mapa final continua idêntico |
+| `test_resolucao_mapa/test_resolucao_mapa.cpp` | `test_flood_fill_mapa_vazio_4x4` | Sem paredes internas, a distância de cada célula até (3, 3) é a de Manhattan; na partida, o empate escolhe a frente (Norte) |
+| | `test_contorno_parede_conhecida` | Com parede conhecida ao Norte da partida, a decisão é Leste |
+| | `test_sem_caminho_ate_objetivo` | Partida cercada por paredes: distância `DISTANCIA_INFINITA` e decisão recusada |
+| | `test_dar_passo_aguarda_confirmacao_dos_sensores` | `darPasso()` registra a célula esperada sem mudar a pose e recusa um segundo passo pendente |
+| | `test_confirmar_pose_em_andamento_e_chegada` | Pose na origem mantém o passo (`EmAndamento`); na célula esperada, conclui (`Confirmada`) |
+| | `test_confirmar_pose_divergente_replaneja` | Pose em outra célula é adotada (`Divergente`) e o passo seguinte replaneja a partir dela |
+| | `test_confirmar_pose_invalida_ignorada` | Pose fora do mapa é ignorada (`Invalida`): pose e passo pendente não mudam |
+| | `test_atingimento_de_objetivo` | No objetivo, não há decisão nem passo |
+| | `test_resolucao_labirinto_4x4_simulado` | Com o mapa vazio, o robô simulado vai de (0, 0) a (3, 3) no `LABIRINTO_4X4`, confirmando cada passo e sem atravessar parede real |
+| | `test_resolucao_labirinto_8x4_simulado` | O mesmo no `LABIRINTO_8X4`, até (3, 7) |
+| | `test_resolucao_labirinto_12x4_simulado` | O mesmo no `LABIRINTO_12X4`, até (3, 11) |
+| | `test_resolucao_com_falhas_de_leitura` | Com o sensor de distância falhando uma a cada 3 leituras, o robô não decide sem leitura e ainda chega ao objetivo do 4×4 |
+| `test_odometria/test_odometria.cpp` | `test_comeca_na_celula_0_0_virada_para_o_norte` | Pose inicial (0, 0) virada para o Norte e posição válida |
+| | `test_uma_celula_para_o_norte_aumenta_a_linha` | Uma célula de avanço sobe a linha em 1 |
+| | `test_a_celula_muda_ao_cruzar_a_parede_a_meia_celula` | A célula só muda depois de passar da parede, a meia célula do centro |
+| | `test_marcha_a_re_volta_a_celula_anterior` | Marcha à ré volta à célula anterior |
+| | `test_atualizar_de_uma_vez_ou_em_passos_da_o_mesmo_resultado` | Atualizar de uma vez ou em passos pequenos dá a mesma pose |
+| | `test_giro_de_90_graus_para_a_direita_vai_para_leste` | Giro de 90° à direita vira para o Leste |
+| | `test_giro_de_90_graus_para_a_esquerda_vai_para_oeste` | Giro de 90° à esquerda vira para o Oeste |
+| | `test_giro_de_180_graus_vira_para_o_sul_nos_dois_sentidos` | Giro de 180° vira para o Sul nos dois sentidos |
+| | `test_quatro_giros_para_a_direita_voltam_ao_norte` | Quatro giros à direita voltam ao Norte |
+| | `test_giro_no_lugar_nao_muda_a_celula` | Giro no lugar não muda a célula |
+| | `test_o_giro_so_passa_para_a_direcao_seguinte_depois_de_45_graus` | A direção só muda depois de 45° |
+| | `test_uma_roda_um_pouco_mais_rapida_nao_muda_a_direcao_em_linha_reta` | Uma roda um pouco mais rápida em linha reta não gira o robô |
+| | `test_percurso_em_L_dois_para_o_norte_e_dois_para_o_leste` | Percurso em L termina em (2, 2) virado para o Leste |
+| | `test_percurso_em_U_e_volta_a_linha_da_partida` | Percurso em U volta à linha da partida |
+| | `test_serpentina_pelo_labirinto_12x4` | Serpentina completa no 12×4 termina em (3, 0) virado para o Oeste |
+| | `test_erro_pequeno_em_cada_celula_nao_atrapalha_um_corredor_de_11_celulas` | Erro de 1% em uma roda não atrapalha um corredor de 11 células |
+| | `test_reiniciar_define_a_pose_e_usa_as_contagens_como_referencia` | `reiniciar` define a pose e a referência das contagens |
+| | `test_atualizar_le_os_dois_encoders` | Atualização lendo dois `EncoderSimulado` |
+| | `test_posicao_negativa_e_invalida_e_a_celula_fica_em_zero` | Posição negativa é inválida e a célula fica em 0 |
+| | `test_posicao_acima_de_255_celulas_e_invalida_e_satura` | Acima de 255 a posição é inválida e a célula satura |
+| | `test_contagem_muito_grande_nao_estoura` | Contagens extremas não estouram |
+| `test_nucleo/test_direcao.cpp` | `test_letra_da_direcao_segue_o_banco_de_dados` | `N`, `L`, `S` e `O` como na coluna `orientacao` |
+| `test_tof/test_tof.cpp` | `test_sem_amostras_a_leitura_falha` | Sem amostras, a leitura falha e a idade é desconhecida |
+| | `test_tres_amostras_validas_montam_a_leitura_por_lado` | Cada sensor vai para o seu campo de `DistanciasLaterais` |
+| | `test_classificacao_nos_limites_da_faixa` | 29 e 30 mm, 1200 e 1201 mm, e 8190, 8191 e 65535 mm |
+| | `test_falha_tem_prioridade_sobre_a_distancia` | Sensor sem resposta é `Falha`, qualquer que seja a distância |
+| | `test_sensor_com_falha_invalida_a_leitura` | Um sensor em falha invalida a leitura |
+| | `test_fora_de_alcance_vale_limitado_ao_maximo_e_fica_exposto_por_sensor` | "Sem alvo" (8190 mm) vale como 1200 mm, e a amostra bruta continua disponível |
+| | `test_abaixo_do_minimo_vale_limitado_ao_minimo` | Medida abaixo de 30 mm vale como 30 mm |
+| | `test_os_tres_lados_fora_da_faixa_ainda_montam_a_leitura` | Os três fora da faixa, cada um limitado ao seu extremo |
+| | `test_falha_derruba_a_leitura_mesmo_com_os_outros_fora_da_faixa` | A falha continua recusando a leitura |
+| | `test_leitura_fora_da_faixa_velha_tambem_falha` | A limitação não dispensa o limite de 100 ms |
+| | `test_sensor_que_nunca_mediu_invalida_a_leitura` | Faltando um sensor, a leitura falha |
+| | `test_a_idade_e_a_da_amostra_mais_antiga` | A idade da leitura é a do sensor mais atrasado |
+| | `test_leitura_velha_falha_e_volta_quando_chega_amostra_nova` | Limite exato de 100 ms; um sensor parado segura a leitura até voltar |
+| | `test_leitura_volta_depois_de_uma_falha` | Depois de uma falha, a próxima medida válida restaura a leitura |
+| | `test_idade_correta_quando_o_relogio_da_a_volta` | A idade continua certa quando o contador de ms volta a zero |
+| | `test_reiniciar_esquece_as_amostras` | `reiniciar()` volta todos os sensores a `SemAmostra` |
+| | `test_configuracao_altera_faixa_e_idade` | Faixa, limitação e idade vêm da `ConfiguracaoTof` |
+| `test_integracao_tof/test_integracao_tof.cpp` | `test_mapa_final_identico_ao_labirinto_4x4`, `_8x4` e `_12x4` | Pelas amostras brutas dos ToF, o mapa final fica igual ao labirinto |
+| | `test_corredores_sem_alvo_viram_passagem_livre_e_o_mapa_fecha` | 12×4 com corredores longos: "sem alvo" vira livre e a exploração cobre as 48 células |
+| | `test_amostra_bruta_e_a_distancia_da_face_do_sensor` | O `TofSimulado` entrega 30 mm a menos que a distância do centro |
+| | `test_sensor_sem_alvo_entrega_o_alcance_maximo` | Amostra de 8190 mm e leitura de 1200 mm |
+| | `test_sensor_encostado_registra_parede` | 12 mm na esquerda vira 30 mm e a parede entra no mapa sem conflito |
+| | `test_sensor_sem_resposta_nao_altera_o_mapa` | Sensor em falha: leitura recusada e mapa inalterado; volta ao religar |
+| `test_pinos/test_pinos.cpp` | `test_enderecos_dos_vl53l0x_conferem_com_a_issue_344` | Endereços 0x30, 0x31 e 0x32, distintos do 0x29 e do 0x68 |
+| `test_boot/test_boot.cpp` | `test_os_quatro_presentes_aprovam_o_boot` | Os 4 dispositivos `ok`, `WHO_AM_I` lido e nenhuma falha |
+| | `test_a_varredura_cobre_0x08_a_0x77` | A varredura consulta os 112 endereços da faixa |
+| | `test_cada_dispositivo_ausente_reprova_e_e_nomeado` | Cada um dos 4 ausente, um por vez: reprova e só ele é nomeado |
+| | `test_tof_que_responde_mas_nao_iniciou_reprova` | ToF presente sem configuração do driver fica `nao_iniciou` |
+| | `test_tof_iniciado_pelo_driver_mas_sem_resposta_fica_ausente` | O driver diz que iniciou, mas o sensor não responde: `ausente` |
+| | `test_todos_ausentes_listam_todas_as_falhas_em_ordem` | Barramento vazio lista os 4, na ordem |
+| | `test_outro_chip_no_0x68_nao_passa_por_mpu6050` | `WHO_AM_I` 0x70 no 0x68: `nao_identificado` |
+| | `test_who_am_i_que_nao_le_reprova` | Leitura do `WHO_AM_I` falha: `nao_identificado` |
+| | `test_who_am_i_aceito_vem_da_configuracao` | Outro `WHO_AM_I` aceito pela `ConfiguracaoBoot` |
+| | `test_tof_no_endereco_de_fabrica_reprova` | Alguém no 0x29 reprova, mesmo com os 4 presentes |
+| | `test_endereco_inesperado_so_avisa` | Um endereço a mais só entra em `inesperados` |
+| | `test_inesperados_alem_da_capacidade_so_entram_na_contagem` | Acima de 8 inesperados, só a contagem cresce |
+| | `test_enderecos_fora_da_faixa_varrida_sao_ignorados` | 0x00 e 0x7F não entram na varredura |
+| | `test_pior_caso_das_falhas_cabe_em_tamanho_max_falhas_boot` | Todas as falhas cabem em `TAMANHO_MAX_FALHAS_BOOT` |
+| | `test_falhas_que_nao_cabem_devolvem_texto_vazio` | Buffer pequeno ou nulo devolve 0 e texto vazio |
+| | `test_nomes_dos_estados` | Nomes dos estados e dos dispositivos no relatório |
+| | `test_prazo_de_2_s_do_rnf_09` | 2000 ms no prazo e 2001 ms fora; prazo configurável |
+| | `test_relatorio_do_boot_aprovado` | Relatório JSON de um boot aprovado |
+| | `test_relatorio_do_boot_com_falhas_e_atrasado` | Relatório com ToF ausente, IMU sem leitura, endereço a mais e boot de 2,5 s |
+| | `test_pior_caso_do_relatorio_cabe_e_buffer_pequeno_devolve_zero` | Pior caso cabe em 512 bytes; buffer pequeno devolve 0 |
+| | `test_trava_comeca_travada_e_freia_em_vez_de_andar` | A trava começa travada e transforma potência em freio |
+| | `test_trava_liberada_repassa_a_potencia` | Liberada, a potência chega ao driver |
+| | `test_travar_freia_na_hora_e_parar_sempre_passa` | `travar()` freia na hora; `parar()` sempre chega ao driver |
+| | `test_sequencia_do_boot_so_libera_os_motores_com_tudo_presente` | Como no `main.cpp`: sem a IMU os motores não andam; com tudo presente, andam |
+| `test_telemetria_json/test_telemetria_json.cpp` | `test_serializa_resultado_do_boot` | Campos `boot_ok`, `boot_falhas` e `boot_ms` |
+
+Para rodar, dentro de `src/firmware`:
+
+```bash
+pio test -e native                  # todos os testes
+pio test -e native -f test_nucleo   # só um módulo
+pio run -e esp32c3                  # compila para a placa
+```
+
+Resultado do projeto base, executado em 04/10/2026: **10 de 10 testes aprovados** e build para o ESP32-C3 concluído com 4,2% de RAM e 18,9% de Flash. O registro completo da execução (ambiente, saídas e pendências) está em [Testes de Software](../07-testes/software.md#registro-de-execucao-dos-testes).
+
+### Como ler uma falha
+
+Exemplo real, com um valor esperado alterado de propósito (registrado em [Testes de Software](../07-testes/software.md#verificacao-de-deteccao-de-falhas-teste-negativo)):
+
+```text
+test/test_nucleo/test_direcao.cpp:21: test_girar_direita_percorre_as_quatro_direcoes: Expected 2 Was 1  [FAILED]
+```
+
+| Parte | Significado |
+|---|---|
+| `test_direcao.cpp:21` | Arquivo e linha da verificação que falhou |
+| `test_girar_direita_percorre_as_quatro_direcoes` | Caso de teste que falhou |
+| `Expected 2 Was 1` | O teste esperava 2 (`Sul`) e o código devolveu 1 (`Leste`) |
+
+Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um erro, ou o teste espera um valor errado. Uma falha também faz o PlatformIO mostrar `Program received signal SIGHUP` e o status `ERRORED`, porque o programa de teste termina com o número de falhas como código de saída; isso não é um travamento.
+
+## Rastreabilidade
+
+| Parte do código | Tarefa | HU / requisito |
+|---|---|---|
+| Estrutura, camadas e padrão de testes | [#172](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/172) Projeto base do firmware | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
+| `ISensorDistancia`, `DistanciasLaterais` | Base para [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344) Driver dos VL53L0X (antes, [#173](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/173), do LiDAR) e [#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174) Classificação | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
+| `Direcao`, `direcaoAbsoluta`, `EstadoParede` | Base para [#176](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/176) Estrutura do mapa e [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177) Atualização do mapa | [HU-03](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/37) (RF03) |
+| `MAX_LINHAS_LABIRINTO`, `MAX_COLUNAS_LABIRINTO` | Base para [#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179) Mapa em memória | [HU-04](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/38) (RF04) |
+| `Pinos.h` (pinagem Rev 2.0) e log pela USB nativa | [#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377) Pinagem Rev 2.0 e placa Super Mini | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
+| `PERIODO_TELEMETRIA_MS`, `tarefaTelemetria` | Épico 03 (envio e *buffer*) | [HU-08](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/45), [HU-16](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/46) (RF08, RF16, RNF05) |
+| `LIMITE_TEMPO_CORRIDA_MS` | Épico 02 (encerramento por tempo) | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RNF03) |
+| `lib/percepcao` (`ClassificadorParede`) | [#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174) Classificação parede/livre | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
+| `lib/simulacao` (`LabirintoSimulado`) | [#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224) Simulador de labirinto | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
+| `lib/comunicacao` (`MapaJson`) | [#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178) Formato JSON do mapa | [HU-03](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/37) (RF03) |
+| `ArmazenamentoMapa::congelarMapa`, `mapaFinal`, `MapaJson::serializarFinal` | [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180) Mapa final serializado | [HU-04](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/38) (RF04) |
+| `lib/navegacao` (`Navegacao`) | [#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183) Algoritmo de resolução sobre o mapa | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
+| `lib/navegacao` (`Odometria`) | [#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187) Orientação e posição na malha | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
+| `lib/navegacao` (`DetectorObjetivo`), `lib/comunicacao` (`TelemetriaJson`) | [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189) Detecção da célula objetivo e evento na telemetria | [HU-07](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/43) (RF07) |
+| `lib/navegacao` (`Navegacao`: validação da pose, `cancelarPasso`, `Bloqueado`) | [#357](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/357) Robustez da navegação | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
+| `lib/tof` (`CombinadorTof`), `TofVl53l0x`, `ISensorDistancia::idadeUltimaLeituraMs`, endereços em `Pinos.h`, firmware e menu de bancada | [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344) Driver dos 3 sensores VL53L0X | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
+| `lib/inicializacao` (`AutotesteBoot`, `RelatorioBoot`), `IBarramentoI2c`, `BarramentoI2cEsp32`, `MotoresComTrava` | [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) |
+| `lib/hal` (`IImu`), `lib/simulacao` (`ImuSimulado`), `lib/imu` (`IntegradorGiro`, `ConversorGiro`, `AcompanhadorGiro`), `ImuMpu6050`, `BarramentoI2c`, tarefa da IMU no `main.cpp` | [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) Driver do MPU6050 e ângulo de giro | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
+
+## Próximos passos
+
+- **Simulador de labirinto** ([#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224)), concluído: a atualização do mapa ([#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)) já pode ser validada num labirinto simulado inteiro (veja [Labirinto simulado](#labirinto-simulado-labirintosimulado)).
+- **CI do firmware** ([#223](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/223)), concluído no PR [#295](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/295): todo PR para a `main` roda os testes nativos com cobertura mínima de 80% e o build do ESP32-C3. Os checks são obrigatórios na proteção da `main`. Com o PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391), o build também compila o `bancada_tof`, e o job "Scripts de bancada" roda os testes dos scripts de `scripts/`.
+- **Rev 2.0 do hardware:** pinagem concluída ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377)); em revisão, o driver dos 3 VL53L0X (PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391)), a IMU (PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403)) e a detecção de motor travado (PR [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396)); abertos, os limiares para os VL53L0X ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) e o deslocamento sem encoder ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)). A remoção do código do LiDAR (`lib/lidar`) e a troca do nome `ISensorDistancia` para um nome de sensor de distância ficam para um PR de código.
+- **Validar com o hardware:** a bancada da Rev 2.0 ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)): I²C com os 3 VL53L0X e o MPU6050, motores N20 e o tranco no boot pelos GPIO20/21 (veja [Pinagem](#pinagem)).
+- **Formato JSON do mapa** ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)): o formato foi validado com as outras equipes. O dashboard ([#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239)) aceitou o JSON e vai tratar `null` como área não explorada, e a tabela `mapa_celulas` passou a aceitar `null` nas colunas `parede_*` ([#228](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228), PR [#328](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/328)). Falta o envio de fato da lista de células ao banco, que entra com a telemetria (Épico 03).
+- **Mapa final serializado** ([#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180), PR [#330](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/330)), concluído: o mapa é congelado e serializado ao alcançar o objetivo e testado no labirinto simulado. Falta a navegação chamar `congelarMapa()` quando detectar o objetivo (Épico 02) e o envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), no Épico 03.
+- **Algoritmo de resolução sobre o mapa** ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)), concluído: a `Navegacao` decide o próximo passo por *flood fill* com o mapa parcial e foi testada nos labirintos simulados 4×4, 8×4 e 12×4 (veja [Navegação: algoritmo de resolução do labirinto](#navegacao-algoritmo-de-resolucao-do-labirinto)). Falta ligar a navegação ao robô: o controle de movimento ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) executa a direção decidida, e a odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187), PR [#343](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/343)) informa a pose a `confirmarPose()`, dentro de `tarefaNavegacao`.
+- **Detecção do objetivo** ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), PR [#351](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/351)), concluídos: o robô detecta a chegada à célula objetivo (canto diametralmente oposto à partida), freia os motores imediatamente via DRV8833, congela o mapa explorado através de `congelarMapa()` e emite o evento `objetivo_alcancado` na telemetria JSON periódica. Falta o envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), no Épico 03.
+- **Odometria** ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)): a lógica, os testes no computador e a ligação no `main.cpp` estão prontos. Falta a bancada: medir os pulsos de diferença entre as rodas num giro de 90° (hoje 625, provisório), testar giros de 90° e 180° e um percurso de 3 células, e registrar o erro.
+- **Sensores VL53L0X** ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): o driver, a regra de validade (com fora da faixa limitado à faixa), o teste de integração com o mapa e a ligação no `main.cpp` estão prontos, e o build da placa compila. Falta rodar o roteiro da [bancada](#bancada-dos-vl53l0x) com o hardware montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)) e trocar os valores provisórios de `ConfiguracaoTof.h` pelos medidos. Dependem desta tarefa a percepção para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), a calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), o boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e a recuperação de falhas do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
+- **Boot do sistema** ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): o autoteste do I²C, a trava dos motores e o relatório estão prontos e testados no computador com dispositivos simulados. Falta a bancada: medir o tempo desde o ligar (o `boot_ms` não conta a ROM nem o bootloader), conferir o `WHO_AM_I` do módulo montado e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (0x68).
+
+## Histórico de versões
+
+| **Versão** | **Data** | **Descrição** | **Autor(es)** | **Revisor(es)** |
+|:----------:|:--------:|---------------|---------------|-----------------|
+| 0.1 | 04/10/2026 | Projeto base: camadas, ambientes, tipos, pinagem, `ILidar` e `LidarSimulado`, tarefas do FreeRTOS e testes ([#172](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/172)) | Ana Carolina Fialho | — |
+| 0.2 | 05/10/2026 | Classificação parede/livre ([#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174)) | Rafael Lima | — |
+| 0.3 | 07/10/2026 | Início do labirinto simulado ([#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224)) | Ana Carolina Fialho | — |
+| 0.4 | 13/10/2026 | Labirinto simulado concluído; ajustes do classificador; atualização do mapa ([#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224), [#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174), [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)) | Cláudio Henrique, Rafael Lima | — |
+| 0.5 | 16/10/2026 | Formato JSON do mapa e sua validação; mapa final serializado ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178), [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) | Marllon Fausto, Cláudio Henrique, Eduardo Viana | — |
+| 0.6 | 19/10/2026 | Odometria; centralização no corredor e parada frontal ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187), [#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191)) | Cláudio Henrique, Eduardo Viana | — |
+| 0.7 | 22/10/2026 | Algoritmo de resolução; detecção do objetivo e evento na telemetria ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183), [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) | Rafael Lima | — |
+| 1.0 | 23/10/2026 | Atualização para a Rev 2.0 do hardware: seção nova, pinagem conferida com o esquemático, sensores de distância VL53L0X no lugar do LiDAR, pastas e próximos passos; criação deste histórico ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)) | Ana Carolina Fialho | — |
+| 1.1 | 24/10/2026 | Driver dos 3 VL53L0X: ligação, endereços, regra de validade com fora da faixa limitado, bancada e seus testes no CI, `TofSimulado` e integração com o mapa; interface renomeada para `ISensorDistancia` ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) | Marllon Fausto | — |
+| 1.2 | 24/10/2026 | Boot do sistema: autoteste do I²C, trava dos motores e relatório do boot; camadas dos motores com nome próprio e ordem combinada com as #341 e #380; integração do I²C com o #403 ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) | Marllon Fausto | — |

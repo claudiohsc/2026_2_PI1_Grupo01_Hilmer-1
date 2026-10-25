@@ -17,14 +17,15 @@ src/firmware/
 | Pasta em `lib/` | Camada | O que entra |
 |---|---|---|
 | `nucleo` | Base | Tipos compartilhados (`Direcao`, `Lado`, `EstadoParede`, `PosicaoCelula`, `Pose`, `DistanciasLaterais`), constantes e pinagem |
-| `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar` e, nos próximos épicos, encoders e motores) |
+| `hal` | Interfaces de hardware | Interfaces abstratas (`ILidar`, `IEncoder` e, nos próximos épicos, motores) |
 | `percepcao` | Percepção | Classificação `parede`/`livre` a partir das distâncias do LiDAR |
+| `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
-| `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula) e armazenamento em memória |
-| `navegacao` | Navegação | Localização, decisão de movimento e detecção do objetivo |
+| `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula), atualização a partir das leituras classificadas e armazenamento em memória |
+| `navegacao` | Navegação | Localização (`Odometria`), algoritmo de resolução do labirinto por *flood fill* (`Navegacao`, [#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)) e detecção do objetivo (`DetectorObjetivo`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) |
 | `atuacao` | Atuação | Controle dos motores e correção de trajetória |
-| `comunicacao` | Comunicação | Pacotes de telemetria, serialização JSON e *buffer* de reenvio |
-| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, e `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, sem hardware |
+| `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
+| `simulacao` | Falsos para teste | `LidarSimulado`, um `ILidar` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `LidarSimulado`, e `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, sem hardware |
 | `drivers_esp32` | Implementações do hardware | Drivers que dependem do Arduino (LiDAR por UART, encoders, DRV8833, WiFi) |
 
 ## Regras de dependência
@@ -65,7 +66,101 @@ Mapa& paraNavegacao = armazenamentoMapa.mapa();                  // lê e regist
 const Mapa& paraTelemetria = armazenamentoMapa.mapa();           // só lê (pelo acesso const)
 ```
 
-O armazenamento não pode ser copiado, e o acesso `const` impede que a telemetria altere o mapa; as duas regras são conferidas em tempo de compilação. Medido no ESP32-C3, o objeto ocupa **196 bytes** de RAM estática (`.bss`): 195 do mapa e 1 do indicador de corrida.
+O armazenamento não pode ser copiado, e o acesso `const` impede que a telemetria altere o mapa; as duas regras são conferidas em tempo de compilação.
+
+#### Mapa final da corrida
+
+Ao alcançar a célula objetivo, a navegação chama `congelarMapa()`. O armazenamento copia o mapa da corrida para um segundo `Mapa`, o **mapa final**, que a partir daí só é lido: a navegação pode continuar registrando paredes no mapa da corrida (por exemplo, no caminho de volta) sem mudar o resultado ([#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180), HU-04).
+
+```cpp
+if (chegouAoObjetivo) {
+  armazenamentoMapa.congelarMapa();  // true na primeira vez; false se já estava congelado
+}
+
+static char json[TAMANHO_MAX_JSON_MAPA + 1];
+size_t tamanho = MapaJson::serializarFinal(armazenamentoMapa, json, sizeof(json));  // 0 se ainda não congelou
+```
+
+| Regra | Comportamento |
+|---|---|
+| Congelar antes de `iniciarCorrida()` | Recusado: `congelarMapa()` devolve `false` |
+| Congelar de novo | Recusado: devolve `false`, e o mapa final continua o da primeira vez |
+| `mapaFinal()` | `nullptr` enquanto não congelou; depois, o mapa final, só para leitura |
+| Escritas depois de congelar | Mudam só o mapa da corrida (`mapa()`); o mapa final e o JSON dele não mudam |
+| Nova corrida | `iniciarCorrida()` destrava o congelamento, e `mapaFinal()` volta a ser `nullptr` |
+| `serializarFinal()` | O mesmo JSON de `serializar()` (formato da [#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)), mas do mapa final; devolve `0` e deixa a string vazia se o mapa não foi congelado ou se o buffer não comporta o JSON |
+
+**Memória.** Com o mapa final, o objeto passou de 196 para **392 bytes** (`sizeof` no computador): dois mapas de 195 bytes e os dois indicadores, de corrida iniciada e de mapa congelado. O limite do teste `test_armazenamento_ocupa_pouca_memoria` subiu de 256 para 512 bytes. Antes do mapa final, a medida no ESP32-C3 era de 196 bytes de RAM estática (`.bss`), igual ao `sizeof`.
+
+## Atualização do mapa
+
+O `AtualizadorMapa` (`lib/mapeamento`) integra a percepção ao mapa: a partir da `Pose` do robô e da classificação das leituras (`ClassificadorParede`), converte as direções relativas (`Frente`, `Esquerda`, `Direita`) para as direções absolutas do mapa (`Norte`, `Leste`, `Sul`, `Oeste`) e atualiza as paredes no `Mapa`.
+
+```cpp
+Mapa mapa;
+Pose pose = {{0, 0}, Direcao::Norte};
+ClassificadorParede classificador;
+
+// Sobrecarga de conveniência: recebe amostras do LiDAR e classifica antes de atualizar
+DistanciasLaterais amostras[3] = { {80, 400, 420}, {85, 390, 410}, {90, 410, 400} };
+ResultadoAtualizacao res = AtualizadorMapa::atualizar(mapa, pose, classificador, amostras, 3);
+```
+
+| Regra | Comportamento |
+|---|---|
+| Conversão de eixos | Converte `Frente`, `Esquerda` e `Direita` da `Pose` para as direções cardeais absolutas |
+| `Desconhecido` | Leituras desconhecidas não alteram o mapa e retornam `Invalida` |
+| Conflitos | Se uma leitura contradiz o mapa, `temConflito` é marcado como `true`, retorna `Conflito` e o valor antigo do mapa é preservado; a política de navegação fica com quem chama (#188) |
+| Pose inválida | Coordenadas fora dos limites do mapa retornam `Invalida` para todas as direções |
+
+## Odometria
+
+A `Odometria` (`lib/navegacao`) estima a pose do robô (célula e direção) pela odometria diferencial dos encoders: a diferença entre as rodas gira a direção, e a média avança o robô na direção atual. A arquitetura não tem IMU. Não depende do Arduino e só usa inteiros.
+
+```cpp
+Odometria odometria;                              // parte em (0, 0), virada para o Norte
+odometria.atualizar(encoderEsq, encoderDir);      // a cada ciclo, com os dois IEncoder
+Pose pose = odometria.pose();                     // célula e direção
+char letra = letraDaDirecao(pose.direcao);        // 'N', 'L', 'S' ou 'O', como no banco
+```
+
+| Regra | Comportamento |
+|---|---|
+| Giro | `contagem esquerda − contagem direita` dividida por `pulsosDiferenciaisPor90Graus`, arredondada para o múltiplo de 90° mais próximo; só muda a direção depois de 45° |
+| Avanço | Média das duas rodas, na direção atual; a célula muda ao cruzar a parede, a meia célula do centro |
+| Giro no lugar | Não muda a célula |
+| Fora da malha | A célula fica limitada a 0 e 255, e `posicaoValida()` devolve `false` |
+| Reinício | `reiniciar(pose, contagemEsquerda, contagemDireita)` define a pose e a referência das contagens |
+| Parâmetros | `ConfiguracaoOdometria.h`: 251 µm por pulso (roda de 32 mm, 400 pulsos por volta) e **625 pulsos por 90° (provisório)**, a calibrar na bancada |
+
+No `main.cpp`, a tarefa de navegação atualiza a odometria a cada 10 ms, e a telemetria acrescenta `linha`, `coluna`, `orientacao` e `pose_valida` à linha de JSON dos encoders.
+
+## Serialização do mapa em JSON
+
+O `MapaJson` (`lib/comunicacao`) converte o `Mapa` em JSON (ArduinoJson) para o envio na telemetria. Não depende do Arduino, então é testado no ambiente `native`.
+
+```cpp
+char buffer[TAMANHO_MAX_JSON_MAPA + 1];
+size_t tamanho = MapaJson::serializar(mapa, buffer, sizeof(buffer));
+// {"dimensao":"4x4","linhas":4,"colunas":4,"celulas":[{"linha":0,"coluna":0,
+//  "parede_norte":null,"parede_sul":true,"parede_leste":null,"parede_oeste":true}, ...]}
+```
+
+| Campo | Valor |
+|---|---|
+| `dimensao` | `"4x4"`, `"8x4"` ou `"12x4"` (colunas × linhas, como `labirintos.tipo`) |
+| `linhas`, `colunas` | Tamanho do labirinto |
+| `linha`, `coluna` | Posição da célula; a partida é (0, 0) |
+| `parede_norte`, `parede_sul`, `parede_leste`, `parede_oeste` | `true` se há parede, `false` se está livre e `null` se ainda é desconhecida |
+
+Os nomes dos campos das células são os das colunas da tabela `mapa_celulas` do banco, então a lista pode ser inserida nela, acrescentando só o `corrida_id`.
+
+| Regra | Comportamento |
+|---|---|
+| Saída | Compacta, sem espaços nem quebras de linha, terminada em `\0` |
+| Buffer | Do chamador, de tamanho fixo; a ArduinoJson só usa memória dinâmica durante a conversão, liberada ao final |
+| `TAMANHO_MAX_JSON_MAPA` (5.100 bytes) | Pior caso: um 12×4 com as 48 células conhecidas e todas as paredes internas `Livre` (`false` ocupa mais caracteres que `true` ou `null`; o perímetro continua `true`). Maior que a pilha das tarefas (4.096 bytes), por isso precisa ser `static` ou global |
+| Capacidade insuficiente, ou `saida` nulo/capacidade zero | Devolve `0` e deixa `saida` com string vazia, sem escrever além da capacidade informada |
 
 ## Labirinto simulado
 
@@ -93,6 +188,92 @@ lidar.lerDistanciasLaterais(d);                // d = {630, 90, 90} (frente, esq
 | `temParede(celula, direcao)` | `true` se há parede naquele lado; célula fora do labirinto conta como parede |
 | `distancias(pose, saida)` | Distâncias à frente, à esquerda e à direita para a pose; `false` sem carga ou com a célula fora do labirinto |
 | `LidarSimulado::usarLabirinto` e `posicionar` | Liga o modo labirinto. A falha e a fila continuam com prioridade; sem `posicionar`, vale a leitura fixa; com a pose fora do labirinto, a leitura falha |
+
+## Resolução do labirinto (navegação)
+
+A `Navegacao` (`lib/navegacao`) decide para qual célula vizinha o robô deve ir para chegar ao objetivo, usando o que o `Mapa` sabe sobre as paredes ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183), HU-01). O objetivo padrão é o canto oposto à partida: (3, 3) no 4×4, (3, 7) no 8×4 e (3, 11) no 12×4. Ela **não aciona os motores**: devolve a direção e a célula esperada, e só muda a pose do robô quando os sensores a confirmam.
+
+**Como a direção é escolhida**, a cada passo:
+
+1. ***Flood fill*:** uma busca em largura a partir do objetivo dá a cada célula a distância, em células, até ele.
+2. **Mapa otimista:** só parede confirmada (`Parede`) bloqueia; `Livre` e `Desconhecido` contam como passagem. Assim o algoritmo funciona com o mapa parcial e desvia de cada parede nova no cálculo seguinte, refeito a cada decisão.
+3. **Menor distância:** vai para a vizinha alcançável mais próxima do objetivo. No empate: frente, direita, esquerda e trás, nessa ordem, para evitar giros.
+
+**Como um passo acontece:** decidir, mover e confirmar.
+
+```cpp
+Navegacao navegacao(armazenamentoMapa.mapa());   // partida (0, 0) virada para o Norte
+
+// a cada ciclo da tarefa de navegação
+if (!navegacao.passoPendente()) {
+  // 1. ler o LiDAR e atualizar o mapa na célula atual (AtualizadorMapa)
+  Direcao direcao;
+  if (navegacao.darPasso(direcao)) {
+    // 2. o controle de movimento (#184) gira até `direcao` e anda até navegacao.obterCelulaEsperada()
+  }
+}
+// 3. os sensores confirmam onde o robô está (ex.: odometria, #187)
+ResultadoConfirmacao r = navegacao.confirmarPose(odometria.pose());
+```
+
+| Regra | Comportamento |
+|---|---|
+| `darPasso()` | Decide a direção e registra a célula esperada; a pose **não muda**. Devolve `false` se já há passo pendente, se não há caminho ou se o robô já está no objetivo |
+| `confirmarPose()` → `Confirmada` | Pose medida na célula esperada (ou sem passo pendente): adota a pose e conclui o passo |
+| `confirmarPose()` → `EmAndamento` | Pose medida ainda na célula de origem: adota a pose e mantém o passo pendente |
+| `confirmarPose()` → `Divergente` | Pose medida em outra célula: adota a pose medida, cancela o passo, e o próximo `darPasso()` replaneja a partir dela |
+| `confirmarPose()` → `Invalida` | Pose fora do mapa: ignorada, a pose e o passo não mudam |
+| Objetivo inalcançável | Com as paredes conhecidas fechando o caminho, a distância é `DISTANCIA_INFINITA` (255) e não há decisão |
+| Memória | Distâncias numa matriz fixa 4×12 e fila estática de 48 posições, sem alocação dinâmica |
+
+Detalhes e o diagrama de estados do passo em [Firmware: navegação](../../docs/04-projeto-conceitual/firmware.md#navegacao-algoritmo-de-resolucao-do-labirinto).
+
+## Detecção do objetivo e conclusão do desafio
+
+O `DetectorObjetivo` (`lib/navegacao`) identifica o instante em que o robô chega à célula de destino (canto diametralmente oposto à partida) a partir da pose estimada pela odometria ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), HU-07 / RF-07):
+
+```cpp
+DetectorObjetivo detector(DimensaoMapa::Labirinto4x4); // Objetivo em (3, 3)
+
+// A cada ciclo da tarefa de navegação:
+if (detector.processarChegada(pose, motores, &armazenamentoMapa)) {
+  // Motores freados imediatamente e mapa final congelado
+}
+```
+
+| Critério de aceite | Solução implementada |
+|---|---|
+| Chegada detectada na malha | `DetectorObjetivo::calcularObjetivo` determina a célula oposta (`linhas - 1, colunas - 1`) para 4×4 (`(3, 3)`), 8×4 (`(3, 7)`), 12×4 (`(3, 11)`) ou dimensões customizadas, comparando com a célula atual estimada pela odometria independente da orientação |
+| Motores parados imediatamente | Ao detectar a chegada, aciona `motores.parar()` (freio elétrico instantâneo via DRV8833), congela o mapa final (`ArmazenamentoMapa::congelarMapa()`) e marca a flag interna de conclusão com idempotência |
+| Congelamento do mapa final | `ArmazenamentoMapa::congelarMapa()` salva a imagem imutável das paredes exploradas para telemetria e persistência (HU-04, [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) |
+| Evento pontual na telemetria | `DetectorObjetivo::consumirEventoChegada()` sinaliza e consome a chegada pontual, fazendo `TelemetriaJson` incluir `"evento": "objetivo_alcancado"` em um único pacote serializado após a chegada, voltando a `null` nos pacotes subsequentes |
+
+> [!NOTE]
+> **Transmissão serial e telemetria:** o payload JSON gerado por `TelemetriaJson` é transmitido pela Serial (USB nativa CDC) do ESP32-C3. O envio por Wi-Fi e a persistência direta no Supabase (#236) ocorrerão quando a camada de rede for integrada no Épico 03.
+>
+> **Dimensão do labirinto em `main.cpp`:** a inicialização com `Labirinto4x4` no `main.cpp` (tanto em `detectorObjetivo` quanto em `armazenamentoMapa.iniciarCorrida`) é **provisória** para bancada e testes iniciais. Em labirintos 8x4 ou 12x4 a chegada só é detectada se o tamanho correto for configurado. A seleção definitiva do tamanho será recebida dinamicamente no início da corrida.
+>
+> **Sincronização entre tarefas:** `processarChegada`, `consumirEventoChegada` e `resetar` acessam o estado de detecção e odometria sob a seção crítica `travaOdometria`, garantindo thread-safety entre `tarefaNavegacao` (10 ms) e `tarefaTelemetria` (100 ms).
+>
+> **Arquitetura dos detectores:** atualmente coexistem duas instâncias (`Navegacao::detector_` para planejamento BFS/Flood Fill e `detectorObjetivo` em `main.cpp` para o laço do firmware). Ambas serão unificadas e a API de construtores será simplificada quando `Navegacao` for incorporada diretamente ao laço da tarefa FreeRTOS.
+
+### Telemetria e compatibilidade com o banco de dados
+
+O serializador `TelemetriaJson` (`lib/comunicacao`) gera payloads pela serial formatados para futura ingestão compatível com a tabela `telemetria` do Supabase e diagnósticos de bancada:
+
+| Campo JSON | Tabela `telemetria` (Supabase) | Descrição |
+|---|---|---|
+| `numero_sequencia` | `numero_sequencia` (INT) | Sequencial monotônico incremental |
+| `posicao_linha` | `posicao_linha` (INT) | Coordenada atual da linha na malha (0 a N-1) |
+| `posicao_coluna` | `posicao_coluna` (INT) | Coordenada atual da coluna na malha (0 a M-1) |
+| `orientacao` | `orientacao` (VARCHAR(2)) | Letra da direção: "N", "S", "L", "O" |
+| `velocidade` | `velocidade` (FLOAT) | Velocidade linear instantânea (m/s) |
+| `tensao_bateria` | `tensao_bateria` (FLOAT) | Tensão instantânea da bateria (V) |
+| `evento` | `evento` (VARCHAR(30)) | Evento pontual (`"objetivo_alcancado"`, `"colisao"` ou `null`) |
+
+Campos diagnósticos adicionais (`esq_pulsos`, `dir_pulsos`, `esq_mm`, `dir_mm`, `medio_mm`, `pose_valida`) são transmitidos na serial para calibração de bancada e scripts locais (como `calibrar_deslocamento_18cm.py`).
+
+Para mais detalhes, consulte [Firmware: implementação](../../docs/04-projeto-conceitual/firmware.md#navegacao-deteccao-do-objetivo-e-evento-na-telemetria) e o registro de execução dos 14 testes em [Testes de Software](../../docs/07-testes/software.md#sprint-4-deteccao-do-objetivo-e-evento-na-telemetria).
 
 ## Instalação
 
