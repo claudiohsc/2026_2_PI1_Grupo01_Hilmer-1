@@ -47,11 +47,13 @@ describe('App no modo ao vivo (integração com Supabase simulado)', () => {
   it('com corrida real, o cabeçalho mostra o labirinto dela e trava o seletor, mesmo depois de concluída', async () => {
     clienteSimulado.definirTabela('corridas', [corridaSimulada({ id: 40, labirinto_id: 1, numero_tentativa: 3 })]);
     render(<App />);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'CORRIDA EM ANDAMENTO' })).toBeInTheDocument());
+    await waitFor(() => expect(seletor()).toHaveValue('4x4'));
 
-    expect(seletor()).toHaveValue('4x4');
+    // A corrida criada depois da calibração aguarda a largada; o seletor já fica travado.
+    expect(screen.getByRole('button', { name: 'AGUARDANDO LARGADA DO ROBÔ' })).toBeInTheDocument();
     expect(seletor()).toBeDisabled();
 
+    // O Realtime simulado atualiza o estado do React: a inserção entra num `act`.
     await act(async () => {
       await clienteSimulado
         .from('telemetria')

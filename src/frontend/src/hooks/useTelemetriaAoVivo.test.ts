@@ -131,7 +131,7 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
   it('conclui quando o robô envia objetivo_alcancado', async () => {
     largar(corridaSimulada({ id: 6 }));
     const { result } = renderHook(() => useTelemetriaAoVivo());
-    await waitFor(() => expect(result.current.estado).toBe('em_execucao'));
+    await waitFor(() => expect(result.current.corrida?.id).toBe(6));
 
     await enviar(leituraSimulada(1, { corrida_id: 6, tempo_decorrido: 42.3, evento: 'objetivo_alcancado' }));
     expect(result.current.estado).toBe('concluido');
@@ -141,7 +141,7 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
   it('encerra como não concluído ao passar de 10:00', async () => {
     largar(corridaSimulada({ id: 8 }));
     const { result } = renderHook(() => useTelemetriaAoVivo());
-    await waitFor(() => expect(result.current.estado).toBe('em_execucao'));
+    await waitFor(() => expect(result.current.corrida?.id).toBe(8));
 
     await enviar(leituraSimulada(1, { corrida_id: 8, tempo_decorrido: 601 }));
     expect(result.current.estado).toBe('nao_concluido');
@@ -155,7 +155,8 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
     await act(async () => {
       await clienteSimulado.from<Corrida>('corridas').insert(corridaSimulada({ id: 10 }));
     });
-    expect(result.current.estado).toBe('em_execucao');
+    expect(result.current.corrida?.id).toBe(10);
+    expect(result.current.estado).toBe('aguardando');
 
     await act(async () => {
       clienteSimulado.emitirRealtime('corridas', 'UPDATE', corridaSimulada({ id: 10, status: 'nao_concluida', tempo_final: 75 }));
@@ -176,7 +177,8 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
     clienteSimulado.definirErro('telemetria', 'falha simulada');
     const { result } = renderHook(() => useTelemetriaAoVivo());
     await waitFor(() => expect(result.current.erro).toMatch(/telemetria/));
-    expect(result.current.estado).toBe('em_execucao');
+    expect(result.current.corrida?.id).toBe(11);
+    expect(result.current.estado).toBe('aguardando');
   });
 
   it('mostra erro se a busca da corrida de uma leitura nova falhar, e tenta de novo na próxima', async () => {
@@ -213,7 +215,7 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
   it('recebe atualizações de células do mapa em tempo real via Realtime (#239)', async () => {
     largar(corridaSimulada({ id: 26 }));
     const { result } = renderHook(() => useTelemetriaAoVivo());
-    await waitFor(() => expect(result.current.estado).toBe('em_execucao'));
+    await waitFor(() => expect(result.current.corrida?.id).toBe(26));
 
     await act(async () => {
       await clienteSimulado
@@ -233,7 +235,8 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
     clienteSimulado.definirErro('mapa_celulas', 'falha simulada ao ler mapa');
     const { result } = renderHook(() => useTelemetriaAoVivo());
     await waitFor(() => expect(result.current.erro).toMatch(/mapa da corrida/));
-    expect(result.current.estado).toBe('em_execucao');
+    expect(result.current.corrida?.id).toBe(27);
+    expect(result.current.estado).toBe('aguardando');
   });
 
   it('cada montagem usa canais com nome próprio (o supabase-js reaproveita canal de mesmo nome)', () => {
@@ -247,7 +250,7 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
   it('no StrictMode (montar, desmontar, montar) continua recebendo as leituras', async () => {
     largar(corridaSimulada({ id: 14 }));
     const { result } = renderHook(() => useTelemetriaAoVivo(), { wrapper: StrictMode });
-    await waitFor(() => expect(result.current.estado).toBe('em_execucao'));
+    await waitFor(() => expect(result.current.corrida?.id).toBe(14));
 
     await enviar(leituraSimulada(1, { corrida_id: 14 }));
     expect(result.current.leituras).toHaveLength(1);
@@ -257,12 +260,53 @@ describe('useTelemetriaAoVivo (integração com Supabase simulado)', () => {
   it('ao desmontar, remove o canal e para de reagir', async () => {
     largar(corridaSimulada({ id: 13 }));
     const { result, unmount } = renderHook(() => useTelemetriaAoVivo());
-    await waitFor(() => expect(result.current.estado).toBe('em_execucao'));
+    await waitFor(() => expect(result.current.corrida?.id).toBe(13));
 
     unmount();
     await act(async () => {});
     expect(clienteSimulado.obterCanais()).toHaveLength(0);
     await enviar(leituraSimulada(1, { corrida_id: 13 }));
     expect(result.current.leituras).toHaveLength(0);
+  });
+
+  it('Aguardando Largada: a corrida criada depois da calibração fica aguardando, com o robô parado na partida', async () => {
+    const { result } = renderHook(() => useTelemetriaAoVivo());
+    await act(async () => {});
+
+    largar(corridaSimulada({ id: 30 }));
+    await enviar(leituraSimulada(1, { corrida_id: 30, estado_corrida: 'aguardando', velocidade: 0, tempo_decorrido: 0 }));
+    await waitFor(() => expect(result.current.corrida?.id).toBe(30));
+
+    expect(result.current.estado).toBe('aguardando');
+    expect(result.current.tempo).toBe(0);
+    expect(result.current.leituras).toHaveLength(1);
+    expect(result.current.leituras[0]).toMatchObject({ posicao_linha: 0, posicao_coluna: 0, estado_corrida: 'aguardando' });
+  });
+
+  it('Aguardando Largada: o painel continua aguardando a cada leitura de largada e larga na primeira de corrida', async () => {
+    const { result } = renderHook(() => useTelemetriaAoVivo());
+    await act(async () => {});
+    largar(corridaSimulada({ id: 31 }));
+    await enviar(leituraSimulada(1, { corrida_id: 31, estado_corrida: 'aguardando', velocidade: 0, tempo_decorrido: 0 }));
+    await waitFor(() => expect(result.current.corrida?.id).toBe(31));
+
+    await enviar(leituraSimulada(2, { corrida_id: 31, estado_corrida: 'aguardando', velocidade: 0, tempo_decorrido: 0 }));
+    expect(result.current.estado).toBe('aguardando');
+
+    await enviar(leituraSimulada(3, { corrida_id: 31, estado_corrida: 'explorando', velocidade: 0.15, tempo_decorrido: 0.4 }));
+    expect(result.current.estado).toBe('em_execucao');
+    expect(result.current.tempo).toBe(0.4);
+    expect(result.current.leituras.map((l) => l.numero_sequencia)).toEqual([1, 2, 3]);
+  });
+
+  it('Aguardando Largada: ao abrir a tela com o robô já aguardando, carrega as leituras e continua aguardando', async () => {
+    clienteSimulado.definirTabela('corridas', [corridaSimulada({ id: 32 })]);
+    clienteSimulado.definirTabela('telemetria', [
+      leituraSimulada(1, { corrida_id: 32, estado_corrida: 'aguardando', velocidade: 0, tempo_decorrido: 0 }),
+    ]);
+    const { result } = renderHook(() => useTelemetriaAoVivo());
+
+    await waitFor(() => expect(result.current.leituras).toHaveLength(1));
+    expect(result.current.estado).toBe('aguardando');
   });
 });
