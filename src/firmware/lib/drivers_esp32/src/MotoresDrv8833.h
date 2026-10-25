@@ -8,20 +8,21 @@
 
 #include <Arduino.h>
 
+#include "ConfiguracaoMotores.h"
 #include "IMotores.h"
 
 namespace micromouse {
 
-/// Frequência do PWM dos motores: 20 kHz, acima do audível e dentro do limite do DRV8833.
-constexpr uint32_t FREQUENCIA_PWM_MOTORES_HZ = 20000;
-
-/// Resolução do PWM dos motores: 10 bits (duty de 0 a 1023).
-constexpr uint8_t RESOLUCAO_PWM_MOTORES_BITS = 10;
-
 /// Driver dos motores M1 (roda esquerda) e M2 (roda direita) pelo DRV8833.
 ///
 /// Cada motor usa duas entradas com PWM (IN1 e IN2). Até `iniciar()` ser chamado, os comandos
-/// são ignorados. `iniciar()` deixa os motores freados.
+/// são ignorados. `iniciar()` deixa os motores freados: primeiro põe os quatro pinos em nível alto
+/// como saídas comuns (freio) e só depois liga o PWM, já com duty total (freio também), para a roda
+/// não dar tranco nem girar solta no boot.
+///
+/// A potência máxima (`POTENCIA_MAXIMA`) vira o duty `DUTY_MAXIMO_MOTORES` (`ConfiguracaoMotores.h`),
+/// e não 100%: o limite protege o N20 enquanto a tensão do VM não é conhecida. O freio sempre usa
+/// o duty total.
 ///
 /// O motor montado espelhado deve ser invertido no construtor. Confira na bancada: com
 /// `definirPotencia({300, 300})`, as duas rodas precisam girar para a frente.
@@ -36,7 +37,8 @@ class MotoresDrv8833 : public IMotores {
   MotoresDrv8833(uint8_t esquerdaIn1, uint8_t esquerdaIn2, uint8_t direitaIn1, uint8_t direitaIn2,
                  bool inverterEsquerda, bool inverterDireita);
 
-  /// Configura o PWM dos quatro pinos e freia os motores. Chame no `setup()`.
+  /// Freia os motores e configura o PWM dos quatro pinos. Chame na **primeira linha** do `setup()`:
+  /// até lá, GPIO20/21 (UART0) ficam com o que a ROM deixou (ver README, "Tranco no boot").
   void iniciar();
 
   /// @copydoc IMotores::definirPotencia
