@@ -161,6 +161,21 @@ void test_serializa_resultado_do_boot() {
   TEST_ASSERT_EQUAL_UINT32(640, doc["boot_ms"].as<uint32_t>());
 }
 
+void test_serializa_a_fase_do_robo() {
+  PacoteTelemetria pacote;
+  char buffer[CAPACIDADE];
+  JsonDocument doc;
+
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)));
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_EQUAL_STRING("", doc["fase"].as<const char*>());  // não informada
+
+  pacote.fase = "aguardando_largada";
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)));
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_EQUAL_STRING("aguardando_largada", doc["fase"].as<const char*>());
+}
+
 void test_pior_caso_cabe_em_tamanho_max_json_telemetria() {
   PacoteTelemetria pacote;
   pacote.numeroSequencia = UINT32_MAX;
@@ -184,6 +199,7 @@ void test_pior_caso_cabe_em_tamanho_max_json_telemetria() {
   pacote.bootOk = false;
   pacote.falhasBoot = "tof_esquerdo,tof_frontal,tof_direito,mpu6050,tof_0x29";
   pacote.bootMs = UINT32_MAX;
+  pacote.fase = "aguardando_calibracao";
 
   char buffer[TAMANHO_MAX_JSON_TELEMETRIA];
   const size_t bytes = TelemetriaJson::serializar(pacote, buffer, sizeof(buffer));
@@ -216,6 +232,7 @@ int main(int, char**) {
   RUN_TEST(test_serializa_campos_de_diagnostico_do_tof);
   RUN_TEST(test_serializa_campos_do_deslocamento_estimado);
   RUN_TEST(test_serializa_resultado_do_boot);
+  RUN_TEST(test_serializa_a_fase_do_robo);
   RUN_TEST(test_pior_caso_cabe_em_tamanho_max_json_telemetria);
   RUN_TEST(test_buffer_insuficiente_retorna_zero);
   RUN_TEST(test_buffer_nulo_ou_capacidade_zero);
