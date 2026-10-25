@@ -2564,3 +2564,279 @@ Para conferir se os testes detectam erros, e não só passam, 13 alterações pr
 
 - Comparação visual com os Frames `04_History_View_M1` a `M3`: capturas da tela com cada filtro anexadas ao PR de código.
 - Índice em `corridas.labirinto_id` no banco (sugestão para o backend; sem efeito com poucas corridas).
+
+---
+
+### Sprint 5 · Execução dos movimentos entre células
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#184 Execução dos movimentos entre células](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184) |
+| História de usuário | HU-01 · Algoritmo de resolução ([#42](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42)), RF01 |
+| Código testado | `src/firmware` (branch `feat/184-execucao-movimentos`, sobre a `main`; commit `f6a30c3`) |
+| Data da execução | 25/10/2026 |
+| Executado por | m4rllon |
+| Documentação do código | [Firmware: execução dos movimentos entre células](../04-projeto-conceitual/firmware.md#navegacao-execucao-dos-movimentos-entre-celulas) |
+
+Esta etapa registra os comandos de movimento, o ciclo da navegação e o gatilho da largada, testados no computador, inclusive com um robô simulado que anda de verdade nos labirintos. A medida do erro de deslocamento no robô montado (critério 3) depende da bancada e está nas pendências.
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 22.04.5 LTS, kernel 6.8) |
+| PlatformIO | Core 6.2.0 |
+| Compilador (`native`) | g++ 11.4.0 (C++17) |
+| Framework de testes | Unity 2.6.1 |
+| Cobertura | gcov 11.4.0 e gcovr 8.6 |
+| Scripts de bancada | Python 3.13.5 (`unittest`) |
+
+#### Critérios de pronto da #184
+
+| Critério | Como foi atendido | Verificação |
+| :--- | :--- | :--- |
+| Comandos "avançar uma célula", "girar 90°" e "girar 180°" implementados | `ExecutorMovimentos`: o avanço vai até o centro da próxima célula, com rampa e parada frontal; os giros vão até o rumo alvo absoluto pelo giroscópio. Reaproveita o `ControleMovimento` (#191) e o `ControleGiro` (#190) | `test_avanco_*`, `test_parede_na_frente_*`, `test_giro_*`; `test_avancar_uma_celula_tres_vezes_no_corredor`, `test_girar_90_e_180_no_lugar` |
+| Integrados ao algoritmo de resolução | `CicloNavegacao`: percepção no centro da célula → mapa → `Navegacao::darPasso()` → giro e avanço → `confirmarPose()`, ligado na tarefa de navegação do `main.cpp` com a permissão provisória (boot, giroscópio e gatilho da largada) | `test_ciclo_*`; corridas completas `test_corrida_no_4x4_chega_ao_objetivo`, `_8x4` e `_12x4` |
+| Erro de deslocamento medido em bancada e registrado | Na simulação, o erro foi medido e está registrado abaixo. A bancada ganhou os comandos `CELULA n`, `GIRO90E`, `GIRO90D` e `GIRO180` e as etapas 7 e 8 do `scripts/bancada_deslocamento.py`, que registram o erro na régua e no transferidor | `test_bancada_deslocamento.py`. **Medida no robô montado pendente** (abaixo) |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/execucao/src/ExecutorMovimentos.h/.cpp` | Avançar uma célula, girar 90° e 180°; conversão da leitura do ToF para o centro do robô |
+| `lib/execucao/src/CicloNavegacao.h/.cpp` | Ciclo percepção → mapa → decisão → atuação, com as falhas e a permissão para mover |
+| `lib/execucao/src/GatilhoLargada.h/.cpp` | Largada pelo gesto da mão na frente do ToF frontal ou pelo comando serial |
+| `lib/execucao/src/Movimento.h` | Os comandos e a conversão da direção absoluta em giro |
+| `lib/execucao/src/ConfiguracaoExecucao.h` | Parâmetros provisórios do avanço, da percepção e do gatilho |
+| `lib/navegacao/src/Odometria.h/.cpp` | `definirDirecao`: a direção do giroscópio entra sem mexer na posição |
+| `lib/atuacao/src/ControleMovimento.h/.cpp` | `definirTetoPotenciaBase`: desaceleração antes do centro sem parede à frente |
+| `lib/mapeamento/src/Mapa.h/.cpp` | `corrigirParede`: grava a parede em que o avanço parou, mesmo com conflito |
+| `lib/simulacao/src/RoboSimulado.h/.cpp` | Robô em posição contínua no labirinto: rodas, giroscópio, 3 raios de ToF e colisão do chassi |
+| `src/main.cpp` | Ciclo da navegação e gatilho da largada na tarefa de navegação; direção da odometria pelo giroscópio; comandos `Z` e `L` |
+| `src/bancada/bancada_deslocamento.cpp`, `scripts/bancada_deslocamento.py` | MPU6050, comandos `CELULA n`, `GIRO90E`, `GIRO90D`, `GIRO180` e `CALIBRAR`; etapas 7 e 8 do menu |
+| `test/test_execucao_movimentos/`, `test/test_integracao_execucao/`, `scripts/testes/test_bancada_deslocamento.py` | Suítes novas (45, 11 e 11 casos) |
+| `test/test_odometria/`, `test/test_controle_movimento/`, `test/test_mapeamento/` | Dois casos novos em cada uma |
+
+#### Testes unitários (ambiente native)
+
+```bash
+pio test -e native -f test_execucao_movimentos
+```
+
+Entradas montadas à mão (leituras, posição e ângulo) e `MotoresSimulados`, sem física.
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_giro_ate_cada_direcao` | Da direção atual para cada direção desejada: nenhum giro, 90° para cada lado ou 180° | 1, 2 | Aprovado |
+| `test_direcao_depois_de_cada_movimento` | Direção depois de cada movimento; nas 16 combinações, o giro de `giroAte` chega à direção pedida | 1, 2 | Aprovado |
+| `test_variacao_de_rumo_segue_o_giroscopio` | +90° à esquerda, −90° à direita e +180° no 180°, como o giroscópio | 1 | Aprovado |
+| `test_nomes_para_o_log` | Nomes de movimentos, estados, falhas e etapas do gatilho para o log | 2 | Aprovado |
+| `test_executor_comeca_ocioso_e_nao_aceita_dois_movimentos` | Ocioso não comanda os motores; um segundo movimento é recusado | 1 | Aprovado |
+| `test_avanco_anda_em_cruzeiro_e_para_no_centro_da_proxima_celula` | Cruzeiro 400, rampa (275 faltando 30 mm) e parada a 3 mm do centro, freado | 1 | Aprovado |
+| `test_avanco_mira_o_centro_seguinte_ao_mais_proximo` | 20 mm antes do centro: destino a 200 mm; −30 mm: 210 mm; −100 mm: 100 mm | 1 | Aprovado |
+| `test_avanco_que_passa_do_destino_tambem_conclui` | Passando 15 mm do centro, conclui com −15 mm | 1 | Aprovado |
+| `test_avanco_mantem_o_comando_entre_leituras_e_espera_a_primeira` | Freado até a primeira leitura; entre leituras, repete o último comando | 1 | Aprovado |
+| `test_avanco_converte_a_leitura_para_o_centro_do_robo` | 34/54/60 mm da face viram 84/84/90 mm do centro; sem estouro do `uint16_t` | 1 | Aprovado |
+| `test_avanco_centraliza_no_corredor` | Mais perto da parede direita, a roda direita recebe mais | 1 | Aprovado |
+| `test_avanco_corrige_o_rumo_pelo_giroscopio_sem_paredes` | Sem paredes, 5° fora do rumo corrige pelo giroscópio; sem giroscópio, segue reto | 1 | Aprovado |
+| `test_parede_na_frente_perto_do_destino_conclui` | Parada pela parede a 20 mm do destino conta como chegada | 1 | Aprovado |
+| `test_parede_na_frente_longe_do_destino_falha` | Parede logo na saída: `ParedeNaFrente`, freado | 1, 2 | Aprovado |
+| `test_sem_leitura_do_tof_falha_e_freia` | 50 ciclos (500 ms) sem leitura nova: `SemLeituraTof`, freado | 1 | Aprovado |
+| `test_avanco_que_nao_chega_esgota_o_tempo` | Robô preso: `TempoEsgotado` em 200 ms (configurado) | 1 | Aprovado |
+| `test_cancelar_freia_e_volta_a_ocioso` | Cancelar freia, volta a `Ocioso` e não comanda mais | 1 | Aprovado |
+| `test_giro_90_esquerda_vai_ao_rumo_alvo` | Roda esquerda recua e direita avança; termina a até 2° de +90° | 1 | Aprovado |
+| `test_giro_90_direita_e_180` | −90° e, em seguida, 180° até +90° absolutos | 1 | Aprovado |
+| `test_giro_mira_o_rumo_absoluto_e_nao_acumula_erro` | Com o robô 3° fora, o alvo é 90° absolutos (erro de 87°, e não 90°) | 1 | Aprovado |
+| `test_definir_rumo_alvo` | Rumo de referência definido e somado ao próximo giro | 1 | Aprovado |
+| `test_giro_sem_giroscopio_espera_parado_e_desiste_no_tempo_limite` | Sem giroscópio, freado e `GiroTempoEsgotado` em 100 ms (configurado) | 1 | Aprovado |
+| `test_giro_preso_esgota_o_tempo` | O ângulo não muda: `GiroTempoEsgotado`, freado | 1 | Aprovado |
+| `test_giro_que_perde_o_giroscopio_no_meio_freia` | Giroscópio inválido no meio do giro: freia e espera | 1 | Aprovado |
+| `test_cancelar_um_giro` | Cancelar o giro deixa o `ControleGiro` inativo e freia | 1 | Aprovado |
+| `test_gesto_completo_dispara_depois_da_espera` | Livre → coberto 400 ms → livre → 1 s: dispara e fica disparado | 2 | Aprovado |
+| `test_vulto_rapido_nao_conta` | Coberto 200 ms (menos que 300): não dispara | 2 | Aprovado |
+| `test_parede_parada_na_frente_nunca_arma` | Parede fixa a 34 mm: nunca arma; o comando manual dispara | 2 | Aprovado |
+| `test_mao_de_volta_durante_a_espera_recomeca` | A mão de volta na espera recomeça o gesto | 2 | Aprovado |
+| `test_mao_saindo_entre_os_limiares_espera_a_frente_livre` | Entre 50 e 100 mm, espera a frente livre | 2 | Aprovado |
+| `test_sem_leitura_vale_a_ultima_frente` | Ciclos sem leitura nova usam a última frente vista | 2 | Aprovado |
+| `test_reiniciar_o_gatilho` | `reiniciar` volta a `Desarmado` | 2 | Aprovado |
+| `test_ciclo_espera_a_largada_parado` | Sem permissão, ou sem giroscópio válido, fica aguardando sem comandar | 2 | Aprovado |
+| `test_ciclo_percebe_grava_as_paredes_e_decide_avancar` | Ciclos sem leitura não contam; 3 leituras gravam Oeste e Leste como parede e Norte livre e iniciam o passo para (1, 0) | 2 | Aprovado |
+| `test_ciclo_avanca_confirma_a_pose_e_percebe_de_novo` | Avanço até 178 mm, `Confirmada` em (1, 0) e nova percepção | 2 | Aprovado |
+| `test_ciclo_gira_antes_de_avancar_e_adota_a_direcao_do_giro` | Parede à frente e à esquerda: gira 90° à direita, adota o Leste e avança | 1, 2 | Aprovado |
+| `test_ciclo_parede_nova_no_caminho_replaneja` | Parede lida como livre para o avanço; é corrigida no mapa e contornada pela direita | 2 | Aprovado |
+| `test_ciclo_sem_caminho_para` | Fechado nos três lados: `SemCaminho`, freado de vez | 2 | Aprovado |
+| `test_ciclo_no_objetivo_para` | Em (3, 3): `ObjetivoAlcancado`, freado | 2 | Aprovado |
+| `test_ciclo_falha_do_movimento_para_tudo` | Falha do avanço para o ciclo; só o `reiniciar` sai dela | 2 | Aprovado |
+| `test_ciclo_falha_do_giro` | Giro preso: `Falha` com `GiroTempoEsgotado` | 2 | Aprovado |
+| `test_ciclo_pose_fora_do_mapa_falha` | Pose fora da malha ou medida fora do mapa: `Falha` | 2 | Aprovado |
+| `test_ciclo_sem_permissao_no_meio_freia_e_retoma_percebendo` | Sem permissão no meio do avanço: freia e cancela; ao voltar, rumo da direção atual (uma volta inteira depois) | 2 | Aprovado |
+| `test_ciclo_rumo_de_referencia_e_o_da_largada` | O rumo de referência é o ângulo na largada, também largando para o Leste | 1, 2 | Aprovado |
+| `test_ciclo_quantidade_de_amostras_limitada` | 0 amostras vira 1, e 200 viram 16 (a capacidade do filtro) | 2 | Aprovado |
+
+Nas suítes já existentes:
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_definir_direcao_mantem_a_posicao` | Com as rodas mostrando 22,5° e o giroscópio 90°, a direção vira Leste sem mexer na posição | 1 | Aprovado |
+| `test_definir_direcao_zera_o_giro_acumulado` | Depois de `definirDirecao`, o giro das rodas conta a partir de zero | 1 | Aprovado |
+| `test_teto_da_potencia_base_desacelera_sem_parede_a_frente` | Teto de 250 limita a base; teto abaixo da mínima fica na mínima (150) | 1 | Aprovado |
+| `test_teto_da_potencia_base_nao_impede_a_parada_frontal` | Com teto, a parada frontal continua valendo | 1 | Aprovado |
+| `test_corrigir_parede_sobrescreve_nos_dois_lados` | Livre corrigida para parede nas duas células vizinhas | 2 | Aprovado |
+| `test_corrigir_parede_recusa_entradas_invalidas_e_o_perimetro_livre` | Recusa `Desconhecido`, célula fora do mapa e perímetro livre | 2 | Aprovado |
+
+#### Testes de integração (ambiente native)
+
+```bash
+pio test -e native -f test_integracao_execucao
+```
+
+A cadeia é a mesma da tarefa de navegação: o `RoboSimulado` anda no labirinto com a velocidade da tabela vezes um fator por roda (o erro que o modo estimado não vê) e gira pela diferença entre as rodas; o `ImuSimulado` (viés de 1,2 °/s e ruído de ±0,4 °/s) passa pelo `AcompanhadorGiro` com calibração; os 3 ToF são raios a partir da face de cada sensor, com paredes de 12 mm, passando pelo `CombinadorTof` a cada 33 ms; o `DeslocamentoEstimado` e a `Odometria` estimam a posição, com a correção pelos ToF; e o `CicloNavegacao` ou o `ExecutorMovimentos` comandam os motores pelo `MotoresComEstimativa`. O robô "imperfeito" tem a roda esquerda a 92% e a direita a 97% da tabela.
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_avancar_uma_celula_tres_vezes_no_corredor` | Robô 8% mais lento: 3 células pelo corredor da coluna 0, cada parada até ±25 mm e na célula certa, sem contato | 1, 3 | Aprovado |
+| `test_girar_90_e_180_no_lugar` | Seis giros (90° para cada lado e 180°), cada um até ±3°, a direção da odometria certa e sem contato | 1, 3 | Aprovado |
+| `test_girar_e_avancar_pela_direcao_do_giroscopio` | Giro para o Leste e avanço: chega a (1, 1), também pela odometria | 1, 2 | Aprovado |
+| `test_avanco_ate_a_parede_para_no_centro` | Avanço até uma célula com parede: parada até ±15 mm do centro | 1, 3 | Aprovado |
+| `test_corrida_no_4x4_chega_ao_objetivo` | Robô ideal: chega a (3, 3) em menos de 10 min, sem contato, com o mapa e a odometria certos | 2 | Aprovado |
+| `test_corrida_no_8x4_chega_ao_objetivo` | O mesmo no 8×4, até (3, 7) | 2 | Aprovado |
+| `test_corrida_no_12x4_chega_ao_objetivo` | O mesmo no 12×4, até (3, 11) | 2 | Aprovado |
+| `test_corrida_com_robo_imperfeito_e_largada_torta` | Rodas desiguais e largada 8 mm e 3° fora: chega com o mapa e a pose certos; o contato é registrado | 2 | Aprovado |
+| `test_corrida_com_robo_imperfeito_no_12x4` | Rodas desiguais no 12×4: chega com o mapa e a pose certos | 2 | Aprovado |
+| `test_corrida_replaneja_e_nao_repete_celulas_sem_fim` | Rodas desiguais no 8×4: chega replanejando, com menos de 96 avanços | 2 | Aprovado |
+| `test_folga_do_giro_no_lugar` | Folga de 5,9 mm: com 4 mm fora do centro o giro não encosta; com 8 mm, encosta | 3 | Aprovado |
+
+A coluna "Critério" segue a ordem da tabela de critérios de pronto acima (3: o erro registrado na simulação).
+
+#### Erro de deslocamento na simulação
+
+Registrado pelos testes de integração (`TEST_MESSAGE`). Não substitui a medida no robô montado.
+
+| Movimento | Erro medido |
+| :--- | :--- |
+| Avanço 1, 2 e 3 no corredor (robô imperfeito) | −4,1, −1,8 e −2,6 mm ao longo; −2,3, −4,0 e −3,9 mm para o lado |
+| Avanço até a célula com parede (robô imperfeito) | −2,5 mm |
+| Giros 90° direita, 90° esquerda, 180°, 90° esquerda, 180°, 90° direita | +0,75°, −0,93°, −0,74°, −0,59°, −0,60° e +0,98° |
+| Corrida 4×4, robô ideal | Objetivo em 35,2 s, 12 células e 8 giros; parada final a −2,3 mm, 0,9 mm de lado e 0,14° |
+| Corrida 8×4, robô ideal | Objetivo em 30,6 s, 12 células e 5 giros; −3,0 mm, 0,7 mm e 0,29° |
+| Corrida 12×4, robô ideal | Objetivo em 38,2 s, 16 células e 5 giros; −1,9 mm, 0,8 mm e 0,21° |
+| Corrida 4×4, robô imperfeito largando 8 mm e 3° fora | Objetivo em 37,9 s; −2,2 mm, −7,9 mm de lado e 1,21°; **1,7 s em contato com a parede**, num giro em (3, 0) |
+| Corrida 12×4 e 8×4, robô imperfeito | Objetivo em 40,6 s e 32,6 s; até −2,8 mm ao longo e −3,9 mm de lado, sem contato |
+
+**Folga do giro no lugar.** O chassi de 120 × 100 mm deixa 5,9 mm entre a quina e a parede durante o giro no lugar (78,1 mm contra 84 mm). Numa varredura com três robôs (ideal, rodas a 92/97% e a 103/95%), sete ângulos de largada (−3° a +3°) e três desvios laterais (0 e ±8 mm) nos três labirintos, 92 das 189 corridas encostaram em algum giro, e 4 não chegaram ao objetivo (a investigada terminou sem caminho por uma parede mal lida com o robô 16° torto, depois de rodas 8% desiguais). O avanço para perto do centro (2 a 4 mm), mas a sintonia provisória da centralização e do rumo deixa um erro lateral de 5 a 10 mm. Duas tentativas no executor (ajustar o rumo pelo eixo do corredor e compensar a diferença das rodas) foram medidas na mesma varredura e descartadas: 109 e 83 corridas com contato.
+
+#### Saída da execução
+
+```text
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:835:test_giro_ate_cada_direcao:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:836:test_direcao_depois_de_cada_movimento:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:837:test_variacao_de_rumo_segue_o_giroscopio:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:838:test_nomes_para_o_log:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:839:test_executor_comeca_ocioso_e_nao_aceita_dois_movimentos:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:840:test_avanco_anda_em_cruzeiro_e_para_no_centro_da_proxima_celula:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:841:test_avanco_mira_o_centro_seguinte_ao_mais_proximo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:842:test_avanco_que_passa_do_destino_tambem_conclui:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:843:test_avanco_mantem_o_comando_entre_leituras_e_espera_a_primeira:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:844:test_avanco_converte_a_leitura_para_o_centro_do_robo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:845:test_avanco_centraliza_no_corredor:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:846:test_avanco_corrige_o_rumo_pelo_giroscopio_sem_paredes:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:847:test_parede_na_frente_perto_do_destino_conclui:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:848:test_parede_na_frente_longe_do_destino_falha:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:849:test_sem_leitura_do_tof_falha_e_freia:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:850:test_avanco_que_nao_chega_esgota_o_tempo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:851:test_cancelar_freia_e_volta_a_ocioso:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:852:test_giro_90_esquerda_vai_ao_rumo_alvo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:853:test_giro_90_direita_e_180:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:854:test_giro_mira_o_rumo_absoluto_e_nao_acumula_erro:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:855:test_definir_rumo_alvo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:856:test_giro_sem_giroscopio_espera_parado_e_desiste_no_tempo_limite:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:857:test_giro_preso_esgota_o_tempo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:858:test_giro_que_perde_o_giroscopio_no_meio_freia:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:859:test_cancelar_um_giro:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:860:test_gesto_completo_dispara_depois_da_espera:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:861:test_vulto_rapido_nao_conta:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:862:test_parede_parada_na_frente_nunca_arma:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:863:test_mao_de_volta_durante_a_espera_recomeca:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:864:test_mao_saindo_entre_os_limiares_espera_a_frente_livre:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:865:test_sem_leitura_vale_a_ultima_frente:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:866:test_reiniciar_o_gatilho:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:867:test_ciclo_espera_a_largada_parado:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:868:test_ciclo_percebe_grava_as_paredes_e_decide_avancar:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:869:test_ciclo_avanca_confirma_a_pose_e_percebe_de_novo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:870:test_ciclo_gira_antes_de_avancar_e_adota_a_direcao_do_giro:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:871:test_ciclo_parede_nova_no_caminho_replaneja:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:872:test_ciclo_sem_caminho_para:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:873:test_ciclo_no_objetivo_para:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:874:test_ciclo_falha_do_movimento_para_tudo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:875:test_ciclo_falha_do_giro:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:876:test_ciclo_pose_fora_do_mapa_falha:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:877:test_ciclo_sem_permissao_no_meio_freia_e_retoma_percebendo:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:878:test_ciclo_rumo_de_referencia_e_o_da_largada:PASS
+test/test_execucao_movimentos/test_execucao_movimentos.cpp:879:test_ciclo_quantidade_de_amostras_limitada:PASS
+45 Tests 0 Failures 0 Ignored 
+test/test_integracao_execucao/test_integracao_execucao.cpp:394:test_avancar_uma_celula_tres_vezes_no_corredor:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:395:test_girar_90_e_180_no_lugar:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:396:test_girar_e_avancar_pela_direcao_do_giroscopio:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:397:test_avanco_ate_a_parede_para_no_centro:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:398:test_corrida_no_4x4_chega_ao_objetivo:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:399:test_corrida_no_8x4_chega_ao_objetivo:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:400:test_corrida_no_12x4_chega_ao_objetivo:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:401:test_corrida_com_robo_imperfeito_e_largada_torta:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:402:test_corrida_com_robo_imperfeito_no_12x4:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:403:test_corrida_replaneja_e_nao_repete_celulas_sem_fim:PASS
+test/test_integracao_execucao/test_integracao_execucao.cpp:404:test_folga_do_giro_no_lugar:PASS
+11 Tests 0 Failures 0 Ignored 
+```
+
+#### Verificação de detecção de falhas (teste negativo)
+
+As suítes foram executadas contra quatro defeitos plantados, um de cada vez, e o código voltou ao commit depois de cada um:
+
+| Defeito plantado | Casos que falharam |
+| :--- | :--- |
+| Destino do avanço meia célula à frente, em vez de uma | 13, entre eles `test_avanco_anda_em_cruzeiro_e_para_no_centro_da_proxima_celula` (`Expected 180 Was 90`) e as seis corridas completas |
+| Giro de 90° a partir do ângulo atual, e não do rumo alvo absoluto | 2: `test_giro_mira_o_rumo_absoluto_e_nao_acumula_erro` (`Expected 90000 Was 93000`) e `test_ciclo_gira_antes_de_avancar_e_adota_a_direcao_do_giro` |
+| Parede em que o avanço parou não corrigida no mapa | 1: `test_ciclo_parede_nova_no_caminho_replaneja` (`Expected 2 Was 1`) |
+| `Odometria::definirDirecao` sem efeito (direção pelas rodas estimadas) | 5: os dois testes da odometria e três corridas com o robô imperfeito, que terminam sem caminho |
+
+#### Suíte completa com cobertura (o mesmo comando do CI)
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa | **499 aprovados, 0 falhas** (eram 437) |
+| Cobertura das linhas de `lib/` | **98%** (2.365 de 2.414), acima da meta de 80% |
+| Cobertura de `lib/execucao` | **97%** (372 de 381); as linhas restantes são retornos depois de `switch` completos e um ramo do gatilho com a mão saindo entre os limiares durante a espera |
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+pio run -e bancada_deslocamento
+```
+
+| Ambiente | Compilação | RAM | Flash |
+|---|---|---|---|
+| `esp32c3` (robô) | **Sucesso**, sem avisos | 4,9% (16.108 de 327.680 bytes) | 23,1% (303.020 de 1.310.720 bytes) |
+| `bancada_deslocamento` | **Sucesso** | 4,6% (15.020 de 327.680 bytes) | 22,2% (290.606 de 1.310.720 bytes) |
+
+#### Ferramenta de bancada
+
+```bash
+python3 -m unittest discover -s scripts/testes -v
+```
+
+`test_bancada_deslocamento.py` confere as etapas 7 e 8 com respostas no formato do `bancada_deslocamento.cpp`: avaliação do erro de parada e de giro, aprovação e reprovação pela régua, pelo desvio lateral e pelo transferidor, falha no meio de uma sequência de células, giroscópio sem calibração, limite de 8 células, CSV de cada execução e as etapas no menu e no roteiro. **44 de 44 aprovados** (11 novos). Essa execução não substitui o teste com o robô montado.
+
+#### Pendências desta etapa
+
+- **Erro na bancada (critério 3):** rodar as etapas 7 e 8 de `./scripts/bancada_deslocamento.py` com o robô montado no labirinto e registrar aqui o relatório (parada depois de n células, desvio lateral e erro de cada giro).
+- **Folga do giro no lugar:** levar à mecânica (quinas chanfradas ou arredondadas) e à sintonia da centralização e do rumo na bancada ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)), já que 5,9 mm é menos que o erro lateral atual.
+- **Gatilho da largada:** conferir o gesto com o VL53L0X montado e a mão real; se a leitura não ajudar, usar só o comando `L`.
+- **Geometria dos ToF:** unificar o recuo do sensor frontal (30 mm na percepção, 50 mm no deslocamento e na execução) quando a estrutura informar a posição real.
+- **Fase da corrida:** ligar a `FaseCorrida` da [#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242) (PR [#438](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/438)) à permissão para mover.
+- **Corrida completa no labirinto real:** fica com a [#185](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/185).

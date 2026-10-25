@@ -97,6 +97,7 @@ Há ainda o ambiente **`bancada_tof`**, que herda o `esp32c3` mas compila só `s
 | `lib/mapeamento` | Mapa do labirinto, atualização, armazenamento em memória e mapa final ([#176](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/176), [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177), [#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179), [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) |
 | `lib/navegacao` | Algoritmo de resolução do labirinto por *flood fill* ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)), localização por odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)) e detecção do objetivo ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) |
 | `lib/atuacao` | Controle de movimento: centralização no corredor e parada frontal ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191)), e trava dos motores (`MotoresComTrava`, [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
+| `lib/execucao` | Execução dos movimentos entre células (`ExecutorMovimentos`), ciclo percepção → mapa → decisão → atuação (`CicloNavegacao`) e gatilho da largada (`GatilhoLargada`), com os parâmetros em `ConfiguracaoExecucao.h` ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) |
 | `lib/imu` | Calibração do viés e ângulo de giro do giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378), PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
 | `lib/lidar` | Código do LiDAR da versão anterior do hardware; **não é usado** e deve ser removido |
 | `lib/comunicacao` | Telemetria e eventos pontuais (`TelemetriaJson`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)), serialização do mapa em JSON ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)) e *buffer* de reenvio (Épico 03) |
@@ -989,6 +990,105 @@ Os ganhos, as potências e as distâncias de desaceleração estão em `Configur
 
 **Pendências:** o critério 3 da HU-12 (teste de bancada no labirinto sem contato com as paredes) depende do chassi montado e da pista 4×4. O `ControleMovimento` ainda não está na tarefa de navegação: entra junto com os sensores de distância e a navegação ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)).
 
+## Navegação: execução dos movimentos entre células
+
+A execução dos movimentos ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184), [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42)) converte a decisão do algoritmo de resolução em movimento: **avançar uma célula (18 cm)**, **girar 90°** e **girar 180°**. É também onde a percepção, o mapa, a navegação e a atuação passam a rodar juntos na tarefa de navegação. As peças ficam em `lib/execucao`, sem Arduino, e reaproveitam o que já existia: o `ControleMovimento` ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191)) e o `ControleGiro` ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)) para mover, o `ClassificadorParede` ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) e o `AtualizadorMapa` ([#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)) para gravar as paredes, a `Navegacao` ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)) para decidir e o deslocamento sem encoder ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)) para saber onde o robô está. Quando os encoders chegarem, a execução não muda: só a fonte da posição.
+
+```mermaid
+flowchart LR
+    tof["ToF (leitura nova)"] --> perc["Percebendo<br/>ClassificadorParede +<br/>AtualizadorMapa"]
+    perc --> mapa["Mapa da corrida"]
+    mapa --> nav["Navegacao::darPasso()<br/>direção absoluta"]
+    nav --> giro{"Precisa girar?"}
+    giro -- "sim" --> g["Girando<br/>ControleGiro até o rumo alvo"]
+    giro -- "não" --> a["Avançando<br/>ControleMovimento até o<br/>centro da próxima célula"]
+    g --> a
+    a --> conf["Navegacao::confirmarPose()<br/>célula da odometria +<br/>direção do giroscópio"]
+    conf --> perc
+```
+
+**Figura 16.** Ciclo de uma célula no `CicloNavegacao`: parado no centro, o robô grava as paredes vistas, o Flood Fill decide a próxima direção, o executor gira (se precisar) e avança uma célula, e a pose é confirmada antes de perceber de novo.
+
+```mermaid
+stateDiagram-v2
+    [*] --> AguardandoLargada
+    AguardandoLargada --> Percebendo: largada liberada e giroscópio válido
+    Percebendo --> Girando: direção diferente
+    Percebendo --> Avancando: mesma direção
+    Percebendo --> ObjetivoAlcancado: na célula objetivo
+    Percebendo --> SemCaminho: mapa sem caminho
+    Girando --> Avancando: giro concluído
+    Avancando --> Percebendo: centro alcançado ou parede nova na frente
+    Girando --> Falha
+    Avancando --> Falha
+    Percebendo --> AguardandoLargada: permissão retirada
+    Girando --> AguardandoLargada: permissão retirada
+    Avancando --> AguardandoLargada: permissão retirada
+```
+
+**Figura 17.** Estados do `CicloNavegacao`. `ObjetivoAlcancado`, `SemCaminho` e `Falha` freiam os motores e só saem com `reiniciar()` (comando `Z`).
+
+### Regras de Negócio e Algoritmo
+
+* **Avançar uma célula:** o destino é o centro da célula **seguinte à mais próxima** da posição atual, e não a posição atual mais 180 mm; assim um erro pequeno de parada não se acumula de uma célula para a outra. O `ControleMovimento` centraliza no corredor e mantém o rumo pelo giroscópio. A 60 mm do destino começa a rampa: um teto na potência base (`ControleMovimento::definirTetoPotenciaBase`) cai da potência de cruzeiro (400) até a mínima (150). O avanço termina a 3 mm do centro, ou quando passa dele.
+* **Parede à frente:** a parada frontal do `ControleMovimento` continua valendo. Se ela parar o robô a até 40 mm do destino, o avanço conta como concluído (a parede é a melhor referência do centro). Mais longe, é uma parede que a percepção leu como livre: o avanço termina em `ParedeNaFrente`, a parede é gravada no mapa mesmo com o conflito (`Mapa::corrigirParede`), o passo é cancelado e o próximo planejamento a contorna.
+* **Leitura do ToF no controle:** o ToF mede a partir da face de cada sensor, e o `ControleMovimento` usa distâncias a partir do centro do robô (84 mm até a parede com ele centralizado). Antes do controle, a leitura recebe o recuo de cada sensor: 50 mm na frente (o mesmo do deslocamento sem encoder) e 30 mm nas laterais (o mesmo da percepção). O controle é recalculado a cada leitura nova (cerca de 33 ms); entre duas leituras, vale o último comando.
+* **Girar 90° e 180°:** o `ControleGiro` gira até o **rumo alvo absoluto**, os múltiplos de 90° desde a largada (positivo para a esquerda, como o giroscópio), e não 90° a partir do ângulo atual. Se um giro parar 3° antes, o próximo compensa, e o erro não se acumula. O 180° é feito pela esquerda.
+* **Direção da odometria:** no modo sem encoder, a direção da `Odometria` vem da diferença entre as rodas estimadas, que é imprecisa. No fim de cada giro, a direção confirmada pelo giroscópio passa a valer (`Odometria::definirDirecao`, que muda a direção sem mexer na posição), e fora dos giros a tarefa de navegação mantém a odometria nessa direção.
+* **Percepção no centro:** parado no centro da célula, o ciclo junta 3 leituras novas do ToF, classifica as paredes pela mediana e as grava no mapa na pose da navegação. Só então pede o próximo passo.
+* **Confirmação da pose:** no fim do avanço, `confirmarPose()` recebe a célula da odometria e a direção do giroscópio. Se o robô continuar na célula de origem (parede no caminho ou estimativa que não cruzou a fronteira), o passo é cancelado e o ciclo percebe e replaneja, em vez de esperar um passo que não vai terminar.
+* **Falhas:** sem leitura nova do ToF por 500 ms durante o avanço, avanço acima de 6 s, giro acima de 2,5 s ou pose fora da malha levam a `Falha`, com os motores freados. A recuperação fica com as tarefas de colisão ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)), motor travado ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) e falha do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
+
+**Parâmetros:** todos provisórios, em `lib/execucao/src/ConfiguracaoExecucao.h`. Foram ajustados na simulação dos testes e devem ser confirmados na bancada.
+
+| Parâmetro | Valor | Origem |
+|---|---|---|
+| `DISTANCIA_SENSOR_LATERAL_AO_CENTRO_MM` | 30 | Recuo lateral da percepção (`ConfiguracaoPercepcao.h`: 84 − 30 = 54 mm lidos com parede) |
+| `DISTANCIA_SENSOR_FRONTAL_AO_CENTRO_MM` | 50 | O mesmo do deslocamento sem encoder (`ConfiguracaoDeslocamento.h`) |
+| `TOLERANCIA_CHEGADA_MM` | 3 | Parada no centro da célula |
+| `DISTANCIA_DESACELERACAO_MM` | 60 | Rampa antes do centro de destino |
+| `FOLGA_PARADA_NA_PAREDE_MM` | 40 | Parada pela parede ainda conta como chegada |
+| `TEMPO_MAXIMO_AVANCO_MS` | 6000 | 180 mm a 45 mm/s (potência mínima) levam 4 s |
+| `AMOSTRAS_PERCEPCAO` | 3 | Cerca de 0,1 s parado no centro |
+
+### Gatilho da largada
+
+A Super Mini não tem botão livre (o BOOT fica no GPIO9, o SDA do I²C), e o dashboard ainda não manda comandos ao robô. A largada é dada por um **gesto na frente do ToF frontal**, o truque clássico de micromouse, ou pelo comando serial `L` na bancada:
+
+1. Com o robô pronto (boot aprovado e giroscópio calibrado), a frente precisa estar livre (100 mm ou mais) para o gatilho armar.
+2. A mão cobre o sensor (50 mm ou menos) por pelo menos 300 ms. Um vulto mais curto é ignorado.
+3. A mão sai, e o robô espera 1 s antes de largar. Se a mão voltar nesse tempo, o gesto recomeça.
+
+Com uma parede parada logo à frente da partida, o gatilho nunca arma: a largada fica só pelo comando `L`. Os limiares estão em `ConfiguracaoExecucao.h` e precisam ser conferidos com a mão e o VL53L0X montado.
+
+### Interface das Classes
+
+* **`ExecutorMovimentos::iniciar(Movimento)`:** começa `AvancarCelula`, `Girar90Esquerda`, `Girar90Direita` ou `Girar180`; recusa se outro estiver em andamento.
+* **`ExecutorMovimentos::atualizar(EntradaExecucao, IMotores&)`:** um ciclo de 10 ms. A entrada traz a leitura nova do ToF (ou `nullptr`), a `LeituraGiro` e a posição no eixo de avanço (`posicaoAoLongoDoAvancoUm`). Devolve `Ocioso`, `Executando`, `Concluido` ou `Falha` (motivo em `falha()`: `ParedeNaFrente`, `SemLeituraTof`, `TempoEsgotado` ou `GiroTempoEsgotado`). `restanteMm()` guarda o erro de chegada para a bancada.
+* **`ExecutorMovimentos::cancelar(IMotores&)`** e **`definirRumoAlvo(miligraus)`:** interrompe e freia; define o rumo de referência.
+* **`CicloNavegacao(Mapa&)`**, **`reiniciar(Pose, IMotores&)`** e **`atualizar(EntradaCiclo, IMotores&)`:** o ciclo completo. A entrada traz a permissão para mover (`liberado`), a pose e a posição da odometria, a leitura nova do ToF e a do giroscópio. `direcao()` e `direcaoDefinida()` dizem a quem chama em que direção manter a odometria.
+* **`GatilhoLargada::atualizar(leituraNova, dtMs)`**, **`dispararManual()`** e **`reiniciar()`:** o gesto da largada.
+* **`giroAte(atual, desejada, giro)`** e **`direcaoDepois(direcao, movimento)`** (`Movimento.h`): a conversão entre a direção absoluta da navegação e o giro.
+
+**No `main.cpp`.** A tarefa de navegação, a cada 10 ms: mantém a direção da odometria na do ciclo (fora dos giros), atualiza o deslocamento e a detecção do objetivo, alimenta o gatilho com o robô pronto e chama `CicloNavegacao::atualizar` com os motores `motoresTracao` (a trava do boot e a estimativa do deslocamento continuam valendo). A **permissão para mover é provisória**: boot aprovado, giroscópio calibrado e gatilho disparado. Quando a fase da corrida ([#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242), PR [#438](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/438)) entrar, ela passa a compor essa permissão. A detecção do objetivo continua no `DetectorObjetivo` do `main.cpp`, que freia os motores antes do ciclo. O comando `Z` volta a aguardar a largada, e o `L` libera a largada sem o gesto (vale quando o robô ficar pronto). No log: `{"status":"largada_liberada"}` e `{"status":"navegacao","estado":...,"falha":...,"celulas":...}` a cada troca de estado.
+
+### Folga do giro no lugar
+
+O chassi de 120 × 100 mm gira no lugar num corredor de 168 mm: a quina passa a √(60² + 50²) = **78,1 mm** do centro, e a parede fica a 84 mm. Sobram **5,9 mm**: um erro lateral ou de parada maior que isso encosta a quina na parede durante o giro. Na simulação, o avanço para a 2 a 4 mm do centro, mas com as rodas desiguais (5%) ou a largada 1° torta, a sintonia provisória da centralização e do rumo deixa o robô de 5 a 10 mm fora do centro, e alguns giros raspam a parede. Duas tentativas no executor (puxar o rumo para o eixo do corredor e compensar a diferença das rodas) não resolveram de forma confiável e foram descartadas. É um ponto para a mecânica (quinas chanfradas ou arredondadas) e para a sintonia na bancada ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)).
+
+### Bancada da execução
+
+O firmware de bancada do deslocamento (`src/bancada/bancada_deslocamento.cpp`) ganhou o MPU6050 e os comandos `CELULA n` (1 a 8 avanços seguidos), `GIRO90E`, `GIRO90D`, `GIRO180` e `CALIBRAR`, que rodam o mesmo `ExecutorMovimentos` do robô e terminam com uma linha `fim_execucao` (estado, falha, tempo, quanto faltou, giro medido pelo giroscópio e erro de rumo). O menu `scripts/bancada_deslocamento.py` ganhou duas etapas:
+
+| Etapa | O que verifica | Critério provisório |
+|---|---|---|
+| 7. Execução: avançar n células | n avanços num corredor reto, medidos na régua a partir da marca de partida, e o desvio lateral no fim | Parada até ±10 mm de n × 180 mm; desvio lateral até ±5 mm (abaixo da folga de 5,9 mm do giro) |
+| 8. Execução: giros | Calibração do giroscópio e os giros de 90° para a direita, 90° para a esquerda e 180°, medidos no transferidor | Erro até ±3° em cada giro |
+
+**Rastreabilidade:** `lib/execucao` (`ExecutorMovimentos`, `CicloNavegacao`, `GatilhoLargada`, `Movimento.h`), `Odometria::definirDirecao`, `ControleMovimento::definirTetoPotenciaBase`, `Mapa::corrigirParede`, `lib/simulacao/RoboSimulado` e as etapas 7 e 8 da bancada atendem à tarefa [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184), da [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01).
+
+**Pendências:** medir o erro de deslocamento na bancada com o robô montado (critério 3 da #184, etapas 7 e 8), conferir o gesto da largada com o VL53L0X real, unificar o recuo do sensor frontal entre a percepção (30 mm) e o deslocamento (50 mm) quando a estrutura informar a posição real, e ligar a fase da corrida da [#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242) à permissão para mover.
+
 ## Testes
 
 Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. Cada módulo tem sua pasta `test/test_<modulo>/`.
@@ -1136,6 +1236,28 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | | `test_travar_freia_na_hora_e_parar_sempre_passa` | `travar()` freia na hora; `parar()` sempre chega ao driver |
 | | `test_sequencia_do_boot_so_libera_os_motores_com_tudo_presente` | Como no `main.cpp`: sem a IMU os motores não andam; com tudo presente, andam |
 | `test_telemetria_json/test_telemetria_json.cpp` | `test_serializa_resultado_do_boot` | Campos `boot_ok`, `boot_falhas` e `boot_ms` |
+| `test_execucao_movimentos/test_execucao_movimentos.cpp` | `test_giro_ate_cada_direcao` e `test_direcao_depois_de_cada_movimento` | Direção absoluta convertida no giro certo, ida e volta nas 16 combinações |
+| | `test_avanco_anda_em_cruzeiro_e_para_no_centro_da_proxima_celula` | Cruzeiro de 400, rampa perto do destino e parada a 3 mm do centro, com os motores freados |
+| | `test_avanco_mira_o_centro_seguinte_ao_mais_proximo` | O destino é o centro seguinte ao mais próximo da posição, e não a posição mais 180 mm |
+| | `test_avanco_converte_a_leitura_para_o_centro_do_robo` | Recuo de 50 mm na frente e de 30 mm nas laterais, sem estourar o `uint16_t` |
+| | `test_parede_na_frente_perto_do_destino_conclui` e `test_parede_na_frente_longe_do_destino_falha` | Parada pela parede a até 40 mm conclui; mais longe, `ParedeNaFrente` |
+| | `test_sem_leitura_do_tof_falha_e_freia` e `test_avanco_que_nao_chega_esgota_o_tempo` | 500 ms sem leitura nova e o tempo máximo do avanço levam a `Falha` |
+| | `test_giro_90_esquerda_vai_ao_rumo_alvo` e `test_giro_90_direita_e_180` | Giros nos dois sentidos e de 180° chegam ao rumo alvo |
+| | `test_giro_mira_o_rumo_absoluto_e_nao_acumula_erro` | Com o robô 3° fora, o giro de 90° mira o rumo absoluto (87° de erro, e não 90°) |
+| | `test_giro_sem_giroscopio_espera_parado_e_desiste_no_tempo_limite` | Sem giroscópio válido, espera freado e desiste no tempo limite |
+| | `test_gesto_completo_dispara_depois_da_espera`, `test_vulto_rapido_nao_conta`, `test_parede_parada_na_frente_nunca_arma` | Gesto da largada, vulto curto ignorado e parede fixa que nunca arma |
+| | `test_ciclo_percebe_grava_as_paredes_e_decide_avancar` | 3 leituras no centro gravam as paredes e o passo é decidido |
+| | `test_ciclo_gira_antes_de_avancar_e_adota_a_direcao_do_giro` | Giro para o Leste, direção adotada no fim do giro e avanço em seguida |
+| | `test_ciclo_parede_nova_no_caminho_replaneja` | Parede que a percepção leu como livre é corrigida no mapa e contornada |
+| | `test_ciclo_sem_permissao_no_meio_freia_e_retoma_percebendo` | Sem permissão, freia; ao voltar, percebe de novo com o rumo da direção atual |
+| `test_integracao_execucao/test_integracao_execucao.cpp` | `test_avancar_uma_celula_tres_vezes_no_corredor` | Robô simulado 8% mais lento que a tabela: 3 células com parada até ±25 mm (medido: 2 a 4 mm) |
+| | `test_girar_90_e_180_no_lugar` | Seis giros com viés e ruído no giroscópio: erro até ±3° em cada um (medido: abaixo de 1°) |
+| | `test_corrida_no_4x4_chega_ao_objetivo`, `_8x4` e `_12x4` | Corrida completa até o objetivo, sem contato, com o mapa gravado igual ao labirinto e a pose certa |
+| | `test_corrida_com_robo_imperfeito_e_largada_torta` | Rodas desiguais e largada 8 mm e 3° fora: chega com o mapa e a pose certos (o contato é registrado) |
+| | `test_folga_do_giro_no_lugar` | Folga de 5,9 mm: 4 mm fora do centro não encosta; 8 mm encostam |
+| `test_odometria/test_odometria.cpp` | `test_definir_direcao_mantem_a_posicao` e `test_definir_direcao_zera_o_giro_acumulado` | A direção do giroscópio entra sem mexer na posição e zera o giro acumulado das rodas |
+| `test_controle_movimento/test_controle_movimento.cpp` | `test_teto_da_potencia_base_desacelera_sem_parede_a_frente` e `test_teto_da_potencia_base_nao_impede_a_parada_frontal` | O teto desacelera sem parede à frente, nunca abaixo da mínima, e a parada frontal continua valendo |
+| `test_mapeamento/test_mapa.cpp` | `test_corrigir_parede_sobrescreve_nos_dois_lados` e `test_corrigir_parede_recusa_entradas_invalidas_e_o_perimetro_livre` | A correção sobrescreve nas duas células e nunca abre o perímetro |
 
 Para rodar, dentro de `src/firmware`:
 
@@ -1185,6 +1307,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/tof` (`CombinadorTof`), `TofVl53l0x`, `ISensorDistancia::idadeUltimaLeituraMs`, endereços em `Pinos.h`, firmware e menu de bancada | [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344) Driver dos 3 sensores VL53L0X | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
 | `lib/inicializacao` (`AutotesteBoot`, `RelatorioBoot`), `IBarramentoI2c`, `BarramentoI2cEsp32`, `MotoresComTrava` | [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) |
 | `lib/hal` (`IImu`), `lib/simulacao` (`ImuSimulado`), `lib/imu` (`IntegradorGiro`, `ConversorGiro`, `AcompanhadorGiro`), `ImuMpu6050`, `BarramentoI2c`, tarefa da IMU no `main.cpp` | [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) Driver do MPU6050 e ângulo de giro | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
+| `lib/execucao` (`ExecutorMovimentos`, `CicloNavegacao`, `GatilhoLargada`), `Odometria::definirDirecao`, `ControleMovimento::definirTetoPotenciaBase`, `Mapa::corrigirParede`, `RoboSimulado`, ciclo da navegação no `main.cpp` e etapas 7 e 8 da bancada | [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184) Execução dos movimentos entre células | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
 
 ## Próximos passos
 
@@ -1199,6 +1322,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 - **Odometria** ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)): a lógica, os testes no computador e a ligação no `main.cpp` estão prontos. Falta a bancada: medir os pulsos de diferença entre as rodas num giro de 90° (hoje 625, provisório), testar giros de 90° e 180° e um percurso de 3 células, e registrar o erro.
 - **Sensores VL53L0X** ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): o driver, a regra de validade (com fora da faixa limitado à faixa), o teste de integração com o mapa e a ligação no `main.cpp` estão prontos, e o build da placa compila. Falta rodar o roteiro da [bancada](#bancada-dos-vl53l0x) com o hardware montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)) e trocar os valores provisórios de `ConfiguracaoTof.h` pelos medidos. Dependem desta tarefa a percepção para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), a calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), o boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e a recuperação de falhas do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
 - **Boot do sistema** ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): o autoteste do I²C, a trava dos motores e o relatório estão prontos e testados no computador com dispositivos simulados. Falta a bancada: medir o tempo desde o ligar (o `boot_ms` não conta a ROM nem o bootloader), conferir o `WHO_AM_I` do módulo montado e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (0x68).
+- **Execução dos movimentos** ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)): os comandos "avançar uma célula", "girar 90°" e "girar 180°", o ciclo percepção → mapa → decisão → atuação e o gatilho da largada estão prontos, testados no computador (incluindo corridas completas no robô simulado) e ligados no `main.cpp`. Falta a bancada: medir o erro de deslocamento com as etapas 7 e 8 de `scripts/bancada_deslocamento.py` e registrar em [Testes de Software](../07-testes/software.md). A folga de 5,9 mm do giro no lugar ([Folga do giro no lugar](#folga-do-giro-no-lugar)) precisa da mecânica e da sintonia da centralização.
 
 ## Histórico de versões
 
@@ -1214,3 +1338,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | 1.0 | 23/10/2026 | Atualização para a Rev 2.0 do hardware: seção nova, pinagem conferida com o esquemático, sensores de distância VL53L0X no lugar do LiDAR, pastas e próximos passos; criação deste histórico ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)) | Ana Carolina Fialho | — |
 | 1.1 | 24/10/2026 | Driver dos 3 VL53L0X: ligação, endereços, regra de validade com fora da faixa limitado, bancada e seus testes no CI, `TofSimulado` e integração com o mapa; interface renomeada para `ISensorDistancia` ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) | Marllon Fausto | — |
 | 1.2 | 24/10/2026 | Boot do sistema: autoteste do I²C, trava dos motores e relatório do boot; camadas dos motores com nome próprio e ordem combinada com as #341 e #380; integração do I²C com o #403 ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) | Marllon Fausto | — |
+| 1.3 | 25/10/2026 | Execução dos movimentos entre células: executor, ciclo de navegação, gatilho da largada, folga do giro no lugar, bancada da execução e seus testes ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) | Marllon Fausto | — |
