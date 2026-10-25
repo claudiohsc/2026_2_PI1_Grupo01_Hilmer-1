@@ -63,6 +63,10 @@ class Odometria {
   /// `zerar()` dos encoders, ou ao reposicionar o robô numa célula conhecida).
   void reiniciar(Pose pose, int32_t contagemEsquerda = 0, int32_t contagemDireita = 0);
 
+  /// Adota uma direção medida por outra fonte (o giroscópio, depois de um giro, #184), sem mudar a
+  /// posição. A diferença acumulada entre as rodas volta a zero: o próximo giro conta a partir daqui.
+  void definirDirecao(Direcao direcao);
+
   /// Célula e direção estimadas.
   Pose pose() const;
 

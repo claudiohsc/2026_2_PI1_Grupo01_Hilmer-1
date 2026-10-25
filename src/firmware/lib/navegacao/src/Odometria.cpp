@@ -49,6 +49,12 @@ void Odometria::reiniciar(Pose pose, int32_t contagemEsquerda, int32_t contagemD
   posicaoValida_ = true;
 }
 
+void Odometria::definirDirecao(Direcao direcao) {
+  direcaoInicial_ = direcao;
+  direcao_ = direcao;
+  diferencaAcumulada_ = 0;
+}
+
 void Odometria::atualizar(int32_t contagemEsquerda, int32_t contagemDireita) {
   const int64_t deltaEsquerda = static_cast<int64_t>(contagemEsquerda) - ultimaEsquerda_;
   const int64_t deltaDireita = static_cast<int64_t>(contagemDireita) - ultimaDireita_;
