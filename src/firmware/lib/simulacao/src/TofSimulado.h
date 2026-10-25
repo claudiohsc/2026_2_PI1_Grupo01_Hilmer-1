@@ -62,6 +62,9 @@ class TofSimulado : public ISensorDistancia {
     distanciaForcada_[indice(lado)] = distanciaMm;
   }
 
+  /// Soma `desvioMm` (com sinal) à amostra bruta do sensor do `lado`, como o offset de um VL53L0X
+  /// real. Vale para todas as leituras seguintes, até outro valor; não vale numa amostra forçada.
+  void definirDesvio(Lado lado, int16_t desvioMm) { desvio_[indice(lado)] = desvioMm; }
   /// Liga ou desliga a falha do sensor do `lado` (não responde no I²C).
   void simularFalha(Lado lado, bool falha) { falha_[indice(lado)] = falha; }
 
@@ -74,7 +77,7 @@ class TofSimulado : public ISensorDistancia {
     }
     const uint16_t doCentroPorLado[3] = {doCentro.frenteMm, doCentro.esquerdaMm, doCentro.direitaMm};
     for (uint8_t i = 0; i < 3; i++) {
-      uint16_t bruta = amostraBruta(doCentroPorLado[i]);
+      uint16_t bruta = amostraBruta(doCentroPorLado[i], desvio_[i]);
       if (forcada_[i]) {
         bruta = distanciaForcada_[i];
         forcada_[i] = false;
@@ -94,10 +97,13 @@ class TofSimulado : public ISensorDistancia {
   static uint8_t indice(Lado lado) { return static_cast<uint8_t>(lado); }
 
   /// O que o sensor mediria com a parede a `doCentroMm` do centro do robô.
-  uint16_t amostraBruta(uint16_t doCentroMm) const {
-    const uint16_t daFace =
-        doCentroMm > RECUO_SENSOR_TOF_SIMULADO_MM ? doCentroMm - RECUO_SENSOR_TOF_SIMULADO_MM : 0;
-    return daFace > config_.distanciaMaximaMm ? SEM_ALVO_TOF_SIMULADO_MM : daFace;
+  uint16_t amostraBruta(uint16_t doCentroMm, int16_t desvioMm) const {
+    const int32_t daFace =
+        (doCentroMm > RECUO_SENSOR_TOF_SIMULADO_MM ? doCentroMm - RECUO_SENSOR_TOF_SIMULADO_MM : 0) + desvioMm;
+    if (daFace > static_cast<int32_t>(config_.distanciaMaximaMm)) {
+      return SEM_ALVO_TOF_SIMULADO_MM;
+    }
+    return static_cast<uint16_t>(daFace < 0 ? 0 : daFace);
   }
 
   const LabirintoSimulado& labirinto_;
@@ -107,6 +113,7 @@ class TofSimulado : public ISensorDistancia {
   bool posicionado_ = false;
   uint32_t agoraMs_ = 0;                   ///< Relógio simulado, em ms.
   bool falha_[3] = {};                     ///< Indexado por `Lado`.
+  int16_t desvio_[3] = {};                 ///< Desvio de cada sensor, em mm (indexado por `Lado`).
   bool forcada_[3] = {};                   ///< Se a próxima amostra do lado foi forçada.
   uint16_t distanciaForcada_[3] = {};      ///< Amostra bruta forçada de cada lado, em mm.
 };

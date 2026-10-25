@@ -316,6 +316,35 @@ void test_o_recuo_vai_ate_o_centro_pela_odometria_com_minimo_e_maximo() {
   }
 }
 
+void test_sem_pose_valida_o_recuo_e_o_fixo() {
+  const DistanciasLaterais corredor{LONGE, PAREDE_LADO, PAREDE_LADO};
+  CicloDeTeste t;
+  t.ate_avancando(corredor);
+  // Sem pose a odometria não diz onde o robô está: recua a distância configurada (40 mm), e não o mínimo.
+  EntradaCiclo batida = t.entradaBase(nullptr, 34 * UM_MM);
+  batida.poseValida = false;
+  batida.colisao = TipoColisao::Impacto;
+  TEST_ASSERT_EQUAL(EstadoCiclo::Recuperando, t.ciclo.atualizar(batida, t.motores));
+  t.passo(nullptr, 0);
+  t.passo(nullptr, -39 * UM_MM);
+  TEST_ASSERT_EQUAL(EstadoCiclo::Recuperando, t.ciclo.estado());
+  t.passo(nullptr, -41 * UM_MM);
+  TEST_ASSERT_EQUAL(EstadoCiclo::Percebendo, t.ciclo.estado());
+}
+
+void test_recuo_recusado_pelo_executor_para_o_ciclo_em_falha() {
+  const DistanciasLaterais corredor{LONGE, PAREDE_LADO, PAREDE_LADO};
+  ConfiguracaoColisao config;
+  config.recuoMm = 0;  // recuo de 0 mm: o executor recusa
+  config.recuoMinimoMm = 0;
+  CicloDeTeste t(config);
+  t.ate_avancando(corredor);
+  TEST_ASSERT_EQUAL(EstadoCiclo::Falha, t.bater());
+  TEST_ASSERT_EQUAL(FalhaExecucao::Nenhuma, t.ciclo.falhaExecucao());
+  TEST_ASSERT_EQUAL_UINT32(1, t.ciclo.colisoes());
+  TEST_ASSERT_EQUAL_UINT32(0, t.ciclo.recuperacoes());
+}
+
 void test_colisao_fora_do_movimento_e_ignorada() {
   CicloDeTeste t;
   const DistanciasLaterais corredor{LONGE, PAREDE_LADO, PAREDE_LADO};
@@ -537,6 +566,8 @@ int main(int, char**) {
   RUN_TEST(test_colisao_avancando_vai_para_recuperando_e_o_robo_recua);
   RUN_TEST(test_depois_do_recuo_o_ciclo_percebe_de_novo_na_mesma_celula_sem_mexer_no_mapa);
   RUN_TEST(test_o_recuo_vai_ate_o_centro_pela_odometria_com_minimo_e_maximo);
+  RUN_TEST(test_sem_pose_valida_o_recuo_e_o_fixo);
+  RUN_TEST(test_recuo_recusado_pelo_executor_para_o_ciclo_em_falha);
   RUN_TEST(test_colisao_fora_do_movimento_e_ignorada);
   RUN_TEST(test_colisao_durante_a_recuperacao_nao_conta_de_novo);
   RUN_TEST(test_so_a_segunda_batida_na_mesma_frente_grava_a_parede_se_o_tof_nao_a_viu);

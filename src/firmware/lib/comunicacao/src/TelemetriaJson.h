@@ -36,7 +36,7 @@ namespace micromouse {
 
 /// Tamanho de buffer que comporta o pior caso do JSON de telemetria (todos os números no maior
 /// valor, com o evento `objetivo_alcancado` e todas as falhas do boot), com folga. O pior caso tem
-/// 516 caracteres; com um buffer menor, `serializar` devolve `0` e a linha se perde. Ao acrescentar
+/// 547 caracteres; com um buffer menor, `serializar` devolve `0` e a linha se perde. Ao acrescentar
 /// campos, confira o teste `test_pior_caso_cabe_em_tamanho_max_json_telemetria`.
 constexpr size_t TAMANHO_MAX_JSON_TELEMETRIA = 768;
 
@@ -72,6 +72,10 @@ struct PacoteTelemetria {
   bool bootOk = true;                  ///< Autoteste aprovado e motores liberados (`boot_ok`)
   const char* falhasBoot = nullptr;    ///< O que falhou, separado por vírgula; nullptr = "" (`boot_falhas`)
   uint32_t bootMs = 0;                 ///< Duração do boot, em ms (`boot_ms`)
+
+  /// Fase do robô na corrida (#242): `aguardando_calibracao`, `aguardando_largada`, `em_corrida` ou
+  /// `encerrada` (`fase`). nullptr = "" (a fase não foi informada).
+  const char* fase = nullptr;
 };
 
 /// Serializador de dados de telemetria em formato JSON compatível com a tabela `telemetria` e o dashboard web.
