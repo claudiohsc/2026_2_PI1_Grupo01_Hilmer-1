@@ -256,6 +256,49 @@ if (estado == EstadoMovimento::ParadoNaParede) {
 
 O `MotoresDrv8833` (`lib/drivers_esp32`) aplica a potência com PWM de 20 kHz e 10 bits nos GPIO 4 a 7, no modo *fast decay*; `parar()` liga IN1 e IN2 (freio). O motor direito fica invertido no `main.cpp`, pela montagem espelhada.
 
+## Motores N20 (DRV8833)
+
+Os dois motores N20 são acionados pelo DRV8833 com PWM nas quatro entradas (`MotoresDrv8833`, em `drivers_esp32`). Os pinos vêm de `Pinos.h` (Rev 2.0): IN1/IN2 = GPIO10/GPIO3 (motor esquerdo) e IN3/IN4 = GPIO20/GPIO21 (motor direito, invertido no `main.cpp` pela montagem espelhada).
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| `ConfiguracaoMotores.h` | `lib/atuacao` | Frequência e resolução do PWM e o **duty máximo** em movimento |
+| `SinaisDrv8833.h` | `lib/atuacao` | Potência de uma roda → duty de IN1 e IN2 (frente, ré, roda livre e freio) |
+| `MotoresDrv8833` | `lib/drivers_esp32` | Freia antes de ligar o PWM e escreve os duties nos pinos |
+| `ProtecaoMotorTravado` | `lib/atuacao` | Diz se o robô está travado sem usar encoder: potência alta por 500 ms sem variação do ToF frontal **e** do giroscópio |
+| `MotoresComProtecao` | `lib/atuacao` | Decorador de `IMotores`: repassa os comandos, roda a proteção a cada ciclo e, travado, freia e recusa comandos até `liberar()` |
+
+**Duty máximo.** A potência máxima pedida pelo controle (`POTENCIA_MAXIMA`, 1000) vira `DUTY_MAXIMO_MOTORES`, e não 100%: as potências menores ficam proporcionais. O freio sempre usa o duty total. O teste `test_motores` confere que nenhuma potência passa do limite.
+
+**No `main.cpp`.** As camadas dos motores ficam nesta ordem, de fora para dentro: `MotoresComTrava` (#50) → `MotoresComProtecao` (#341) → `MotoresComEstimativa` (#380) → `MotoresDrv8833`. O resto do firmware comanda `motoresTracao`, a camada de fora, nunca `motores` direto. A navegação chama `motoresProtegidos.atualizarProtecao(medidasDaProtecao(leituraTof), 10)` a cada ciclo, com o ToF frontal (#344) e a taxa do giroscópio sem o viés (#378). **O giroscópio é obrigatório**: sem ele, um giro no lugar (ToF frontal parado) seria lido como motor travado. Por isso, sem ToF ou sem giroscópio válidos (por exemplo, antes da calibração do viés), a medida vai como inválida: a proteção não freia por engano, mas também não protege. Quando ela corta, a navegação escreve `{"status":"motor_travado"}` no log.
+
+### Tranco no boot
+
+GPIO20 e GPIO21 são a UART0 do ESP32-C3. Durante o reset, antes de o firmware rodar, a ROM escreve o log de boot no GPIO21 (TX), e o GPIO20 (RX) fica como entrada. Como esses pinos são o IN3/IN4 do DRV8833, **o motor direito pode receber pulsos e dar um tranco** nos primeiros instantes depois de ligar ou de um reset (cerca de 0,3 s, até o `setup()`).
+
+O que o firmware faz: `motores.iniciar()` é a **primeira linha** do `setup()`. Ele põe os quatro pinos como saída em nível alto (freio) e só depois liga o PWM, já com duty total (freio também).
+
+O que o firmware **não** consegue evitar é o intervalo antes do `setup()`. Opções, a decidir com a eletrônica:
+
+- **Na bancada:** ligar e resetar o robô com as rodas fora do chão.
+- **No hardware:** resistores de pull-down em IN3/IN4, para os pinos ficarem em nível baixo (roda livre) enquanto a ROM não os controla. O ideal seria o nSLEEP do DRV8833 num GPIO, mas os 15 já estão em uso.
+- **Irreversível:** desligar o log da ROM pelo eFuse `UART_PRINT_CONTROL` (`espefuse.py`). Não grave sem combinar com o grupo: o eFuse não volta atrás.
+
+### Valores provisórios
+
+A eletrônica ainda não informou a tensão do VM (bateria 2S ou 5 V) nem a tensão nominal, a redução e a corrente de travamento do N20. Ajuste na bancada:
+
+| Parâmetro | Arquivo | Valor | Como conferir |
+|---|---|---|---|
+| Frequência do PWM | `ConfiguracaoMotores.h` | 20 kHz | O motor não chia nem esquenta parado em duty baixo |
+| Resolução do PWM | `ConfiguracaoMotores.h` | 10 bits (0 a 1023) | — |
+| Duty máximo em movimento | `ConfiguracaoMotores.h` (`LIMITE_DUTY_MOTORES_MILESIMOS`) | 70% | N20 de 6 V na bateria 2S carregada (6 / 8,4 ≈ 71%). Com VM de 5 V, pode subir para 100% |
+| Motor direito invertido | `main.cpp` | sim | `definirPotencia({300, 300})` faz as duas rodas andarem para a frente |
+| Potência que conta como duty alto | `ConfiguracaoProtecaoMotor.h` | 300 (30%) | Acima da zona morta do N20 |
+| Tempo até considerar travado | `ConfiguracaoProtecaoMotor.h` | 500 ms | Prender uma roda com a mão em potência de cruzeiro: o corte vem antes de o driver esquentar |
+| Variação mínima do ToF frontal | `ConfiguracaoProtecaoMotor.h` | 5 mm | Acima do ruído do VL53L0X |
+| Taxa de giro mínima | `ConfiguracaoProtecaoMotor.h` | 5 °/s | Acima do ruído do giroscópio parado |
+
 ## Deslocamento sem encoder
 
 Na Rev 2.0 os encoders ainda não estão instalados. Enquanto isso, o deslocamento é **estimado pela potência comandada vezes o tempo** e **corrigido pelos ToF** ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)). O `EncoderEstimado` implementa o `IEncoder`, então a `Odometria` não muda; o `MotoresComEstimativa` implementa o `IMotores`, então quem aciona as rodas também não.
@@ -594,7 +637,7 @@ A placa é a **ESP32-C3 Super Mini** (esquemático Rev 2.0 de 21/10/2026). Todos
 | Encoder direito: A / B (reservado, ainda não instalado) | 6 / 7 |
 | USB nativa: D− / D+ (log e gravação) | 18 / 19 |
 
-O **log serial sai pela USB nativa** (`ARDUINO_USB_MODE=1` e `ARDUINO_USB_CDC_ON_BOOT=1` no `platformio.ini`), porque GPIO20/21, a UART0, são as entradas do driver dos motores. O `main.cpp` não compila sem essas opções. Ao ligar, a ROM do ESP32-C3 ainda escreve no GPIO21 durante o reset: a montagem precisa manter o driver desabilitado no boot (validação da eletrônica na bancada). A porta serial aparece no computador como um dispositivo USB (`pio device monitor` a encontra sozinho); sem um computador conectado, o log é descartado.
+O **log serial sai pela USB nativa** (`ARDUINO_USB_MODE=1` e `ARDUINO_USB_CDC_ON_BOOT=1` no `platformio.ini`), porque GPIO20/21, a UART0, são as entradas do driver dos motores. O `main.cpp` não compila sem essas opções. Ao ligar, a ROM do ESP32-C3 ainda escreve no GPIO21 durante o reset: a montagem precisa manter o driver desabilitado no boot (validação da eletrônica na bancada; veja [Tranco no boot](#tranco-no-boot)). A porta serial aparece no computador como um dispositivo USB (`pio device monitor` a encontra sozinho); sem um computador conectado, o log é descartado.
 
 ## IMU (MPU6050) e barramento I²C
 
