@@ -46,6 +46,8 @@ void RoboSimulado::posicionar(const Pose& pose, double desvioLateralMm, double d
   taxaRadPorS_ = 0.0;
   colidiu_ = false;
   msEmContato_ = 0;
+  rodaEsquerdaMm_ = 0.0;
+  rodaDireitaMm_ = 0.0;
 }
 
 void RoboSimulado::definirPotencia(const PotenciaRodas& potencia) {
@@ -63,6 +65,8 @@ void RoboSimulado::avancar(uint32_t dtMs) {
     const double meio = rumoRad_ + taxaRadPorS_ * dt / 2.0;
     x_ += -std::sin(meio) * v * dt;
     y_ += std::cos(meio) * v * dt;
+    rodaEsquerdaMm_ += vEsq * dt;
+    rodaDireitaMm_ += vDir * dt;
     rumoRad_ += taxaRadPorS_ * dt;
     conferirColisao();
   }

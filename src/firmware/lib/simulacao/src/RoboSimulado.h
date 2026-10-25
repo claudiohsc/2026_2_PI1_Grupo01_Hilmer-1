@@ -77,6 +77,11 @@ class RoboSimulado : public IMotores {
   /// Diferença do rumo real para o múltiplo de 90° mais próximo, em graus.
   double erroRumoGraus() const;
 
+  /// Distância real percorrida por cada roda desde `posicionar`, em mm (positivo = para a frente):
+  /// o que um encoder ideal mediria, para os testes com os encoders reais.
+  double distanciaRodaEsquerdaMm() const { return rodaEsquerdaMm_; }
+  double distanciaRodaDireitaMm() const { return rodaDireitaMm_; }
+
   /// `true` se o chassi encostou numa parede em algum momento.
   bool colidiu() const { return colidiu_; }
 
@@ -107,6 +112,8 @@ class RoboSimulado : public IMotores {
   double taxaRadPorS_ = 0.0;
   bool colidiu_ = false;
   uint32_t msEmContato_ = 0;
+  double rodaEsquerdaMm_ = 0.0;
+  double rodaDireitaMm_ = 0.0;
   double xColisao_ = 0.0;
   double yColisao_ = 0.0;
   double rumoColisao_ = 0.0;

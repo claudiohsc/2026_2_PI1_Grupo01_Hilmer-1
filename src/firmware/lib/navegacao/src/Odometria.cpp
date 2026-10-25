@@ -55,6 +55,29 @@ void Odometria::definirDirecao(Direcao direcao) {
   diferencaAcumulada_ = 0;
 }
 
+void Odometria::ajustarPosicao(int32_t deltaAvancoUm, int32_t deltaLateralUm) {
+  // A direita de cada direção: Norte → Leste, Leste → Sul, Sul → Oeste, Oeste → Norte.
+  switch (direcao_) {
+    case Direcao::Norte:
+      norteUm_ += deltaAvancoUm;
+      lesteUm_ += deltaLateralUm;
+      break;
+    case Direcao::Sul:
+      norteUm_ -= deltaAvancoUm;
+      lesteUm_ -= deltaLateralUm;
+      break;
+    case Direcao::Leste:
+      lesteUm_ += deltaAvancoUm;
+      norteUm_ -= deltaLateralUm;
+      break;
+    case Direcao::Oeste:
+      lesteUm_ -= deltaAvancoUm;
+      norteUm_ += deltaLateralUm;
+      break;
+  }
+  recalcularPose();
+}
+
 void Odometria::atualizar(int32_t contagemEsquerda, int32_t contagemDireita) {
   const int64_t deltaEsquerda = static_cast<int64_t>(contagemEsquerda) - ultimaEsquerda_;
   const int64_t deltaDireita = static_cast<int64_t>(contagemDireita) - ultimaDireita_;

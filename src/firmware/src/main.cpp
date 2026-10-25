@@ -11,7 +11,8 @@
 /// Os motores só são liberados depois do autoteste do boot (#50) encontrar os 4 dispositivos do I²C.
 /// A navegação percebe as paredes no centro de cada célula, grava no mapa, decide pelo Flood Fill e
 /// executa um movimento por vez (avançar uma célula, girar 90° ou 180°, #184), depois da largada
-/// pelo gesto da mão na frente do ToF frontal (ou do comando serial `L`).
+/// pelo gesto da mão na frente do ToF frontal (ou do comando serial `L`). As paredes corrigem o erro
+/// acumulado da odometria, e o robô se realinha ao centro do corredor antes de girar no lugar (#188).
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -32,6 +33,7 @@
 #include "ConfiguracaoDeslocamento.h"
 #include "ConfiguracaoImu.h"
 #include "ConversorDeslocamento.h"
+#include "CorrecaoPelasParedes.h"
 #include "CorretorDeslocamentoTof.h"
 #include "DeslocamentoEstimado.h"
 #include "DetectorObjetivo.h"
@@ -179,6 +181,11 @@ static portMUX_TYPE travaGiro = portMUX_INITIALIZER_UNLOCKED;
 /// ficam dentro dele). Só a tarefa de navegação o usa; só ela escreve no mapa.
 static micromouse::CicloNavegacao cicloNavegacao(armazenamentoMapa.mapa());
 
+/// Correção do erro acumulado da odometria pelas paredes (#188): a posição lateral pelas paredes
+/// laterais e, com os encoders instalados, também ao longo do avanço (no modo estimado, quem corrige
+/// o avanço é o `DeslocamentoEstimado`). Protegida por `travaOdometria`, como a odometria.
+static micromouse::CorrecaoPelasParedes correcaoParedes;
+
 /// Gatilho da largada (#184): a mão na frente do ToF frontal, ou o comando serial `L`. Só a tarefa
 /// de navegação o usa.
 static micromouse::GatilhoLargada gatilhoLargada;
@@ -244,6 +251,10 @@ static void tarefaNavegacao(void*) {
       instanteUltimaLeituraUsada = instanteLeitura;
     }
 
+    // Nas manobras (giros e realinhamento), as leituras não servem de referência de posição (#188).
+    const micromouse::MovimentoRobo movimento = cicloNavegacao.movimentoRobo();
+    const bool referencia = leituraNova && movimento != micromouse::MovimentoRobo::Manobrando;
+
     bool alcancou = false;
     // Odometria e detecção de chegada executam na seção crítica travaOdometria para sincronizar com
     // tarefaTelemetria. O intervalo curto (10 ms) mantém cada atualização com giro ou avanço, não os dois.
@@ -253,15 +264,23 @@ static void tarefaNavegacao(void*) {
     pedidoReinicioNavegacao = false;
     pedidoLargada = false;
     // Fora dos giros, a direção da odometria é a confirmada pelo giroscópio no fim de cada giro, e não
-    // a da diferença entre as rodas (#184).
-    if (cicloNavegacao.direcaoDefinida() && odometria.pose().direcao != cicloNavegacao.direcao()) {
+    // a da diferença entre as rodas (#184). A cada ciclo, para a diferença também não se acumular nos
+    // giros pequenos do realinhamento (#188).
+    if (cicloNavegacao.direcaoDefinida()) {
       odometria.definirDirecao(cicloNavegacao.direcao());
     }
     if (micromouse::ENCODERS_INSTALADOS) {
       odometria.atualizar(rodaEsq, rodaDir);
     } else {
       // Estima o avanço dos 10 ms e corrige a posição pela leitura nova do ToF, se houver.
-      deslocamento.ciclo(10, odometria, leituraNova ? &leituraTof.distancias : nullptr);
+      if (movimento == micromouse::MovimentoRobo::Manobrando) {
+        deslocamento.esquecerLaterais();
+      }
+      deslocamento.ciclo(10, odometria, referencia ? &leituraTof.distancias : nullptr);
+    }
+    // Pelas paredes: a posição lateral sempre e, com os encoders, também ao longo do avanço (#188).
+    if (leituraNova) {
+      correcaoParedes.aplicar(odometria, leituraTof.distancias, movimento, micromouse::ENCODERS_INSTALADOS);
     }
     const micromouse::Pose pose = odometria.pose();
     // No modo estimado, uma pose sem correção recente não serve para declarar a chegada (#380).
@@ -280,6 +299,9 @@ static void tarefaNavegacao(void*) {
 
     if (reiniciarNavegacao) {
       largadaPendente = false;
+      portENTER_CRITICAL(&travaOdometria);
+      correcaoParedes.reiniciar();
+      portEXIT_CRITICAL(&travaOdometria);
       gatilhoLargada.reiniciar();
       cicloNavegacao.reiniciar(pose, motoresTracao);
     }

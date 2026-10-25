@@ -12,6 +12,8 @@
 #include "ConfiguracaoControle.h"
 #include "ConfiguracaoExecucao.h"
 #include "ConfiguracaoGiro.h"
+#include "ConfiguracaoLocalizacao.h"
+#include "CorrecaoPelasParedes.h"
 #include "ExecutorMovimentos.h"
 #include "IMotores.h"
 #include "Mapa.h"
@@ -25,6 +27,7 @@ namespace micromouse {
 enum class EstadoCiclo : uint8_t {
   AguardandoLargada,  ///< Parado na partida até a largada ser liberada (ou pausado sem liberação).
   Percebendo,         ///< Parado no centro da célula, juntando leituras para gravar as paredes.
+  Realinhando,        ///< Indo para o centro do corredor antes de girar no lugar (#188).
   Girando,            ///< Girando para a direção decidida.
   Avancando,          ///< Avançando uma célula.
   ObjetivoAlcancado,  ///< Na célula objetivo: parado.
@@ -58,14 +61,21 @@ struct EntradaCiclo {
 ///    classifica as paredes (`ClassificadorParede`, mediana) e as grava no mapa (`AtualizadorMapa`)
 ///    na pose da navegação.
 /// 2. **Decisão:** `Navegacao::darPasso()` devolve a direção absoluta da próxima célula.
-/// 3. **Girando:** se a direção é outra, o giro de 90° ou 180° que leva a ela.
-/// 4. **Avançando:** uma célula. No fim, `confirmarPose()` com a célula da odometria e a direção
+/// 3. **Realinhando** (#188): antes de um giro no lugar, se as paredes laterais mostram o robô mais
+///    de `desvioMinimoMm` fora do centro do corredor, ele se desloca para o centro (giro pequeno,
+///    trecho reto, volta ao rumo e trecho de volta; veja `planejarRealinhamento`). A quina do chassi
+///    tem só 5,9 mm de folga no giro de 90°. O primeiro trecho vai para o lado livre: para trás (a
+///    célula de onde veio) ou, se ela estiver fechada, para a frente.
+/// 4. **Girando:** se a direção é outra, o giro de 90° ou 180° que leva a ela.
+/// 5. **Avançando:** uma célula. No fim, `confirmarPose()` com a célula da odometria e a direção
 ///    do giroscópio, e volta a 1. Se uma parede não mapeada parar o avanço, o passo é cancelado e
 ///    o próximo planejamento já a considera.
 ///
 /// **Direção.** No modo estimado, a direção da `Odometria` vem da diferença entre as rodas, que
 /// é imprecisa; o giroscópio é a referência. Fora dos giros (`direcaoDefinida()`), quem chama deve
-/// manter a odometria em `direcao()` (`Odometria::definirDirecao`) antes de montar a entrada.
+/// chamar `Odometria::definirDirecao(direcao())` a cada ciclo, antes de atualizar a odometria: além
+/// de fixar a direção, isso zera a diferença entre as rodas, que nos giros pequenos do
+/// realinhamento chegaria a virar a direção estimada.
 ///
 /// **Fora do escopo** (outras issues): recuperação de colisão (#192), motor travado (#341), falha
 /// no I²C (#241), tempo limite da corrida (#242/#185) e correção da posição pelas paredes (#188).
@@ -77,7 +87,8 @@ class CicloNavegacao {
   /// @param mapa Mapa da corrida (o de `ArmazenamentoMapa`); precisa continuar existindo.
   CicloNavegacao(Mapa& mapa, const ConfiguracaoExecucao& config = ConfiguracaoExecucao{},
                  const ConfiguracaoControle& controle = ConfiguracaoControle{},
-                 const ConfiguracaoGiro& giro = ConfiguracaoGiro{});
+                 const ConfiguracaoGiro& giro = ConfiguracaoGiro{},
+                 const ConfiguracaoRealinhamento& realinhamento = ConfiguracaoRealinhamento{});
 
   /// Volta a aguardar a largada na pose dada: refaz o objetivo pelo tamanho atual do mapa, define
   /// a pose da navegação, cancela o movimento em andamento e freia os motores. Chame depois de
@@ -94,6 +105,23 @@ class CicloNavegacao {
 
   /// `false` durante um giro: aí a direção da odometria fica livre.
   bool direcaoDefinida() const { return estado_ != EstadoCiclo::Girando; }
+
+  /// O que o robô está fazendo, para a correção pelas paredes (#188): `Manobrando` nos giros e
+  /// no realinhamento, quando as leituras não servem de referência.
+  MovimentoRobo movimentoRobo() const {
+    if (estado_ == EstadoCiclo::Avancando) {
+      return MovimentoRobo::Avancando;
+    }
+    const bool manobrando =
+        estado_ == EstadoCiclo::Girando || (estado_ == EstadoCiclo::Realinhando && !conferindoRealinhamento_);
+    return manobrando ? MovimentoRobo::Manobrando : MovimentoRobo::Parado;
+  }
+
+  /// Realinhamentos feitos desde a largada.
+  uint32_t realinhamentos() const { return realinhamentos_; }
+
+  /// Desvio lateral medido na última percepção, em mm (positivo = à direita do centro).
+  int32_t ultimoDesvioLateralMm() const { return ultimoDesvio_.desvioUm / 1000; }
 
   /// Motivo da última falha de movimento (`Nenhuma` se a falha foi a pose fora do mapa).
   FalhaExecucao falhaExecucao() const { return falhaExecucao_; }
@@ -113,6 +141,13 @@ class CicloNavegacao {
  private:
   void entrarEmPercepcao();
   void decidir(IMotores& motores);
+  void iniciarGiro(Movimento giro);
+
+  /// Realinha se o desvio medido nas amostras passa do limiar e ainda há tentativa; senão, gira.
+  void realinharOuGirar(Movimento giro);
+
+  /// Desvio lateral pela mediana das leituras da percepção.
+  DesvioLateral desvioDasAmostras() const;
   void confirmarChegada(const EntradaCiclo& entrada);
   void parar(EstadoCiclo estado, IMotores& motores);
 
@@ -125,6 +160,7 @@ class CicloNavegacao {
   ClassificadorParede classificador_;
   ExecutorMovimentos executor_;
   ConfiguracaoExecucao config_;
+  ConfiguracaoRealinhamento configRealinhamento_;
 
   EstadoCiclo estado_ = EstadoCiclo::AguardandoLargada;
   Direcao direcao_ = Direcao::Norte;
@@ -136,6 +172,11 @@ class CicloNavegacao {
   ResultadoConfirmacao ultimaConfirmacao_ = ResultadoConfirmacao::Confirmada;
   uint32_t celulasAvancadas_ = 0;
   uint32_t girosFeitos_ = 0;
+  uint32_t realinhamentos_ = 0;
+  Movimento giroPendente_ = Movimento::Girar180;  ///< Giro a fazer depois do realinhamento.
+  uint8_t realinhamentosNoPasso_ = 0;             ///< Realinhamentos antes do giro pendente.
+  bool conferindoRealinhamento_ = false;          ///< Juntando leituras para medir o desvio de novo.
+  DesvioLateral ultimoDesvio_;
 
   static constexpr size_t MAX_AMOSTRAS = 16;  ///< Mesma capacidade do filtro da percepção.
   DistanciasLaterais amostras_[MAX_AMOSTRAS] = {};
