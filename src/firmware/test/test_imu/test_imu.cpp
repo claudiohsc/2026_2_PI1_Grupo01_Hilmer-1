@@ -525,6 +525,44 @@ void test_acompanhador_taxa_publicada_nao_estoura_com_o_vies() {
   TEST_ASSERT_EQUAL_INT16(INT16_MAX, giro.ciclo(DT_MS).taxaDecimosDps);
 }
 
+void test_integrador_adota_um_vies_ja_medido_e_zera_o_angulo() {
+  IntegradorGiro giro;
+  integrar(giro, 300, 100);  // algum ângulo acumulado antes
+  giro.definirVies(15);
+
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrado, giro.estadoCalibracao());
+  TEST_ASSERT_EQUAL_INT16(15, giro.viesDecimosDps());
+  TEST_ASSERT_EQUAL_INT32(0, giro.anguloMiligraus());
+  // Parado com o mesmo viés: a taxa medida (15) menos o viés é zero e o ângulo não anda.
+  TEST_ASSERT_EQUAL_INT32(0, integrar(giro, 15, 200));
+}
+
+void test_acompanhador_com_vies_definido_fica_valido_sem_calibrar_de_novo() {
+  ImuSimulado imu;
+  imu.definirVies(-8);
+  AcompanhadorGiro giro(imu);
+  giro.definirVies(-8);
+
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrado, giro.estadoCalibracao());
+  TEST_ASSERT_TRUE(giro.ultima().valida);
+  // Parado 2 s com o viés da IMU igual ao adotado: o ângulo fica em zero e a leitura continua válida.
+  const LeituraGiro& parado = rodarCiclos(giro, 200);
+  TEST_ASSERT_TRUE(parado.valida);
+  TEST_ASSERT_EQUAL_INT32(0, parado.anguloMiligraus);
+  // E um giro de 90° a 90°/s durante 1 s é lido sem a calibração própria.
+  imu.definirTaxa(900);
+  const LeituraGiro& girou = rodarCiclos(giro, 100);
+  TEST_ASSERT_INT32_WITHIN(500, NOVENTA_GRAUS, girou.anguloMiligraus);
+}
+
+void test_acompanhador_sem_vies_definido_continua_nao_calibrado() {
+  ImuSimulado imu;
+  AcompanhadorGiro giro(imu);
+  TEST_ASSERT_EQUAL(EstadoCalibracao::NaoCalibrado, giro.estadoCalibracao());
+  giro.iniciarCalibracao();
+  TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrando, giro.estadoCalibracao());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_conversao_um_grau_por_segundo_em_cada_faixa);
@@ -566,5 +604,8 @@ int main(int, char**) {
   RUN_TEST(test_acompanhador_sem_calibrar_nao_e_valido_mas_integra);
   RUN_TEST(test_acompanhador_falha_durante_a_calibracao_nao_conta_amostra);
   RUN_TEST(test_acompanhador_taxa_publicada_nao_estoura_com_o_vies);
+  RUN_TEST(test_integrador_adota_um_vies_ja_medido_e_zera_o_angulo);
+  RUN_TEST(test_acompanhador_com_vies_definido_fica_valido_sem_calibrar_de_novo);
+  RUN_TEST(test_acompanhador_sem_vies_definido_continua_nao_calibrado);
   return UNITY_END();
 }

@@ -47,6 +47,7 @@
 #include "Odometria.h"
 #include "Pinos.h"
 #include "RelatorioBoot.h"
+#include "RotinaCalibracao.h"
 #include "TelemetriaJson.h"
 #include "TofVl53l0x.h"
 
@@ -201,13 +202,52 @@ static micromouse::GatilhoLargada gatilhoLargada;
 static bool pedidoReinicioNavegacao = false;
 static bool pedidoLargada = false;
 
+/// Calibração do boot (#240, RNF-08): desvio de cada ToF e viés do giroscópio, em até 1 s, com o robô
+/// parado na célula de partida. O `corrigirTof` é aplicado a toda leitura dos ToF (navegação) e o viés
+/// vai para o `acompanhadorGiro`. Falhou, o robô segue sem correção de ToF e a tarefa da IMU calibra o
+/// viés sozinha.
+static micromouse::RotinaCalibracao rotinaCalibracao;
+
+/// Roda a `RotinaCalibracao` com os sensores reais, a cada 10 ms, até ela terminar (sucesso, falha ou
+/// 1 s). Só pode ser chamada no `setup()`, antes de criar as tarefas, porque usa o ToF e a IMU sem
+/// outra tarefa disputando o I²C. Conta como amostra de ToF só a leitura com medida nova.
+static micromouse::EstadoRotinaCalibracao calibrarSensores() {
+  rotinaCalibracao.iniciar(micromouse::REFERENCIAS_TOF_NA_LARGADA);
+  uint32_t anteriorMs = millis();
+  uint32_t instanteUltimaLeituraTof = 0;
+  bool leuTof = false;
+  while (rotinaCalibracao.estado() == micromouse::EstadoRotinaCalibracao::EmAndamento) {
+    delay(micromouse::PERIODO_AMOSTRAGEM_GIRO_MS);
+    const uint32_t agoraMs = millis();
+
+    int16_t taxaGiro = 0;
+    const bool giroValido = imu.lerTaxaGiroZ(taxaGiro);
+
+    micromouse::DistanciasLaterais distancias = {0, 0, 0};
+    const bool tofLido = tof.lerDistanciasLaterais(distancias);
+    const uint32_t instanteLeitura = agoraMs - tof.idadeUltimaLeituraMs();
+    const bool tofNovo = tofLido && (!leuTof || instanteLeitura != instanteUltimaLeituraTof);
+    if (tofNovo) {
+      leuTof = true;
+      instanteUltimaLeituraTof = instanteLeitura;
+    }
+
+    rotinaCalibracao.atualizar(distancias, tofNovo, taxaGiro, giroValido, agoraMs - anteriorMs);
+    anteriorMs = agoraMs;
+  }
+  return rotinaCalibracao.estado();
+}
+
 /// Tarefa da IMU: lê o giroscópio a cada `PERIODO_LEITURA_IMU_MS` (10 ms), em intervalo fixo.
 ///
 /// Prioridade 3, a maior: a leitura é curta (menos de 1 ms) e o ângulo só fica certo se o intervalo
-/// entre leituras não variar. Nos primeiros 2 s calibra o viés, com o robô parado na largada; se o
-/// robô se mexer, a calibração recomeça sozinha.
+/// entre leituras não variar. Se a calibração do boot (`calibrarSensores`) não deu o viés, calibra
+/// por conta própria nos primeiros 2 s, com o robô parado na largada; se o robô se mexer, a
+/// calibração recomeça sozinha.
 static void tarefaImu(void*) {
-  acompanhadorGiro.iniciarCalibracao();
+  if (acompanhadorGiro.estadoCalibracao() != micromouse::EstadoCalibracao::Calibrado) {
+    acompanhadorGiro.iniciarCalibracao();
+  }
   bool calibradoAnunciado = false;
   TickType_t ultimoInstante = xTaskGetTickCount();
   for (;;) {
@@ -256,6 +296,10 @@ static void tarefaNavegacao(void*) {
     {
       micromouse::BarramentoI2c::Uso uso(barramentoI2c);
       leituraTof.valida = uso.conseguiu() && tof.lerDistanciasLaterais(leituraTof.distancias);
+    }
+    if (leituraTof.valida) {
+      // Desvio de cada sensor medido na calibração do boot (zero se ela não aconteceu).
+      leituraTof.distancias = rotinaCalibracao.corrigirTof(leituraTof.distancias);
     }
     leituraTof.idadeMs = tof.idadeUltimaLeituraMs();
     portENTER_CRITICAL(&travaTof);
@@ -519,10 +563,24 @@ void setup() {
   imprimirRelatorioBoot();
 
   // MPU6050 (#378). Sem a IMU o firmware segue, sem ângulo de giro válido.
-  if (imu.iniciar()) {
+  const bool imuIniciada = imu.iniciar();
+  if (imuIniciada) {
     Serial.printf("{\"status\":\"imu_iniciada\",\"who_am_i\":\"0x%02X\"}\n", imu.identificacao());
   } else {
     Serial.println("{\"status\":\"falha_imu\"}");
+  }
+
+  // Calibração dos ToF e do giroscópio (#240, RNF-08), com o robô parado na célula de partida. Só
+  // com o autoteste aprovado e a IMU de pé: sem isso, não há o que calibrar.
+  if (estadoBoot.ok && imuIniciada) {
+    const micromouse::EstadoRotinaCalibracao calibracao = calibrarSensores();
+    if (calibracao == micromouse::EstadoRotinaCalibracao::Sucesso) {
+      acompanhadorGiro.definirVies(rotinaCalibracao.viesGiroDecimosDps());
+    }
+    Serial.printf("{\"status\":\"calibracao\",\"estado\":\"%s\",\"duracao_ms\":%lu,\"no_prazo\":%s}\n",
+                  micromouse::nomeEstadoRotina(calibracao),
+                  static_cast<unsigned long>(rotinaCalibracao.duracaoMedidaMs()),
+                  rotinaCalibracao.dentroDoOrcamento() ? "true" : "false");
   }
 
   xTaskCreate(tarefaImu, "imu", 3072, nullptr, 3, nullptr);
