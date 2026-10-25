@@ -20,12 +20,20 @@ namespace micromouse {
 // 1. Geometria dos sensores para o controle do avanço
 // ---------------------------------------------------------------------------------------------
 
-/// Distância do centro do robô até a face dos sensores laterais, em mm. O `ControleMovimento`
-/// trabalha com distâncias a partir do centro do robô (84 mm até a parede com ele centralizado),
-/// e o ToF mede a partir da face do sensor. Mesmo recuo da percepção (`ConfiguracaoPercepcao.h`:
-/// 84 − 30 = 54 mm lidos com parede). A frente usa o recuo do deslocamento estimado
-/// (`DISTANCIA_SENSOR_FRONTAL_AO_CENTRO_MM`), o mesmo da correção pela parede da frente.
-constexpr uint16_t DISTANCIA_SENSOR_LATERAL_AO_CENTRO_MM = 30;
+// O `ControleMovimento` trabalha com distâncias a partir do centro do robô (84 mm até a parede com
+// ele centralizado), e o ToF mede a partir da face do sensor: a leitura recebe o recuo de cada
+// sensor, `DISTANCIA_SENSOR_FRONTAL_AO_CENTRO_MM` e `DISTANCIA_SENSOR_LATERAL_AO_CENTRO_MM`, ambos
+// em `ConfiguracaoDeslocamento.h` (os mesmos das correções pelas paredes).
+
+/// Leitura lateral (a partir da face do sensor), em mm, acima da qual o lado conta como sem parede
+/// para a centralização do avanço (#188). Uma parede imediata lê 54 mm com o robô centrado (até
+/// cerca de 80 mm com ele 25 mm fora). Perto do fim de uma parede, o raio lateral pega a parede de
+/// uma célula vizinha a 100–180 mm, e o `ControleMovimento` (limiar de 180 mm do centro) a tomaria
+/// como parede imediata e viraria o robô para o lado errado.
+constexpr uint16_t LIMIAR_PAREDE_LATERAL_CONTROLE_MM = 100;
+
+/// Distância lateral (do centro) passada ao `ControleMovimento` para um lado sem parede.
+constexpr uint16_t LATERAL_SEM_PAREDE_MM = 1000;
 
 // ---------------------------------------------------------------------------------------------
 // 2. Avanço de uma célula
@@ -81,6 +89,7 @@ constexpr uint32_t ESPERA_APOS_GESTO_GATILHO_MS = 1000;
 struct ConfiguracaoExecucao {
   uint16_t distanciaSensorFrontalAoCentroMm = DISTANCIA_SENSOR_FRONTAL_AO_CENTRO_MM;
   uint16_t distanciaSensorLateralAoCentroMm = DISTANCIA_SENSOR_LATERAL_AO_CENTRO_MM;
+  uint16_t limiarParedeLateralControleMm = LIMIAR_PAREDE_LATERAL_CONTROLE_MM;
   uint16_t toleranciaChegadaMm = TOLERANCIA_CHEGADA_MM;
   uint16_t distanciaDesaceleracaoMm = DISTANCIA_DESACELERACAO_MM;
   uint16_t folgaParadaNaParedeMm = FOLGA_PARADA_NA_PAREDE_MM;

@@ -9,6 +9,7 @@
 #include "ConfiguracaoControle.h"
 #include "ConfiguracaoExecucao.h"
 #include "ConfiguracaoGiro.h"
+#include "ConfiguracaoLocalizacao.h"
 #include "ControleGiro.h"
 #include "ControleMovimento.h"
 #include "IMotores.h"
@@ -30,9 +31,32 @@ enum class FalhaExecucao : uint8_t {
   Nenhuma,
   ParedeNaFrente,     ///< O avanço parou numa parede antes do centro de destino.
   SemLeituraTof,      ///< Sem leitura nova do ToF por `tempoMaximoSemLeituraMs` durante o avanço.
-  TempoEsgotado,      ///< O avanço passou de `tempoMaximoAvancoMs`.
+  TempoEsgotado,      ///< O avanço (ou um trecho do realinhamento) passou do tempo máximo.
   GiroTempoEsgotado   ///< O giro não chegou ao rumo no tempo limite (inclusive sem giroscópio válido).
 };
+
+/// Plano de um realinhamento: o giro pequeno e o trecho reto que levam o robô ao centro do corredor.
+struct PlanoRealinhamento {
+  int32_t anguloMiligraus = 0;  ///< Giro de ida, relativo ao rumo (positivo = esquerda).
+  int32_t trechoUm = 0;         ///< Primeiro trecho reto (positivo = para a frente).
+  int32_t voltaUm = 0;          ///< Segundo trecho, no rumo original (sinal oposto ao primeiro).
+  int32_t deslocamentoUm = 0;   ///< Quanto o robô vai para o lado (positivo = esquerda).
+};
+
+/// Planeja o realinhamento para um desvio lateral (positivo = o robô está à direita do centro).
+///
+/// O robô gira θ, anda `s` reto, volta ao rumo e anda `s·cos θ` no sentido oposto: termina
+/// `s·sen θ` para o lado, no mesmo ponto do eixo e no mesmo rumo. Com `recuarPrimeiro`, o primeiro
+/// trecho é de ré (para o lado de onde o robô veio, que está livre).
+///
+/// Girado θ, a quina do chassi do lado da parede vai a 78,1 mm × sen(50,2° + θ) do centro (73,5 mm
+/// com 20°, contra 60 mm parado), e a quina que avança no eixo, a 78,1 mm × cos(50,2° − θ) (63,8 mm
+/// com 15°, contra 50 mm). θ é o menor ângulo, entre 5° e 30°, cujo trecho cabe no espaço, com as
+/// quinas a pelo menos `folgaMinimaMm` das paredes. O espaço é `trechoMaximoMm`; sem `trechoLivre`
+/// (parede no fim do primeiro trecho), também o que sobra até ela com o robô girado. Se nenhum couber,
+/// o plano usa o maior ângulo seguro com o maior trecho dele e corrige só parte do desvio.
+PlanoRealinhamento planejarRealinhamento(int32_t desvioUm, bool recuarPrimeiro, bool trechoLivre,
+                                          uint16_t trechoMaximoMm, uint16_t folgaMinimaMm);
 
 /// O que o executor recebe a cada ciclo da navegação.
 struct EntradaExecucao {
@@ -76,12 +100,18 @@ class ExecutorMovimentos {
  public:
   explicit ExecutorMovimentos(const ConfiguracaoExecucao& config = ConfiguracaoExecucao{},
                               const ConfiguracaoControle& controle = ConfiguracaoControle{},
-                              const ConfiguracaoGiro& giro = ConfiguracaoGiro{});
+                              const ConfiguracaoGiro& giro = ConfiguracaoGiro{},
+                              const ConfiguracaoRealinhamento& realinhamento = ConfiguracaoRealinhamento{});
 
   /// Começa um movimento. O primeiro `atualizar()` fixa o destino (avanço) ou o ângulo de partida
-  /// (giro). Um giro já soma a variação ao rumo alvo aqui.
-  /// @return `false` se outro movimento está em andamento (nada muda).
+  /// (giro). Um giro já soma a variação ao rumo alvo aqui. Para o realinhamento, use
+  /// `iniciarRealinhamento()`.
+  /// @return `false` se outro movimento está em andamento, ou se for `Realinhar` (nada muda).
   bool iniciar(Movimento movimento);
+
+  /// Começa um realinhamento ao centro do corredor (#188), pelo plano dado.
+  /// @return `false` se outro movimento está em andamento ou se o plano não desloca nada.
+  bool iniciarRealinhamento(const PlanoRealinhamento& plano);
 
   /// Um ciclo do movimento em andamento: calcula e aplica a potência nos motores.
   /// Fora de `Executando`, não faz nada e devolve o estado atual.
@@ -91,8 +121,15 @@ class ExecutorMovimentos {
   /// interrompido não desfaz a mudança do rumo alvo: quem cancela ajusta com `definirRumoAlvo()`.
   void cancelar(IMotores& motores);
 
-  /// Define o rumo alvo absoluto, em mili-graus do giroscópio (por exemplo, na largada).
-  void definirRumoAlvo(int32_t rumoMiligraus) { rumoAlvoMiligraus_ = rumoMiligraus; }
+  /// Define o rumo alvo absoluto, em mili-graus do giroscópio (por exemplo, na largada). Também é o
+  /// rumo nominal, a referência do limite do rumo pelo corredor.
+  void definirRumoAlvo(int32_t rumoMiligraus) {
+    rumoAlvoMiligraus_ = rumoMiligraus;
+    rumoNominalMiligraus_ = rumoMiligraus;
+  }
+
+  /// Rumo nominal: o da largada mais as variações dos giros, sem o ajuste pelo corredor.
+  int32_t rumoNominalMiligraus() const { return rumoNominalMiligraus_; }
 
   /// Rumo que o robô deve ter ao fim do giro e durante o avanço, em mili-graus.
   int32_t rumoAlvoMiligraus() const { return rumoAlvoMiligraus_; }
@@ -112,16 +149,38 @@ class ExecutorMovimentos {
   /// Tempo do movimento atual (ou do último), em ms.
   uint32_t tempoMs() const { return tempoMs_; }
 
+  /// Plano do realinhamento em andamento (ou do último), para o log e a bancada.
+  const PlanoRealinhamento& planoRealinhamento() const { return plano_; }
+
+  /// Etapa do realinhamento: 0 giro de ida, 1 trecho, 2 giro de volta, 3 trecho de volta.
+  uint8_t etapaRealinhamento() const { return static_cast<uint8_t>(etapa_); }
+
   /// Controles internos, para a telemetria, a bancada e os testes.
   const ControleMovimento& controleMovimento() const { return controleMovimento_; }
   const ControleGiro& controleGiro() const { return controleGiro_; }
 
-  /// A leitura do ToF convertida para distâncias a partir do centro do robô (veja a classe).
+  /// A leitura do ToF convertida para distâncias a partir do centro do robô (veja a classe). Um lado
+  /// acima de `limiarParedeLateralControleMm` (da face) sai como `LATERAL_SEM_PAREDE_MM`: a parede de
+  /// uma célula vizinha não é referência para a centralização (#188).
   DistanciasLaterais paraOCentro(const DistanciasLaterais& leitura) const;
 
  private:
   EstadoExecucao atualizarAvanco(const EntradaExecucao& entrada, IMotores& motores);
   EstadoExecucao atualizarGiro(const EntradaExecucao& entrada, IMotores& motores);
+  EstadoExecucao atualizarRealinhamento(const EntradaExecucao& entrada, IMotores& motores);
+
+  /// Um ciclo de giro até `alvoMiligraus`; começa o `ControleGiro` no primeiro ciclo de cada giro.
+  /// @return `Executando` enquanto gira, `Concluido` no rumo, `Falha` no tempo limite.
+  EstadoExecucao passoDeGiro(int32_t alvoMiligraus, const EntradaExecucao& entrada, IMotores& motores);
+
+  /// Um ciclo de trecho reto do realinhamento, mantendo `rumoMiligraus`.
+  /// @return `Executando` até andar `distanciaUm` (com sinal), `Concluido` ao chegar.
+  EstadoExecucao passoDeTrecho(int32_t distanciaUm, int32_t rumoMiligraus, const EntradaExecucao& entrada,
+                               IMotores& motores);
+
+  /// Rumo pelo corredor (#188): puxa o rumo alvo para o ângulo atual quando o robô anda paralelo às
+  /// duas paredes (veja `AJUSTE_RUMO_PELO_CORREDOR_POR_MIL`).
+  void ajustarRumoPeloCorredor(const LeituraGiro& giro);
 
   /// Teto da potência base para a distância que falta até o destino (a rampa de desaceleração).
   int16_t tetoParaRestante(int64_t restanteUm) const;
@@ -131,6 +190,7 @@ class ExecutorMovimentos {
   ConfiguracaoExecucao config_;
   ConfiguracaoControle configControle_;
   ConfiguracaoGiro configGiro_;
+  ConfiguracaoRealinhamento configRealinhamento_;
   ControleMovimento controleMovimento_;
   ControleGiro controleGiro_;
 
@@ -138,6 +198,7 @@ class ExecutorMovimentos {
   FalhaExecucao falha_ = FalhaExecucao::Nenhuma;
   Movimento movimento_ = Movimento::AvancarCelula;
   int32_t rumoAlvoMiligraus_ = 0;
+  int32_t rumoNominalMiligraus_ = 0;
 
   bool comecou_ = false;              ///< `false` até o primeiro `atualizar()` do movimento.
   uint32_t tempoMs_ = 0;
@@ -147,6 +208,14 @@ class ExecutorMovimentos {
   uint32_t desdeCalculoMs_ = 0;       ///< Tempo desde o último cálculo do `ControleMovimento`.
   bool temPotencia_ = false;          ///< `false` até a primeira leitura do avanço.
   PotenciaRodas ultimaPotencia_ = {0, 0};
+
+  // Realinhamento: as quatro etapas do plano.
+  enum class EtapaRealinhamento : uint8_t { GiroIda, Trecho, GiroVolta, Volta };
+  PlanoRealinhamento plano_;
+  EtapaRealinhamento etapa_ = EtapaRealinhamento::GiroIda;
+  bool etapaComecou_ = false;
+  int64_t inicioTrechoUm_ = 0;
+  uint32_t tempoEtapaMs_ = 0;
 };
 
 /// Nome do estado para o log: `ocioso`, `executando`, `concluido` ou `falha`.

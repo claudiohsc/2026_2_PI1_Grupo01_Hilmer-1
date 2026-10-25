@@ -18,19 +18,8 @@
 #include <cstdio>
 
 #include "../test_labirinto_simulado/LabirintosExemplo.h"
-#include "AcompanhadorGiro.h"
-#include "ArmazenamentoMapa.h"
-#include "CicloNavegacao.h"
-#include "CombinadorTof.h"
 #include "ConfiguracaoControle.h"
-#include "CorretorDeslocamentoTof.h"
-#include "DeslocamentoEstimado.h"
-#include "Direcao.h"
-#include "ExecutorMovimentos.h"
-#include "ImuSimulado.h"
-#include "LabirintoSimulado.h"
-#include "Odometria.h"
-#include "RoboSimulado.h"
+#include "SimulacaoCorrida.h"
 
 using namespace micromouse;
 
@@ -39,127 +28,19 @@ void tearDown() {}
 
 namespace {
 
-constexpr uint32_t CICLO_MS = 10;
-constexpr uint32_t PERIODO_TOF_MS = 33;
-constexpr uint32_t DEZ_MINUTOS_MS = 10u * 60u * 1000u;
+using namespace simulacao_corrida;
 
-/// O robô, os sensores e o firmware, ligados como no `main.cpp`.
-class Simulacao {
- public:
-  Simulacao(const char* texto, const ParametrosRoboSimulado& parametros = ParametrosRoboSimulado{},
-            Pose inicial = Pose{{0, 0}, Direcao::Norte}, double desvioLateralMm = 0.0, double desvioRumoGraus = 0.0)
-      : robo_(labirinto_, parametros), deslocamento_(robo_), ciclo_(armazenamento_.mapa()) {
-    TEST_ASSERT_EQUAL(ResultadoCarga::Carregado, labirinto_.carregar(texto));
-    armazenamento_.iniciarCorrida(labirinto_.obterDimensao());
-    robo_.posicionar(inicial, desvioLateralMm, desvioRumoGraus);
-    deslocamento_.reiniciar(odometria_, inicial);
-    imu_.definirVies(12);           // 1,2 °/s parado
-    imu_.definirRuidoAlternado(4);  // ±0,4 °/s
-    acompanhador_.iniciarCalibracao();
-    for (int i = 0; i < 400 && acompanhador_.ultima().calibracao != EstadoCalibracao::Calibrado; i++) {
-      acompanhador_.ciclo(CICLO_MS);
-    }
-    TEST_ASSERT_EQUAL(EstadoCalibracao::Calibrado, acompanhador_.ultima().calibracao);
-    ciclo_.reiniciar(inicial, deslocamento_.motores());
-  }
-
-  /// Um ciclo de 10 ms do mundo e dos sensores; devolve a leitura nova do ToF, se houver.
-  const DistanciasLaterais* sentir(bool sincronizarDirecao, Direcao direcao) {
-    agoraMs_ += CICLO_MS;
-    robo_.avancar(CICLO_MS);
-    imu_.definirTaxa(robo_.taxaGiroDecimosDps());
-    giro_ = acompanhador_.ciclo(CICLO_MS);
-
-    bool nova = false;
-    if (agoraMs_ - ultimaTofMs_ >= PERIODO_TOF_MS) {
-      ultimaTofMs_ = agoraMs_;
-      const DistanciasLaterais bruta = robo_.medirTof();
-      tof_.registrar(Lado::Frente, bruta.frenteMm, false, agoraMs_);
-      tof_.registrar(Lado::Esquerda, bruta.esquerdaMm, false, agoraMs_);
-      tof_.registrar(Lado::Direita, bruta.direitaMm, false, agoraMs_);
-      nova = tof_.distancias(agoraMs_, leitura_);
-    }
-    // Como no `main.cpp`: fora dos giros, a direção da odometria é a do giroscópio.
-    if (sincronizarDirecao && odometria_.pose().direcao != direcao) {
-      odometria_.definirDirecao(direcao);
-    }
-    deslocamento_.ciclo(CICLO_MS, odometria_, nova ? &leitura_ : nullptr);
-    return nova ? &leitura_ : nullptr;
-  }
-
-  /// Um ciclo da tarefa de navegação com o `CicloNavegacao`.
-  EstadoCiclo passoCiclo() {
-    const DistanciasLaterais* nova = sentir(ciclo_.direcaoDefinida(), ciclo_.direcao());
-    EntradaCiclo e;
-    e.liberado = true;
-    e.pose = odometria_.pose();
-    e.poseValida = odometria_.posicaoValida();
-    e.posicaoAvancoUm = posicaoAoLongoDoAvancoUm(odometria_);
-    e.leituraNova = nova;
-    e.giro = giro_;
-    e.dtMs = CICLO_MS;
-    return ciclo_.atualizar(e, deslocamento_.motores());
-  }
-
-  /// Corre até o ciclo parar (objetivo, sem caminho ou falha) ou o tempo acabar.
-  EstadoCiclo correr(uint32_t limiteMs = DEZ_MINUTOS_MS) {
-    EstadoCiclo estado = ciclo_.estado();
-    while (agoraMs_ < limiteMs) {
-      estado = passoCiclo();
-      if (estado == EstadoCiclo::ObjetivoAlcancado || estado == EstadoCiclo::SemCaminho ||
-          estado == EstadoCiclo::Falha) {
-        break;
-      }
-    }
-    return estado;
-  }
-
-  /// Executa um movimento só, com o `ExecutorMovimentos`, até ele terminar.
-  EstadoExecucao executar(ExecutorMovimentos& executor, Movimento movimento, Direcao& direcao) {
-    executor.iniciar(movimento);
-    EstadoExecucao estado = executor.estado();
-    const uint32_t limite = agoraMs_ + 10000;
-    while (executor.ocupado() && agoraMs_ < limite) {
-      const DistanciasLaterais* nova = sentir(!ehGiro(movimento), direcao);
-      EntradaExecucao e;
-      e.leituraNova = nova;
-      e.giro = giro_;
-      e.posicaoAvancoUm = posicaoAoLongoDoAvancoUm(odometria_);
-      e.dtMs = CICLO_MS;
-      estado = executor.atualizar(e, deslocamento_.motores());
-    }
-    if (estado == EstadoExecucao::Concluido) {
-      direcao = direcaoDepois(direcao, movimento);
-      odometria_.definirDirecao(direcao);
-    }
-    // Deixa o robô assentar um ciclo, como na percepção.
-    sentir(true, direcao);
-    return estado;
-  }
-
-  const RoboSimulado& robo() const { return robo_; }
-  const Odometria& odometria() const { return odometria_; }
-  const CicloNavegacao& ciclo() const { return ciclo_; }
-  const LabirintoSimulado& labirinto() const { return labirinto_; }
-  const Mapa& mapa() const { return armazenamento_.mapa(); }
-  uint32_t agoraMs() const { return agoraMs_; }
-  const LeituraGiro& giro() const { return giro_; }
-
- private:
-  LabirintoSimulado labirinto_;
-  RoboSimulado robo_;
-  DeslocamentoEstimado deslocamento_;
-  Odometria odometria_;
-  ImuSimulado imu_;
-  AcompanhadorGiro acompanhador_{imu_};
-  CombinadorTof tof_;
-  ArmazenamentoMapa armazenamento_;
-  CicloNavegacao ciclo_;
-  DistanciasLaterais leitura_ = {0, 0, 0};
-  LeituraGiro giro_;
-  uint32_t agoraMs_ = 0;
-  uint32_t ultimaTofMs_ = 0;
-};
+/// Opções da simulação para um robô e uma largada.
+OpcoesSimulacao opcoes(const ParametrosRoboSimulado& robo = ParametrosRoboSimulado{},
+                       Pose inicial = Pose{{0, 0}, Direcao::Norte}, double desvioLateralMm = 0.0,
+                       double desvioRumoGraus = 0.0) {
+  OpcoesSimulacao o;
+  o.robo = robo;
+  o.inicial = inicial;
+  o.desvioLateralMm = desvioLateralMm;
+  o.desvioRumoGraus = desvioRumoGraus;
+  return o;
+}
 
 void registrar(const char* texto) { TEST_MESSAGE(texto); }
 
@@ -236,17 +117,16 @@ ParametrosRoboSimulado roboImperfeito() {
 /// Critério 1 e 3 (simulação): 3 células em linha reta pelo corredor da coluna 0 do 4×4, com o
 /// robô 8% mais lento que a tabela. Registra o erro de parada em cada célula.
 void test_avancar_uma_celula_tres_vezes_no_corredor() {
-  Simulacao sim(exemplos::LABIRINTO_4X4, roboImperfeito());
-  ExecutorMovimentos executor;
+  Simulacao sim(exemplos::LABIRINTO_4X4, opcoes(roboImperfeito()));
   Direcao direcao = Direcao::Norte;
   double piorErro = 0.0;
   for (uint8_t i = 1; i <= 3; i++) {
-    TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(executor, Movimento::AvancarCelula, direcao));
+    TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(Movimento::AvancarCelula, direcao));
     const double erro = sim.robo().erroAoLongoMm();
     char msg[160];
     std::snprintf(msg, sizeof(msg), "avanco %u: real (%u,%u), erro ao longo %.1f mm, lateral %.1f mm, %u ms", i,
                   sim.robo().celula().linha, sim.robo().celula().coluna, erro, sim.robo().erroLateralMm(),
-                  static_cast<unsigned>(executor.tempoMs()));
+                  static_cast<unsigned>(sim.executor().tempoMs()));
     registrar(msg);
     TEST_ASSERT_EQUAL_UINT8(i, sim.robo().celula().linha);
     TEST_ASSERT_EQUAL_UINT8(0, sim.robo().celula().coluna);
@@ -260,16 +140,15 @@ void test_avancar_uma_celula_tres_vezes_no_corredor() {
 /// Critério 1 (simulação): giros de 90° para os dois lados e de 180°, com o viés do giroscópio
 /// calibrado e as rodas desiguais. Registra o erro de rumo de cada giro.
 void test_girar_90_e_180_no_lugar() {
-  Simulacao sim(exemplos::LABIRINTO_4X4, roboImperfeito());
-  ExecutorMovimentos executor;
+  Simulacao sim(exemplos::LABIRINTO_4X4, opcoes(roboImperfeito()));
   Direcao direcao = Direcao::Norte;
   const Movimento giros[] = {Movimento::Girar90Direita, Movimento::Girar90Esquerda, Movimento::Girar180,
                              Movimento::Girar90Esquerda, Movimento::Girar180, Movimento::Girar90Direita};
   for (Movimento giro : giros) {
-    TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(executor, giro, direcao));
+    TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(giro, direcao));
     char msg[120];
     std::snprintf(msg, sizeof(msg), "%s: rumo real %.2f graus (erro %.2f), %u ms", nomeDoMovimento(giro),
-                  sim.robo().rumoGraus(), sim.robo().erroRumoGraus(), static_cast<unsigned>(executor.tempoMs()));
+                  sim.robo().rumoGraus(), sim.robo().erroRumoGraus(), static_cast<unsigned>(sim.executor().tempoMs()));
     registrar(msg);
     TEST_ASSERT_TRUE_MESSAGE(std::fabs(sim.robo().erroRumoGraus()) <= 3.0, msg);
     TEST_ASSERT_EQUAL(direcao, sim.odometria().pose().direcao);
@@ -285,13 +164,12 @@ void test_girar_90_e_180_no_lugar() {
 /// Giro seguido de avanço: a odometria adota a direção do giroscópio, e o avanço vai para o lado
 /// certo mesmo com a diferença das rodas mostrando outro ângulo.
 void test_girar_e_avancar_pela_direcao_do_giroscopio() {
-  Simulacao sim(exemplos::LABIRINTO_4X4, roboImperfeito(), Pose{{1, 0}, Direcao::Norte});
-  ExecutorMovimentos executor;
+  Simulacao sim(exemplos::LABIRINTO_4X4, opcoes(roboImperfeito(), Pose{{1, 0}, Direcao::Norte}));
   Direcao direcao = Direcao::Norte;
   // (1, 0) tem a direita (Leste) livre no 4×4 de exemplo.
-  TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(executor, Movimento::Girar90Direita, direcao));
+  TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(Movimento::Girar90Direita, direcao));
   TEST_ASSERT_EQUAL(Direcao::Leste, sim.odometria().pose().direcao);
-  TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(executor, Movimento::AvancarCelula, direcao));
+  TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(Movimento::AvancarCelula, direcao));
   TEST_ASSERT_EQUAL_UINT8(1, sim.robo().celula().linha);
   TEST_ASSERT_EQUAL_UINT8(1, sim.robo().celula().coluna);
   TEST_ASSERT_EQUAL_UINT8(1, sim.odometria().pose().celula.coluna);
@@ -301,10 +179,9 @@ void test_girar_e_avancar_pela_direcao_do_giroscopio() {
 /// Uma parede na frente do destino: a parada pela parede vale e o robô fica no centro.
 void test_avanco_ate_a_parede_para_no_centro() {
   // (3, 0) virado para o Leste no 4×4: uma célula livre e depois parede (frente = 270 do centro).
-  Simulacao sim(exemplos::LABIRINTO_4X4, roboImperfeito(), Pose{{3, 0}, Direcao::Leste});
-  ExecutorMovimentos executor;
+  Simulacao sim(exemplos::LABIRINTO_4X4, opcoes(roboImperfeito(), Pose{{3, 0}, Direcao::Leste}));
   Direcao direcao = Direcao::Leste;
-  TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(executor, Movimento::AvancarCelula, direcao));
+  TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(Movimento::AvancarCelula, direcao));
   char msg[100];
   std::snprintf(msg, sizeof(msg), "ate a parede: erro ao longo %.1f mm", sim.robo().erroAoLongoMm());
   registrar(msg);
@@ -335,13 +212,13 @@ void test_corrida_no_12x4_chega_ao_objetivo() {
 
 /// Robô imperfeito, largando torto e fora do centro: chega ao objetivo, com o mapa e a pose certos.
 void test_corrida_com_robo_imperfeito_e_largada_torta() {
-  Simulacao sim(exemplos::LABIRINTO_4X4, roboImperfeito(), Pose{{0, 0}, Direcao::Norte}, 8.0, 3.0);
+  Simulacao sim(exemplos::LABIRINTO_4X4, opcoes(roboImperfeito(), Pose{{0, 0}, Direcao::Norte}, 8.0, 3.0));
   sim.correr();
   conferirChegada(sim, "4x4 imperfeito e torto", false);
 }
 
 void test_corrida_com_robo_imperfeito_no_12x4() {
-  Simulacao sim(exemplos::LABIRINTO_12X4, roboImperfeito());
+  Simulacao sim(exemplos::LABIRINTO_12X4, opcoes(roboImperfeito()));
   sim.correr();
   conferirChegada(sim, "12x4 imperfeito", false);
 }
@@ -349,7 +226,7 @@ void test_corrida_com_robo_imperfeito_no_12x4() {
 /// No 8×4 de exemplo, o caminho otimista do começo (sem paredes conhecidas) esbarra em paredes que
 /// a percepção grava no caminho, e o Flood Fill replaneja até chegar, sem ficar rodando.
 void test_corrida_replaneja_e_nao_repete_celulas_sem_fim() {
-  Simulacao sim(exemplos::LABIRINTO_8X4, roboImperfeito());
+  Simulacao sim(exemplos::LABIRINTO_8X4, opcoes(roboImperfeito()));
   sim.correr();
   conferirChegada(sim, "8x4 imperfeito", false);
   // 32 células: mesmo explorando, não passa de 3 visitas por célula em média.
@@ -373,18 +250,16 @@ void test_folga_do_giro_no_lugar() {
 
   // Dentro da folga: o giro de 90° não encosta.
   {
-    Simulacao sim(exemplos::LABIRINTO_4X4, ParametrosRoboSimulado{}, Pose{{0, 0}, Direcao::Norte}, 4.0);
-    ExecutorMovimentos executor;
+    Simulacao sim(exemplos::LABIRINTO_4X4, opcoes(ParametrosRoboSimulado{}, Pose{{0, 0}, Direcao::Norte}, 4.0));
     Direcao direcao = Direcao::Norte;
-    TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(executor, Movimento::Girar90Direita, direcao));
+    TEST_ASSERT_EQUAL(EstadoExecucao::Concluido, sim.executar(Movimento::Girar90Direita, direcao));
     TEST_ASSERT_FALSE(sim.robo().colidiu());
   }
   // Fora dela: a quina encosta na parede lateral.
   {
-    Simulacao sim(exemplos::LABIRINTO_4X4, ParametrosRoboSimulado{}, Pose{{0, 0}, Direcao::Norte}, 8.0);
-    ExecutorMovimentos executor;
+    Simulacao sim(exemplos::LABIRINTO_4X4, opcoes(ParametrosRoboSimulado{}, Pose{{0, 0}, Direcao::Norte}, 8.0));
     Direcao direcao = Direcao::Norte;
-    sim.executar(executor, Movimento::Girar90Direita, direcao);
+    sim.executar(Movimento::Girar90Direita, direcao);
     TEST_ASSERT_TRUE(sim.robo().colidiu());
   }
 }

@@ -17,11 +17,19 @@ enum class Movimento : uint8_t {
   AvancarCelula,    ///< Anda até o centro da próxima célula (18 cm).
   Girar90Esquerda,  ///< Gira 90° no lugar, no sentido anti-horário.
   Girar90Direita,   ///< Gira 90° no lugar, no sentido horário.
-  Girar180          ///< Meia volta no lugar (pela esquerda).
+  Girar180,         ///< Meia volta no lugar (pela esquerda).
+  Realinhar         ///< Desloca o robô para o lado até o centro do corredor, sem mudar o rumo (#188).
 };
 
 /// `true` para os três giros.
-constexpr bool ehGiro(Movimento movimento) { return movimento != Movimento::AvancarCelula; }
+constexpr bool ehGiro(Movimento movimento) {
+  return movimento == Movimento::Girar90Esquerda || movimento == Movimento::Girar90Direita ||
+         movimento == Movimento::Girar180;
+}
+
+/// `true` para os giros e o realinhamento: movimentos em que as leituras laterais e da frente não
+/// servem de referência de posição.
+constexpr bool ehManobra(Movimento movimento) { return movimento != Movimento::AvancarCelula; }
 
 /// Quanto o giro muda o rumo, em mili-graus, na convenção do giroscópio (positivo = esquerda).
 /// Zero para o avanço.
@@ -53,13 +61,14 @@ inline bool giroAte(Direcao atual, Direcao desejada, Movimento& giro) {
   return true;
 }
 
-/// Nome do movimento para o log: `avancar_celula`, `girar_90_esquerda`, `girar_90_direita` ou
-/// `girar_180`.
+/// Nome do movimento para o log: `avancar_celula`, `girar_90_esquerda`, `girar_90_direita`,
+/// `girar_180` ou `realinhar`.
 constexpr const char* nomeDoMovimento(Movimento movimento) {
   return movimento == Movimento::AvancarCelula     ? "avancar_celula"
          : movimento == Movimento::Girar90Esquerda ? "girar_90_esquerda"
          : movimento == Movimento::Girar90Direita  ? "girar_90_direita"
-                                                   : "girar_180";
+         : movimento == Movimento::Girar180        ? "girar_180"
+                                                   : "realinhar";
 }
 
 }  // namespace micromouse

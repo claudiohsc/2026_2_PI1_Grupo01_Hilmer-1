@@ -217,10 +217,27 @@ void test_avanco_converte_a_leitura_para_o_centro_do_robo() {
   TEST_ASSERT_EQUAL_UINT16(84, centro.frenteMm);
   TEST_ASSERT_EQUAL_UINT16(84, centro.esquerdaMm);
   TEST_ASSERT_EQUAL_UINT16(90, centro.direitaMm);
-  const DistanciasLaterais saturada = executor.paraOCentro({UINT16_MAX, UINT16_MAX - 10, 0});
+  const DistanciasLaterais saturada = executor.paraOCentro({UINT16_MAX, 90, 0});
   TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, saturada.frenteMm);
-  TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, saturada.esquerdaMm);
+  TEST_ASSERT_EQUAL_UINT16(120, saturada.esquerdaMm);
   TEST_ASSERT_EQUAL_UINT16(30, saturada.direitaMm);
+}
+
+/// Perto do fim de uma parede, o raio lateral pega a parede de uma célula vizinha: acima de 100 mm
+/// da face, o lado vai como sem parede para a centralização (#188), e não como parede a 150 mm.
+void test_avanco_ignora_parede_lateral_distante_na_centralizacao() {
+  ExecutorMovimentos executor;
+  TEST_ASSERT_EQUAL_UINT16(130, executor.paraOCentro({LONGE, 100, 54}).esquerdaMm);
+  TEST_ASSERT_EQUAL_UINT16(LATERAL_SEM_PAREDE_MM, executor.paraOCentro({LONGE, 101, 54}).esquerdaMm);
+  TEST_ASSERT_EQUAL_UINT16(LATERAL_SEM_PAREDE_MM, executor.paraOCentro({LONGE, 54, 150}).direitaMm);
+
+  // Centrado, com a direita lendo a parede vizinha a 150 mm: só a esquerda conta, e não há correção.
+  MotoresSimulados motores;
+  const DistanciasLaterais fimDaParede{LONGE, PAREDE_LADO, 150};
+  executor.iniciar(Movimento::AvancarCelula);
+  executor.atualizar(entrada(&fimDaParede, 0), motores);
+  TEST_ASSERT_EQUAL(ModoCentralizacao::SoEsquerda, executor.controleMovimento().centralizacao().modo());
+  TEST_ASSERT_EQUAL_INT16(motores.ultimaPotencia().esquerda, motores.ultimaPotencia().direita);
 }
 
 void test_avanco_centraliza_no_corredor() {
@@ -842,6 +859,7 @@ int main(int, char**) {
   RUN_TEST(test_avanco_que_passa_do_destino_tambem_conclui);
   RUN_TEST(test_avanco_mantem_o_comando_entre_leituras_e_espera_a_primeira);
   RUN_TEST(test_avanco_converte_a_leitura_para_o_centro_do_robo);
+  RUN_TEST(test_avanco_ignora_parede_lateral_distante_na_centralizacao);
   RUN_TEST(test_avanco_centraliza_no_corredor);
   RUN_TEST(test_avanco_corrige_o_rumo_pelo_giroscopio_sem_paredes);
   RUN_TEST(test_parede_na_frente_perto_do_destino_conclui);

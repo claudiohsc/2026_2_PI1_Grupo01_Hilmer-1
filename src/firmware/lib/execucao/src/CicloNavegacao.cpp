@@ -12,8 +12,12 @@ constexpr int32_t VOLTA_MILIGRAUS = 360000;
 }  // namespace
 
 CicloNavegacao::CicloNavegacao(Mapa& mapa, const ConfiguracaoExecucao& config, const ConfiguracaoControle& controle,
-                               const ConfiguracaoGiro& giro)
-    : mapa_(mapa), navegacao_(mapa), executor_(config, controle, giro), config_(config) {
+                               const ConfiguracaoGiro& giro, const ConfiguracaoRealinhamento& realinhamento)
+    : mapa_(mapa),
+      navegacao_(mapa),
+      executor_(config, controle, giro, realinhamento),
+      config_(config),
+      configRealinhamento_(realinhamento) {
   if (config_.amostrasPercepcao == 0) {
     config_.amostrasPercepcao = 1;
   } else if (config_.amostrasPercepcao > MAX_AMOSTRAS) {
@@ -34,6 +38,10 @@ void CicloNavegacao::reiniciar(const Pose& inicial, IMotores& motores) {
   ultimaConfirmacao_ = ResultadoConfirmacao::Confirmada;
   celulasAvancadas_ = 0;
   girosFeitos_ = 0;
+  realinhamentos_ = 0;
+  realinhamentosNoPasso_ = 0;
+  conferindoRealinhamento_ = false;
+  ultimoDesvio_ = DesvioLateral{};
   quantidadeAmostras_ = 0;
   estado_ = EstadoCiclo::AguardandoLargada;
 }
@@ -74,6 +82,7 @@ EstadoCiclo CicloNavegacao::atualizar(const EntradaCiclo& entrada, IMotores& mot
     if (estado_ != EstadoCiclo::AguardandoLargada) {
       executor_.cancelar(motores);
       navegacao_.cancelarPasso();
+      conferindoRealinhamento_ = false;
       parar(EstadoCiclo::AguardandoLargada, motores);
     }
     return estado_;
@@ -103,6 +112,33 @@ EstadoCiclo CicloNavegacao::atualizar(const EntradaCiclo& entrada, IMotores& mot
         }
       }
       break;
+
+    case EstadoCiclo::Realinhando: {
+      const EntradaExecucao exec{entrada.leituraNova, entrada.giro, entrada.posicaoAvancoUm, entrada.dtMs};
+      const EstadoExecucao resultado = conferindoRealinhamento_ ? EstadoExecucao::Concluido
+                                                                : executor_.atualizar(exec, motores);
+      if (conferindoRealinhamento_) {
+        // Parado de novo: junta leituras para medir quanto falta.
+        if (entrada.leituraNova != nullptr) {
+          amostras_[quantidadeAmostras_++] = *entrada.leituraNova;
+          if (quantidadeAmostras_ >= config_.amostrasPercepcao) {
+            conferindoRealinhamento_ = false;
+            realinharOuGirar(giroPendente_);
+          }
+        }
+        break;
+      }
+      if (resultado == EstadoExecucao::Concluido) {
+        ++realinhamentos_;
+        conferindoRealinhamento_ = true;
+        quantidadeAmostras_ = 0;
+      } else if (resultado == EstadoExecucao::Falha) {
+        falhaExecucao_ = executor_.falha();
+        navegacao_.cancelarPasso();
+        parar(EstadoCiclo::Falha, motores);
+      }
+      break;
+    }
 
     case EstadoCiclo::Girando: {
       const EntradaExecucao exec{entrada.leituraNova, entrada.giro, entrada.posicaoAvancoUm, entrada.dtMs};
@@ -187,12 +223,72 @@ void CicloNavegacao::decidir(IMotores& motores) {
   direcaoPasso_ = proxima;
   Movimento giro = Movimento::AvancarCelula;
   if (giroAte(direcao_, proxima, giro)) {
-    executor_.iniciar(giro);
-    estado_ = EstadoCiclo::Girando;
+    // Antes de girar no lugar, vai para o centro do corredor se estiver longe dele (#188).
+    realinhamentosNoPasso_ = 0;
+    realinharOuGirar(giro);
   } else {
     executor_.iniciar(Movimento::AvancarCelula);
     estado_ = EstadoCiclo::Avancando;
   }
+}
+
+void CicloNavegacao::realinharOuGirar(Movimento giro) {
+  ultimoDesvio_ = desvioDasAmostras();
+  const int32_t modulo = ultimoDesvio_.desvioUm < 0 ? -ultimoDesvio_.desvioUm : ultimoDesvio_.desvioUm;
+  const bool longeDoCentro = ultimoDesvio_.referencia != ReferenciaLateral::SemParede &&
+                             modulo >= static_cast<int32_t>(configRealinhamento_.desvioMinimoMm) * 1000 &&
+                             modulo <= static_cast<int32_t>(configRealinhamento_.desvioMaximoMm) * 1000;
+  if (longeDoCentro && realinhamentosNoPasso_ < configRealinhamento_.tentativas) {
+    const PosicaoCelula aqui = navegacao_.obterPosicao();
+    const bool atrasLivre = mapa_.obterParede(aqui, oposta(direcao_)) == EstadoParede::Livre;
+    const bool frenteLivre = mapa_.obterParede(aqui, direcao_) == EstadoParede::Livre;
+    const bool recuar = atrasLivre || !frenteLivre;
+    const bool livre = atrasLivre || frenteLivre;
+    const PlanoRealinhamento plano = planejarRealinhamento(ultimoDesvio_.desvioUm, recuar, livre,
+                                                           configRealinhamento_.trechoMaximoLivreMm,
+                                                           configRealinhamento_.folgaMinimaMm);
+    if (executor_.iniciarRealinhamento(plano)) {
+      giroPendente_ = giro;
+      ++realinhamentosNoPasso_;
+      estado_ = EstadoCiclo::Realinhando;
+      return;
+    }
+  }
+  iniciarGiro(giro);
+}
+
+void CicloNavegacao::iniciarGiro(Movimento giro) {
+  executor_.iniciar(giro);
+  estado_ = EstadoCiclo::Girando;
+}
+
+DesvioLateral CicloNavegacao::desvioDasAmostras() const {
+  // Mediana de cada lado (a mesma ideia do filtro da percepção).
+  uint16_t esquerda[MAX_AMOSTRAS];
+  uint16_t direita[MAX_AMOSTRAS];
+  const uint8_t n = quantidadeAmostras_;
+  for (uint8_t i = 0; i < n; i++) {
+    esquerda[i] = amostras_[i].esquerdaMm;
+    direita[i] = amostras_[i].direitaMm;
+  }
+  for (uint8_t i = 1; i < n; i++) {
+    for (uint8_t j = i; j > 0 && esquerda[j - 1] > esquerda[j]; j--) {
+      const uint16_t t = esquerda[j];
+      esquerda[j] = esquerda[j - 1];
+      esquerda[j - 1] = t;
+    }
+    for (uint8_t j = i; j > 0 && direita[j - 1] > direita[j]; j--) {
+      const uint16_t t = direita[j];
+      direita[j] = direita[j - 1];
+      direita[j - 1] = t;
+    }
+  }
+  if (n == 0) {
+    return DesvioLateral{};
+  }
+  const DistanciasLaterais mediana{0, esquerda[n / 2], direita[n / 2]};
+  return medirDesvioLateral(mediana, configRealinhamento_.limiarParedeLateralMm,
+                            configRealinhamento_.distanciaSensorLateralAoCentroMm);
 }
 
 const char* nomeDoEstadoCiclo(EstadoCiclo estado) {
@@ -201,6 +297,8 @@ const char* nomeDoEstadoCiclo(EstadoCiclo estado) {
       return "aguardando_largada";
     case EstadoCiclo::Percebendo:
       return "percebendo";
+    case EstadoCiclo::Realinhando:
+      return "realinhando";
     case EstadoCiclo::Girando:
       return "girando";
     case EstadoCiclo::Avancando:

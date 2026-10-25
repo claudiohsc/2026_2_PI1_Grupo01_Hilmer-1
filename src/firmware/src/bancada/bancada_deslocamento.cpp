@@ -2,7 +2,9 @@
 /// @brief Firmware de bancada do deslocamento sem encoder (#380) e da execução dos movimentos
 /// (#184): aciona os motores por um tempo ou executa os comandos "avançar uma célula", "girar 90°" e
 /// "girar 180°" com o mesmo `DeslocamentoEstimado` e o mesmo `ExecutorMovimentos` do robô, e manda
-/// pela serial o log de cada ciclo, para a equipe comparar com a régua e o transferidor.
+/// pela serial o log de cada ciclo, para a equipe comparar com a régua e o transferidor. Também mede
+/// o desvio lateral pelas paredes, realinha o robô ao centro do corredor e executa um percurso de
+/// vários movimentos com a correção pelas paredes, para conferir a célula estimada no fim (#188).
 ///
 /// Não é o firmware do robô: só entra no ambiente `bancada_deslocamento` do `platformio.ini`. O menu
 /// `scripts/bancada_deslocamento.py` grava este programa e conduz o roteiro; também dá para usar
@@ -25,6 +27,8 @@
 #include "AcompanhadorGiro.h"
 #include "BarramentoI2c.h"
 #include "ConfiguracaoDeslocamento.h"
+#include "ConfiguracaoLocalizacao.h"
+#include "CorrecaoPelasParedes.h"
 #include "CorretorDeslocamentoTof.h"
 #include "DeslocamentoEstimado.h"
 #include "ExecutorMovimentos.h"
@@ -69,6 +73,13 @@ Direcao direcaoAtual = Direcao::Norte;
 
 /// Maior número de células num `CELULA n`.
 constexpr long MAX_CELULAS = 8;
+
+/// Correção do erro acumulado pelas paredes (#188), como no robô.
+CorrecaoPelasParedes correcaoParedes;
+const ConfiguracaoRealinhamento configRealinhamento;
+
+/// Maior número de movimentos num `PERCURSO`.
+constexpr unsigned MAX_MOVIMENTOS_PERCURSO = 32;
 
 /// Se as leituras do ToF corrigem a posição (`CORRECAO ON|OFF`).
 bool correcaoLigada = true;
@@ -116,6 +127,9 @@ void imprimirAjuda() {
   Serial.println("#   CELULA n        executa n vezes \"avancar uma celula\" (#184), de 1 a 8");
   Serial.println("#   GIRO90E|GIRO90D|GIRO180  executa o giro pelo giroscopio (#184)");
   Serial.println("#   CALIBRAR        calibra o vies do giroscopio (robo parado)");
+  Serial.println("#   DESVIO          desvio lateral medido pelas paredes, sem mover (#188)");
+  Serial.println("#   REALINHAR [F]   vai para o centro do corredor; F comeca para a frente (#188)");
+  Serial.println("#   PERCURSO seq    executa A (avancar), D/E (90 graus) e V (180), realinhando antes de girar");
   Serial.println("#   LER             uma linha de estado, sem mover");
   Serial.println("#   AJUDA           esta lista");
   Serial.println("# ATENCAO: ANDAR, GIRAR, CELULA e GIRO* acionam os motores. Robo no chao, com espaco livre.");
@@ -282,9 +296,10 @@ void mover(const PotenciaRodas& potencia, long duracaoMs, const char* nome) {
 
 /// Executa um movimento com o `ExecutorMovimentos`, no mesmo ciclo de 10 ms da navegação, e manda
 /// o log e a linha `fim_execucao` (o erro que fica para a régua e o transferidor).
+/// @param plano Plano do realinhamento, quando `movimento` é `Realinhar`.
 /// @return `true` se o movimento foi concluído.
-bool executarMovimento(Movimento movimento) {
-  if (ehGiro(movimento) && giro.ultima().calibracao != EstadoCalibracao::Calibrado) {
+bool executarMovimento(Movimento movimento, const PlanoRealinhamento* plano = nullptr) {
+  if (ehManobra(movimento) && giro.ultima().calibracao != EstadoCalibracao::Calibrado) {
     Serial.println("{\"tipo\":\"erro\",\"mensagem\":\"giroscopio nao calibrado: use CALIBRAR\"}");
     return false;
   }
@@ -292,7 +307,12 @@ bool executarMovimento(Movimento movimento) {
   const double inicioLesteMm = odometria.posicaoLesteMicrometros() / 1000.0;
   const int32_t anguloInicial = giro.ultima().anguloMiligraus;
   bool parou = false;
-  executor.iniciar(movimento);
+  if (plano != nullptr) {
+    executor.iniciarRealinhamento(*plano);
+  } else {
+    executor.iniciar(movimento);
+  }
+  const bool manobra = ehManobra(movimento);
   const uint32_t inicioMs = millis();
   uint32_t ultimoCicloMs = inicioMs;
   uint32_t ultimoLogMs = 0;
@@ -311,10 +331,20 @@ bool executarMovimento(Movimento movimento) {
     const uint32_t dtMs = agoraMs - ultimoCicloMs;
     ultimoCicloMs = agoraMs;
     // Como na tarefa de navegação: fora dos giros, a direção da odometria é a do giroscópio.
-    if (!ehGiro(movimento) && odometria.pose().direcao != direcaoAtual) {
+    if (!ehGiro(movimento)) {
       odometria.definirDirecao(direcaoAtual);
     }
-    deslocamento.ciclo(dtMs, odometria, lerTofNovo());
+    // Nas manobras, as leituras não servem de referência de posição (#188).
+    const DistanciasLaterais* referencia = lerTofNovo();
+    if (manobra) {
+      deslocamento.esquecerLaterais();
+      referencia = nullptr;
+    }
+    deslocamento.ciclo(dtMs, odometria, referencia);
+    if (ultimaLeituraNova && correcaoLigada) {
+      correcaoParedes.aplicar(odometria, ultimaLeitura, manobra ? MovimentoRobo::Manobrando : MovimentoRobo::Avancando,
+                              ENCODERS_INSTALADOS);
+    }
     EntradaExecucao entrada;
     // O controle precisa de toda leitura nova, mesmo com a correção da posição desligada.
     entrada.leituraNova = ultimaLeituraNova ? &ultimaLeitura : nullptr;
@@ -347,6 +377,92 @@ bool executarMovimento(Movimento movimento) {
                 (executor.rumoAlvoMiligraus() - angulo) / 1000.0, letraDaDirecao(direcaoAtual));
   imprimirEstado("estado", millis() - inicioMs);
   return concluido && !parou;
+}
+
+/// Mede o desvio lateral pelas paredes com o robô parado: a mediana de 3 leituras novas do ToF.
+DesvioLateral medirDesvio() {
+  uint16_t esquerda[3] = {0, 0, 0};
+  uint16_t direita[3] = {0, 0, 0};
+  uint8_t n = 0;
+  const uint32_t inicioMs = millis();
+  while (n < 3 && millis() - inicioMs < 1000) {
+    acompanharGiro();
+    lerTofNovo();
+    if (ultimaLeituraNova) {
+      esquerda[n] = ultimaLeitura.esquerdaMm;
+      direita[n] = ultimaLeitura.direitaMm;
+      n++;
+    }
+    delay(1);
+  }
+  if (n < 3) {
+    return DesvioLateral{};
+  }
+  const auto mediana = [](uint16_t* v) {
+    const uint16_t a = v[0] < v[1] ? v[0] : v[1];
+    const uint16_t b = v[0] < v[1] ? v[1] : v[0];
+    return v[2] < a ? a : (v[2] > b ? b : v[2]);
+  };
+  return medirDesvioLateral({0, mediana(esquerda), mediana(direita)}, configRealinhamento.limiarParedeLateralMm,
+                            configRealinhamento.distanciaSensorLateralAoCentroMm);
+}
+
+void imprimirDesvio(const DesvioLateral& d) {
+  Serial.printf("{\"tipo\":\"desvio\",\"referencia\":\"%s\",\"desvio_mm\":%.1f}\n",
+                nomeDaReferenciaLateral(d.referencia), d.desvioUm / 1000.0);
+}
+
+/// Realinha ao centro do corredor se o desvio medido passa do limiar, como o ciclo de navegação faz
+/// antes de girar (até `tentativas` vezes).
+/// @return Quantos realinhamentos foram feitos.
+uint32_t realinharSePreciso(bool recuar, bool livre) {
+  uint32_t feitos = 0;
+  for (uint8_t i = 0; i < configRealinhamento.tentativas; i++) {
+    const DesvioLateral d = medirDesvio();
+    const int32_t modulo = d.desvioUm < 0 ? -d.desvioUm : d.desvioUm;
+    if (d.referencia == ReferenciaLateral::SemParede ||
+        modulo < static_cast<int32_t>(configRealinhamento.desvioMinimoMm) * 1000 ||
+        modulo > static_cast<int32_t>(configRealinhamento.desvioMaximoMm) * 1000) {
+      break;
+    }
+    const PlanoRealinhamento plano = planejarRealinhamento(d.desvioUm, recuar, livre, configRealinhamento.trechoMaximoLivreMm,
+                                                           configRealinhamento.folgaMinimaMm);
+    if (plano.trechoUm == 0 || !executarMovimento(Movimento::Realinhar, &plano)) {
+      break;
+    }
+    feitos++;
+  }
+  return feitos;
+}
+
+/// Executa um percurso de movimentos (A, D, E, V), realinhando antes de cada giro, e informa a
+/// célula estimada no fim, para comparar com a real (critério 2 da #188).
+void executarPercurso(const String& sequencia) {
+  const unsigned total = sequencia.length() < MAX_MOVIMENTOS_PERCURSO ? sequencia.length() : MAX_MOVIMENTOS_PERCURSO;
+  unsigned feitos = 0;
+  uint32_t realinhamentos = 0;
+  bool ok = true;
+  for (unsigned i = 0; i < total && ok; i++) {
+    const char c = sequencia[i];
+    if (c == 'A') {
+      ok = executarMovimento(Movimento::AvancarCelula);
+    } else if (c == 'D' || c == 'E' || c == 'V') {
+      // Atrás está a célula de onde o robô veio; no primeiro movimento, a parede da largada.
+      realinhamentos += realinharSePreciso(true, i > 0);
+      ok = executarMovimento(c == 'D' ? Movimento::Girar90Direita
+                                      : (c == 'E' ? Movimento::Girar90Esquerda : Movimento::Girar180));
+    } else {
+      continue;  // espaços e letras desconhecidas são ignorados
+    }
+    if (ok) {
+      feitos++;
+    }
+  }
+  const Pose pose = odometria.pose();
+  Serial.printf("{\"tipo\":\"fim_percurso\",\"movimentos\":%u,\"feitos\":%u,\"realinhamentos\":%lu,"
+                "\"linha\":%u,\"coluna\":%u,\"orientacao\":\"%c\",\"falha\":\"%s\"}\n",
+                total, feitos, static_cast<unsigned long>(realinhamentos), pose.celula.linha, pose.celula.coluna,
+                letraDaDirecao(pose.direcao), ok ? "nenhuma" : nomeDaFalhaExecucao(executor.falha()));
 }
 
 /// Separa "COMANDO a b" em até dois números inteiros.
@@ -383,6 +499,7 @@ void executar(String linha) {
   } else if (comando == "ZERAR") {
     deslocamento.motores().parar();
     deslocamento.reiniciar(odometria, {{0, 0}, Direcao::Norte});
+    correcaoParedes.reiniciar();
     direcaoAtual = Direcao::Norte;
     executor.definirRumoAlvo(giro.ultima().anguloMiligraus);
     imprimirEstado("estado", 0);
@@ -409,6 +526,22 @@ void executar(String linha) {
     executarMovimento(movimento);
   } else if (comando == "CALIBRAR") {
     calibrarGiro();
+  } else if (comando == "DESVIO") {
+    imprimirDesvio(medirDesvio());
+  } else if (comando == "REALINHAR") {
+    const DesvioLateral antes = medirDesvio();
+    imprimirDesvio(antes);
+    const PlanoRealinhamento plano = planejarRealinhamento(antes.desvioUm, resto != "F", true,
+                                                           configRealinhamento.trechoMaximoLivreMm,
+                                                           configRealinhamento.folgaMinimaMm);
+    if (antes.referencia == ReferenciaLateral::SemParede || plano.trechoUm == 0) {
+      Serial.println("{\"tipo\":\"erro\",\"mensagem\":\"sem parede lateral ou sem desvio para realinhar\"}");
+    } else {
+      executarMovimento(Movimento::Realinhar, &plano);
+      imprimirDesvio(medirDesvio());
+    }
+  } else if (comando == "PERCURSO") {
+    executarPercurso(resto);
   } else if (comando == "LER") {
     lerTofNovo();
     imprimirEstado("estado", 0);

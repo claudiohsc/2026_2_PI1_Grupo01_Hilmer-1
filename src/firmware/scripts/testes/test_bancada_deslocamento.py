@@ -1,5 +1,5 @@
-"""Testes das etapas de execução dos movimentos (#184) do menu de bancada do deslocamento
-(`scripts/bancada_deslocamento.py`).
+"""Testes das etapas de execução dos movimentos (#184) e da correção pelas paredes (#188) do menu de
+bancada do deslocamento (`scripts/bancada_deslocamento.py`).
 
 Não precisam da placa nem do `pyserial`: a `Bancada` é trocada por uma que responde a cada comando
 com o JSON combinado no teste, no formato que o `bancada_deslocamento.cpp` imprime. Assim cada
@@ -188,11 +188,117 @@ class TestEtapaGiros(unittest.TestCase):
         self.assertEqual({"Execução, giros": "REPROVADO"}, bancada.situacoes())
 
 
+def calibrado():
+    return {"tipo": "calibracao", "estado": "calibrado", "recusadas": 0}
+
+
+def fim_percurso(feitos=7, movimentos=7, linha=3, coluna=1, falha="nenhuma"):
+    return {"tipo": "fim_percurso", "movimentos": movimentos, "feitos": feitos, "realinhamentos": 2,
+            "linha": linha, "coluna": coluna, "orientacao": "L", "falha": falha}
+
+
+class TestAvaliacaoParedes(unittest.TestCase):
+    def test_desvio_medido_contra_a_regua(self):
+        self.assertEqual((1.5, True), bancada_deslocamento.avaliar_desvio(9.5, 8.0))
+        self.assertFalse(bancada_deslocamento.avaliar_desvio(4.0, 8.0)[1])
+
+    def test_percurso_compara_a_celula(self):
+        texto, ok = bancada_deslocamento.avaliar_percurso(fim_percurso(), 3, 1)
+        self.assertTrue(ok)
+        self.assertIn("estimada (3,1) L, real (3,1)", texto)
+        self.assertFalse(bancada_deslocamento.avaliar_percurso(fim_percurso(), 3, 2)[1])
+        texto, ok = bancada_deslocamento.avaliar_percurso(fim_percurso(feitos=4, falha="parede_na_frente"), 3, 1)
+        self.assertFalse(ok)
+        self.assertIn("parede_na_frente", texto)
+
+
+class TestEtapaRealinhamento(unittest.TestCase):
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp()
+
+    def bancada(self, desvio, fim):
+        return BancadaFalsa({"CALIBRAR": [calibrado()], "DESVIO": [desvio], "REALINHAR": [fim]},
+                            recebidas={"REALINHAR": [log()]}, pasta=self.pasta)
+
+    def test_mede_o_desvio_e_realinha_ao_centro(self):
+        bancada = self.bancada({"tipo": "desvio", "referencia": "duas_paredes", "desvio_mm": 7.2},
+                               fim_execucao("realinhar"))
+        # ENTER na calibração, ENTER no posicionamento, 8 mm na régua, ENTER no aviso, 1 mm no fim, não encostou.
+        with sem_interacao(["", "", "8", "", "1", "n"]):
+            bancada_deslocamento.verificar_realinhamento(bancada)
+        self.assertEqual(["CALIBRAR", "DESVIO", "REALINHAR"], bancada.enviados)
+        situacoes = bancada.situacoes()
+        self.assertEqual("APROVADO", situacoes["Desvio lateral medido"])
+        self.assertEqual("APROVADO", situacoes["Realinhamento ao centro"])
+        self.assertEqual("APROVADO", situacoes["Realinhamento sem encostar"])
+
+    def test_desvio_errado_sobra_e_encostar_reprovam(self):
+        bancada = self.bancada({"tipo": "desvio", "referencia": "so_esquerda", "desvio_mm": 3.0},
+                               fim_execucao("realinhar"))
+        with sem_interacao(["", "", "8", "", "4", "s"]):
+            bancada_deslocamento.verificar_realinhamento(bancada)
+        situacoes = bancada.situacoes()
+        self.assertEqual("REPROVADO", situacoes["Desvio lateral medido"])
+        self.assertEqual("REPROVADO", situacoes["Realinhamento ao centro"])
+        self.assertEqual("REPROVADO", situacoes["Realinhamento sem encostar"])
+
+    def test_sem_parede_lateral_nao_realinha(self):
+        bancada = self.bancada({"tipo": "desvio", "referencia": "sem_parede", "desvio_mm": 0.0},
+                               fim_execucao("realinhar"))
+        with sem_interacao(["", "", "8"]):
+            bancada_deslocamento.verificar_realinhamento(bancada)
+        self.assertNotIn("REALINHAR", bancada.enviados)
+        self.assertEqual({"Desvio lateral medido": "REPROVADO"}, bancada.situacoes())
+
+    def test_realinhamento_que_falha_reprova(self):
+        bancada = self.bancada({"tipo": "desvio", "referencia": "duas_paredes", "desvio_mm": 8.0},
+                               fim_execucao("realinhar", "falha", "tempo_esgotado"))
+        with sem_interacao(["", "", "8", ""]):
+            bancada_deslocamento.verificar_realinhamento(bancada)
+        self.assertEqual("REPROVADO", bancada.situacoes()["Realinhamento"])
+
+    def test_sem_giroscopio_nao_comeca(self):
+        bancada = BancadaFalsa({"CALIBRAR": [{"tipo": "calibracao", "estado": "sem_imu"}]}, pasta=self.pasta)
+        with sem_interacao([""]):
+            bancada_deslocamento.verificar_realinhamento(bancada)
+        self.assertEqual({"Realinhamento": "REPROVADO"}, bancada.situacoes())
+
+
+class TestEtapaPercurso(unittest.TestCase):
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp()
+
+    def test_percurso_padrao_com_a_celula_certa(self):
+        comando = f"PERCURSO {bancada_deslocamento.PERCURSO_PADRAO}"
+        bancada = BancadaFalsa({"CALIBRAR": [calibrado()], "ZERAR": [{"tipo": "estado"}], comando: [fim_percurso()]},
+                               recebidas={comando: [log(), fim_execucao()]}, pasta=self.pasta)
+        with sem_interacao(["", "", "3", "1"]):
+            bancada_deslocamento.verificar_percurso(bancada)
+        self.assertEqual(["CALIBRAR", "ZERAR", comando], bancada.enviados)
+        self.assertEqual({"Percurso, célula estimada x real": "APROVADO"}, bancada.situacoes())
+
+    def test_percurso_proprio_com_a_celula_errada(self):
+        bancada = BancadaFalsa({"CALIBRAR": [calibrado()], "ZERAR": [{"tipo": "estado"}],
+                                "PERCURSO AADA": [fim_percurso(movimentos=4, feitos=4, linha=2, coluna=1)]},
+                               pasta=self.pasta)
+        with sem_interacao(["aada", "", "2", "0"]):
+            bancada_deslocamento.verificar_percurso(bancada)
+        self.assertEqual("REPROVADO", bancada.situacoes()["Percurso, célula estimada x real"])
+
+    def test_percurso_sem_giroscopio_nao_comeca(self):
+        bancada = BancadaFalsa({"CALIBRAR": [None]}, pasta=self.pasta)
+        with sem_interacao(["", ""]):
+            bancada_deslocamento.verificar_percurso(bancada)
+        self.assertEqual({"Percurso": "REPROVADO"}, bancada.situacoes())
+
+
 class TestMenu(unittest.TestCase):
     def test_etapas_novas_no_menu_e_no_roteiro(self):
         funcoes = [funcao for _, funcao in bancada_deslocamento.MENU]
         self.assertIn(bancada_deslocamento.verificar_execucao_celulas, funcoes)
         self.assertIn(bancada_deslocamento.verificar_execucao_giros, funcoes)
+        self.assertIn(bancada_deslocamento.verificar_realinhamento, funcoes)
+        self.assertIn(bancada_deslocamento.verificar_percurso, funcoes)
 
 
 if __name__ == "__main__":
