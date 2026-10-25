@@ -40,6 +40,7 @@
 #include "DetectorObjetivo.h"
 #include "EncoderEsp32.h"
 #include "EnvioHttpSupabase.h"
+#include "FaseCorrida.h"
 #include "ImuMpu6050.h"
 #include "MedidorDeslocamento.h"
 #include "MotoresComTrava.h"
@@ -291,12 +292,17 @@ static micromouse::ControladorEnvio controladorEnvio(clienteSupabase, travaBuffe
 /// O que a coleta e a tarefa de rede combinam sobre a corrida, protegido por `travaCorrida`.
 struct EstadoCorridaEnvio {
   bool ativa = false;               ///< A corrida existe no servidor: a coleta pode registrar.
-  uint32_t inicioMs = 0;            ///< `millis()` da criação da corrida.
+  uint32_t inicioMs = 0;            ///< `millis()` da criação da corrida (o cronômetro dos 10 min é o da `faseCorrida`, da largada).
   bool encerramentoPedido = false;  ///< A coleta registrou a última amostra (objetivo ou tempo).
   bool concluida = false;           ///< Chegou ao objetivo.
 };
 static EstadoCorridaEnvio estadoCorrida;
 static portMUX_TYPE travaCorrida = portMUX_INITIALIZER_UNLOCKED;
+
+/// Fase do robô na telemetria (#242): aguardando a calibração, aguardando a largada, em corrida ou
+/// encerrada. Também protegida por `travaCorrida`: a tarefa de rede decide criar a corrida por ela e a de
+/// telemetria a atualiza a cada ciclo.
+static micromouse::FaseCorrida faseCorrida;
 
 static EstadoCorridaEnvio lerEstadoCorrida() {
   portENTER_CRITICAL(&travaCorrida);
@@ -313,24 +319,47 @@ static bool chegouAoInstante(uint32_t agoraMs, uint32_t alvoMs) {
 /// Coleta: chamada pela tarefa de telemetria a cada `PERIODO_TELEMETRIA_MS`. Guarda a amostra no
 /// buffer, com o número de sequência dado agora (e que nunca muda num reenvio). A chegada ao objetivo
 /// ou o fim do tempo (10 min) registram a última amostra e pedem o encerramento da corrida.
-static void coletarAmostra(const micromouse::Pose& pose, bool chegouAoObjetivo) {
+static void coletarAmostra(const micromouse::Pose& pose, bool chegouAoObjetivo, int32_t deslocamentoMm) {
   const EstadoCorridaEnvio corrida = lerEstadoCorrida();
   if (!corrida.ativa || corrida.encerramentoPedido) {
     return;
   }
-  const uint32_t decorridoMs = static_cast<uint32_t>(millis() - corrida.inicioMs);
-  const bool acabouOTempo = decorridoMs >= micromouse::LIMITE_TEMPO_CORRIDA_MS;
-  const bool ultima = chegouAoObjetivo || acabouOTempo;
-  const micromouse::AmostraTelemetria amostra = micromouse::montarAmostra(
-      pose, decorridoMs, 0,  // velocidade: 0 até a estimativa sem encoder (#380) entrar na telemetria
-      ultima ? micromouse::EstadoCorrida::Parado : micromouse::EstadoCorrida::Explorando,
-      chegouAoObjetivo ? micromouse::EventoTelemetria::ObjetivoAlcancado : micromouse::EventoTelemetria::Nenhum);
-  controladorEnvio.registrar(amostra);
-  if (ultima) {
-    portENTER_CRITICAL(&travaCorrida);
+  portENTER_CRITICAL(&travaCorrida);
+  // Aguardando a largada: a amostra mostra o robô parado na partida. Largou: o cronômetro dos 10 min
+  // começa. Chegou ao objetivo ou o tempo acabou: última amostra.
+  const micromouse::DecisaoColeta decisao = faseCorrida.decidir(deslocamentoMm, millis(), chegouAoObjetivo);
+  if (decisao.ultima) {
     estadoCorrida.encerramentoPedido = true;
     estadoCorrida.concluida = chegouAoObjetivo;
-    portEXIT_CRITICAL(&travaCorrida);
+  }
+  portEXIT_CRITICAL(&travaCorrida);
+
+  if (decisao.largouAgora) {
+    Serial.println("{\"status\":\"largada\"}");
+  }
+  if (!decisao.registrar) {
+    return;
+  }
+  const micromouse::AmostraTelemetria amostra = micromouse::montarAmostra(
+      pose, decisao.tempoDecorridoMs, 0,  // velocidade: 0 até a estimativa sem encoder (#380) entrar na telemetria
+      decisao.estado,
+      chegouAoObjetivo ? micromouse::EventoTelemetria::ObjetivoAlcancado : micromouse::EventoTelemetria::Nenhum);
+  controladorEnvio.registrar(amostra);
+}
+
+/// Se a calibração do boot falhou, mas o autoteste foi aprovado e o giroscópio calibrou sozinho (tarefa da
+/// IMU), o robô também está pronto na largada: a partida sem a correção dos ToF funciona. Chamada a cada
+/// ciclo da telemetria; depois de calibrado, não faz nada.
+static void atualizarFaseDaCalibracao() {
+  if (!estadoBoot.ok || lerGiro().calibracao != micromouse::EstadoCalibracao::Calibrado) {
+    return;
+  }
+  portENTER_CRITICAL(&travaCorrida);
+  const bool jaCalibrado = faseCorrida.calibrado();
+  faseCorrida.calibracaoConcluida();
+  portEXIT_CRITICAL(&travaCorrida);
+  if (!jaCalibrado) {
+    Serial.println("{\"status\":\"aguardando_largada\",\"calibracao\":\"giroscopio\"}");
   }
 }
 
@@ -374,8 +403,12 @@ static void tarefaRede(void*) {
   for (;;) {
     const uint32_t agora = millis();
     if (reconexaoWifi.ciclo(agora)) {
+      // A corrida só é criada no servidor depois da calibração (o estado Aguardando Largada, #242).
+      portENTER_CRITICAL(&travaCorrida);
+      const bool calibrado = faseCorrida.calibrado();
+      portEXIT_CRITICAL(&travaCorrida);
       if (!corridaCriada) {
-        if (chegouAoInstante(agora, proximaCriacaoMs)) {
+        if (calibrado && chegouAoInstante(agora, proximaCriacaoMs)) {
           uint32_t corridaId = 0;
           const micromouse::ResultadoEnvio r =
               clienteSupabase.criarCorrida(micromouse::LABIRINTO_CORRIDA_PADRAO, corridaId);
@@ -535,9 +568,13 @@ static void tarefaTelemetria(void*) {
     pacote.bootOk = estadoBoot.ok;
     pacote.falhasBoot = estadoBoot.falhas;
     pacote.bootMs = estadoBoot.duracaoMs;
+    portENTER_CRITICAL(&travaCorrida);
+    pacote.fase = micromouse::nomeDaFase(faseCorrida.fase());
+    portEXIT_CRITICAL(&travaCorrida);
 
     // Envio ao Supabase: a amostra vai para o buffer; quem envia é a tarefa de rede.
-    coletarAmostra(pose, dispararEvento);
+    atualizarFaseDaCalibracao();
+    coletarAmostra(pose, dispararEvento, medio);
 
     // Comporta o pior caso do JSON; com menos, a linha seria descartada em silêncio.
     char buffer[micromouse::TAMANHO_MAX_JSON_TELEMETRIA];
@@ -561,6 +598,9 @@ static void tarefaTelemetria(void*) {
         }
         detectorObjetivo.resetar();
         portEXIT_CRITICAL(&travaOdometria);
+        portENTER_CRITICAL(&travaCorrida);
+        faseCorrida.reiniciar();  // recolocado na partida à mão: volta a aguardar a largada
+        portEXIT_CRITICAL(&travaCorrida);
         Serial.println("{\"status\":\"encoders_zerados\"}");
       } else if (c == 'B' || c == 'b') {
         imprimirRelatorioBoot();
@@ -634,6 +674,10 @@ void setup() {
     const micromouse::EstadoRotinaCalibracao calibracao = calibrarSensores();
     if (calibracao == micromouse::EstadoRotinaCalibracao::Sucesso) {
       acompanhadorGiro.definirVies(rotinaCalibracao.viesGiroDecimosDps());
+      // Calibrado e na partida: aguarda a largada (#242). A corrida é criada no servidor e o
+      // dashboard passa a mostrar o robô parado na célula de partida.
+      faseCorrida.calibracaoConcluida();
+      Serial.println("{\"status\":\"aguardando_largada\"}");
     }
     Serial.printf("{\"status\":\"calibracao\",\"estado\":\"%s\",\"duracao_ms\":%lu,\"no_prazo\":%s}\n",
                   micromouse::nomeEstadoRotina(calibracao),

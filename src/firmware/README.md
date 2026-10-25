@@ -29,7 +29,7 @@ src/firmware/
 | `encoders` | Sensoriamento | Decodificação em quadratura (x4) dos canais A e B, conversão de pulsos em milímetros (calibrável) e distância percorrida por cada roda |
 | `lidar` | Drivers / Hardware | Driver de leitura do sensor LiDAR 360° via UART (decodificador LD06) e agregação de leituras por setores |
 | `mapeamento` | Mapeamento | Mapa do labirinto (4 paredes por célula) e armazenamento em memória |
-| `navegacao` | Navegação | Localização (`Odometria`: pose pela odometria diferencial dos encoders), decisão de movimento (`Navegacao`) e detecção do objetivo (`DetectorObjetivo`) |
+| `navegacao` | Navegação | Localização (`Odometria`: pose pela odometria diferencial dos encoders), decisão de movimento (`Navegacao`), detecção do objetivo (`DetectorObjetivo`) e as fases do robô na telemetria (`FaseCorrida`, #242) |
 | `atuacao` | Atuação | Controle dos motores, correção de trajetória e rumo pelo giroscópio, giros de 90° e 180° em malha fechada (`ControleGiro`) e trava dos motores (`MotoresComTrava`) (#190, #191) |
 | `comunicacao` | Comunicação | Pacotes de telemetria (`TelemetriaJson`), serialização JSON do mapa (`MapaJson`) e *buffer* de reenvio |
 | `simulacao` | Falsos para teste | `SensorDistanciaSimulado`, um `ISensorDistancia` que devolve as leituras configuradas pelo teste, `LabirintoSimulado`, o labirinto de referência que alimenta o `SensorDistanciaSimulado`, `TofSimulado`, os 3 VL53L0X no labirinto, com amostras brutas pelo `CombinadorTof` real, `EncoderSimulado`, um `IEncoder` com a contagem definida pelo teste, `MotoresSimulados`, um `IMotores` que guarda o último comando, `BarramentoI2cSimulado`, um `IBarramentoI2c` com os dispositivos escolhidos pelo teste, e `ImuSimulado`, um `IImu` com taxa, viés, ruído e falha definidos pelo teste, sem hardware |
@@ -527,6 +527,33 @@ Sem `include/credenciais.h`, o firmware compila, inicia e não envia nada: o log
 O envio ocupa cerca de 45 KB de RAM fixa (buffer, cópia do lote e JSON), de 320 KB do ESP32-C3.
 
 **Ainda falta, fora deste firmware:** a Edge Function `telemetria` (#229), que recebe o lote e responde `{"gravadas": n, "existentes": m}`. Enquanto ela não existir, o servidor responde `404` e o `ControladorEnvio` descarta os lotes (contados em `descartadas`). A velocidade vai zerada até o cálculo da velocidade instantânea entrar na telemetria, e a tensão e a corrente vão zeradas porque a Rev 2.0 não mede a bateria.
+
+## Aguardando Largada (`lib/navegacao`, #242)
+
+Depois de calibrar, o robô avisa que está pronto: envia amostras com `estado_corrida = aguardando`, na célula de partida, com tempo e velocidade zerados, e o dashboard mostra o Frame 01_Idle (robô na partida e cards zerados) até ele largar. A `FaseCorrida` decide, a cada ciclo da telemetria, o que registrar.
+
+```
+AguardandoCalibracao --calibração bem-sucedida--> AguardandoLargada --largou--> EmCorrida --objetivo ou 10 min--> Encerrada
+```
+
+| Fase | O que o robô faz | Telemetria |
+|---|---|---|
+| `aguardando_calibracao` | Calibrando (boot) | Nada. A corrida nem é criada no servidor |
+| `aguardando_largada` | Parado na partida | `aguardando`, tempo 0, velocidade 0: a primeira logo ao entrar e uma a cada `PERIODO_AMOSTRA_AGUARDANDO_MS` (5 s). Uma espera de 5 min gera 60 amostras, e não 300 |
+| `em_corrida` | Largou: deslocamento ≥ `DESLOCAMENTO_MINIMO_LARGADA_MM` (20 mm) | `explorando`, uma por ciclo; o cronômetro dos 10 min começa na largada |
+| `encerrada` | Objetivo alcançado ou 10 min | Última amostra `parado`, e o encerramento da corrida |
+
+**Quando o robô passa a aguardar.** (1) A `RotinaCalibracao` do boot termina com `Sucesso` (log `{"status":"aguardando_largada"}`). (2) Se ela falha mas o autoteste foi aprovado e o giroscópio calibra sozinho (tarefa da IMU), o robô também passa a aguardar (`"calibracao":"giroscopio"` no log). Sem calibração, nenhuma corrida é criada.
+
+**A corrida é criada depois da calibração**, e não ao ligar o Wi-Fi como antes: assim o dashboard só vê uma corrida `em_andamento` com o robô pronto. O tempo de espera não gasta os 10 minutos.
+
+**Largada.** O log mostra `{"status":"largada"}`. O comando serial `Z` (robô recolocado na partida à mão) volta a `aguardando_largada`; uma corrida encerrada continua encerrada. A telemetria serial traz o campo `fase`.
+
+**Dashboard.** Uma corrida `em_andamento` sem leitura de depois da largada aparece como "AGUARDANDO LARGADA DO ROBÔ". As leituras `aguardando` mostram o robô na célula de partida, mas não contam para o gráfico, a velocidade média nem o cronômetro; a primeira leitura `explorando` passa a tela para "CORRIDA EM ANDAMENTO".
+
+Valores **provisórios** em `ConfiguracaoLargada.h`: o deslocamento mínimo (acima da oscilação da estimativa parado e abaixo de meia célula) e o período da amostra de espera. Confira na bancada com o robô parado e depois empurrado.
+
+Testes: `pio test -e native -f test_fase_corrida` (fases, limiares, volta do `millis()` e o caminho até o servidor simulado, com o JSON do lote).
 
 ## Instalação
 

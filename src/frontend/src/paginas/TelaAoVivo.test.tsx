@@ -70,8 +70,7 @@ describe('TelaAoVivo (integração com Supabase simulado)', () => {
   it('atualiza cards, cronômetro e marcador do limite a cada linha inserida', async () => {
     clienteSimulado.definirTabela<Corrida>('corridas', [corridaSimulada({ id: 20, numero_tentativa: 2 })]);
     render(<PainelReal />);
-    await waitFor(() => screen.getByRole('button', { name: 'CORRIDA EM ANDAMENTO' }));
-    expect(cartao('Tempo de conclusão').getByText(/Tentativa 2 de 3/)).toBeInTheDocument();
+    await waitFor(() => expect(cartao('Tempo de conclusão').getByText(/Tentativa 2 de 3/)).toBeInTheDocument());
 
     await enviar(
       leituraSimulada(1, {
@@ -108,7 +107,7 @@ describe('TelaAoVivo (integração com Supabase simulado)', () => {
   it('mostra a conclusão com a nota quando o robô chega ao objetivo', async () => {
     clienteSimulado.definirTabela<Corrida>('corridas', [corridaSimulada({ id: 21 })]);
     render(<PainelReal />);
-    await waitFor(() => screen.getByRole('button', { name: 'CORRIDA EM ANDAMENTO' }));
+    await waitFor(() => screen.getByRole('button', { name: 'AGUARDANDO LARGADA DO ROBÔ' }));
 
     await enviar(leituraSimulada(1, { corrida_id: 21, tempo_decorrido: 45.25, evento: 'objetivo_alcancado' }));
     expect(cartao('Tempo de conclusão').getByText('00:45.250')).toBeInTheDocument();
@@ -120,7 +119,7 @@ describe('TelaAoVivo (integração com Supabase simulado)', () => {
   it('esgota o tempo em 10:00 e marca o limite como esgotado', async () => {
     clienteSimulado.definirTabela<Corrida>('corridas', [corridaSimulada({ id: 22 })]);
     render(<PainelReal />);
-    await waitFor(() => screen.getByRole('button', { name: 'CORRIDA EM ANDAMENTO' }));
+    await waitFor(() => screen.getByRole('button', { name: 'AGUARDANDO LARGADA DO ROBÔ' }));
 
     await enviar(leituraSimulada(1, { corrida_id: 22, tempo_decorrido: 612 }));
     expect(cartao('Tempo de conclusão').getByText('10:00.000')).toBeInTheDocument();
@@ -140,5 +139,49 @@ describe('TelaAoVivo fora do modo ao vivo (corrida de exemplo)', () => {
     rerender(<TelaAoVivo {...props} estado="concluido" />);
     screen.getByRole('button', { name: 'RESETAR / NOVA TENTATIVA' }).click();
     expect(props.aoResetar).toHaveBeenCalledOnce();
+  });
+
+  it('Aguardando Largada: mostra o robô na célula de partida com os cards zerados e sem gráfico', async () => {
+    clienteSimulado.definirTabela<Corrida>('corridas', [corridaSimulada({ id: 50, numero_tentativa: 2 })]);
+    clienteSimulado.definirTabela<Telemetria>('telemetria', [
+      leituraSimulada(1, {
+        corrida_id: 50,
+        estado_corrida: 'aguardando',
+        posicao_linha: 0,
+        posicao_coluna: 0,
+        velocidade: 0,
+        tensao_bateria: 8.1,
+        corrente_bateria: 0.12,
+        tempo_decorrido: 0,
+      }),
+    ]);
+    render(<PainelReal />);
+    await waitFor(() => expect(cartao('Consumo de bateria').getByText('8.1V · 120 mA')).toBeInTheDocument());
+
+    expect(screen.getByRole('button', { name: 'AGUARDANDO LARGADA DO ROBÔ' })).toBeDisabled();
+    expect(cartao('Velocidade média').getByText('0.00 m/s')).toBeInTheDocument();
+    expect(cartao('Velocidade média').getByText('Pico máx: 0.00 m/s')).toBeInTheDocument();
+    expect(cartao('Tempo de conclusão').getByText('00:00.000')).toBeInTheDocument();
+    expect(cartao('Tempo de conclusão').getByText(/Pronto na largada · Tentativa 2 de 3/)).toBeInTheDocument();
+    expect(limite()).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByText('O gráfico aparece quando a corrida começar.')).toBeInTheDocument();
+    expect(screen.queryByText(/gráfico com/)).not.toBeInTheDocument();
+  });
+
+  it('Aguardando Largada: a primeira leitura de corrida troca o aviso, mostra o gráfico e a média ignora a espera', async () => {
+    clienteSimulado.definirTabela<Corrida>('corridas', [corridaSimulada({ id: 51 })]);
+    clienteSimulado.definirTabela<Telemetria>('telemetria', [
+      leituraSimulada(1, { corrida_id: 51, estado_corrida: 'aguardando', velocidade: 0, tempo_decorrido: 0 }),
+      leituraSimulada(2, { corrida_id: 51, estado_corrida: 'aguardando', velocidade: 0, tempo_decorrido: 0 }),
+    ]);
+    render(<PainelReal />);
+    await waitFor(() => screen.getByRole('button', { name: 'AGUARDANDO LARGADA DO ROBÔ' }));
+
+    await enviar(leituraSimulada(3, { corrida_id: 51, estado_corrida: 'explorando', velocidade: 0.3, tempo_decorrido: 1.5 }));
+
+    expect(screen.getByRole('button', { name: 'CORRIDA EM ANDAMENTO' })).toBeDisabled();
+    expect(cartao('Velocidade média').getByText('0.30 m/s')).toBeInTheDocument();
+    expect(cartao('Tempo de conclusão').getByText('00:01.500')).toBeInTheDocument();
+    expect(screen.getByText('gráfico com 1 leituras')).toBeInTheDocument();
   });
 });
