@@ -98,6 +98,7 @@ Há ainda o ambiente **`bancada_tof`**, que herda o `esp32c3` mas compila só `s
 | `lib/navegacao` | Algoritmo de resolução do labirinto por *flood fill* ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)), localização por odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)) e detecção do objetivo ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) |
 | `lib/atuacao` | Controle de movimento: centralização no corredor e parada frontal ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191)), e trava dos motores (`MotoresComTrava`, [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
 | `lib/execucao` | Execução dos movimentos entre células (`ExecutorMovimentos`), ciclo percepção → mapa → decisão → atuação (`CicloNavegacao`) e gatilho da largada (`GatilhoLargada`), com os parâmetros em `ConfiguracaoExecucao.h` ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) |
+| `lib/localizacao` | Correção do erro acumulado pelas paredes (`CorrecaoPelasParedes`), com os parâmetros do realinhamento e do rumo pelo corredor em `ConfiguracaoLocalizacao.h` ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)) |
 | `lib/imu` | Calibração do viés e ângulo de giro do giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378), PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
 | `lib/lidar` | Código do LiDAR da versão anterior do hardware; **não é usado** e deve ser removido |
 | `lib/comunicacao` | Telemetria e eventos pontuais (`TelemetriaJson`, [#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)), serialização do mapa em JSON ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)) e *buffer* de reenvio (Épico 03) |
@@ -1032,9 +1033,9 @@ stateDiagram-v2
 
 * **Avançar uma célula:** o destino é o centro da célula **seguinte à mais próxima** da posição atual, e não a posição atual mais 180 mm; assim um erro pequeno de parada não se acumula de uma célula para a outra. O `ControleMovimento` centraliza no corredor e mantém o rumo pelo giroscópio. A 60 mm do destino começa a rampa: um teto na potência base (`ControleMovimento::definirTetoPotenciaBase`) cai da potência de cruzeiro (400) até a mínima (150). O avanço termina a 3 mm do centro, ou quando passa dele.
 * **Parede à frente:** a parada frontal do `ControleMovimento` continua valendo. Se ela parar o robô a até 40 mm do destino, o avanço conta como concluído (a parede é a melhor referência do centro). Mais longe, é uma parede que a percepção leu como livre: o avanço termina em `ParedeNaFrente`, a parede é gravada no mapa mesmo com o conflito (`Mapa::corrigirParede`), o passo é cancelado e o próximo planejamento a contorna.
-* **Leitura do ToF no controle:** o ToF mede a partir da face de cada sensor, e o `ControleMovimento` usa distâncias a partir do centro do robô (84 mm até a parede com ele centralizado). Antes do controle, a leitura recebe o recuo de cada sensor: 50 mm na frente (o mesmo do deslocamento sem encoder) e 30 mm nas laterais (o mesmo da percepção). O controle é recalculado a cada leitura nova (cerca de 33 ms); entre duas leituras, vale o último comando.
+* **Leitura do ToF no controle:** o ToF mede a partir da face de cada sensor, e o `ControleMovimento` usa distâncias a partir do centro do robô (84 mm até a parede com ele centralizado). Antes do controle, a leitura recebe o recuo de cada sensor: 50 mm na frente (o mesmo do deslocamento sem encoder) e 30 mm nas laterais (o mesmo da percepção). Uma leitura lateral acima de 100 mm (pela face do sensor) é tratada como lado sem parede ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)): perto do fim de uma parede, o sensor alcança a parede da célula vizinha (100 a 180 mm), e o `ControleMovimento`, que aceita paredes até 180 mm do centro, virava o robô para ela. O controle é recalculado a cada leitura nova (cerca de 33 ms); entre duas leituras, vale o último comando.
 * **Girar 90° e 180°:** o `ControleGiro` gira até o **rumo alvo absoluto**, os múltiplos de 90° desde a largada (positivo para a esquerda, como o giroscópio), e não 90° a partir do ângulo atual. Se um giro parar 3° antes, o próximo compensa, e o erro não se acumula. O 180° é feito pela esquerda.
-* **Direção da odometria:** no modo sem encoder, a direção da `Odometria` vem da diferença entre as rodas estimadas, que é imprecisa. No fim de cada giro, a direção confirmada pelo giroscópio passa a valer (`Odometria::definirDirecao`, que muda a direção sem mexer na posição), e fora dos giros a tarefa de navegação mantém a odometria nessa direção.
+* **Direção da odometria:** no modo sem encoder, a direção da `Odometria` vem da diferença entre as rodas estimadas, que é imprecisa. No fim de cada giro, a direção confirmada pelo giroscópio passa a valer (`Odometria::definirDirecao`, que muda a direção sem mexer na posição), e fora dos giros a tarefa de navegação fixa a odometria nessa direção **a cada ciclo**, e não só quando ela diverge. Com a correção só na divergência, a diferença das rodas se acumulava nos giros pequenos do realinhamento ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)) e virava a direção estimada no meio da manobra.
 * **Percepção no centro:** parado no centro da célula, o ciclo junta 3 leituras novas do ToF, classifica as paredes pela mediana e as grava no mapa na pose da navegação. Só então pede o próximo passo.
 * **Confirmação da pose:** no fim do avanço, `confirmarPose()` recebe a célula da odometria e a direção do giroscópio. Se o robô continuar na célula de origem (parede no caminho ou estimativa que não cruzou a fronteira), o passo é cancelado e o ciclo percebe e replaneja, em vez de esperar um passo que não vai terminar.
 * **Falhas:** sem leitura nova do ToF por 500 ms durante o avanço, avanço acima de 6 s, giro acima de 2,5 s ou pose fora da malha levam a `Falha`, com os motores freados. A recuperação fica com as tarefas de colisão ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)), motor travado ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) e falha do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
@@ -1043,7 +1044,8 @@ stateDiagram-v2
 
 | Parâmetro | Valor | Origem |
 |---|---|---|
-| `DISTANCIA_SENSOR_LATERAL_AO_CENTRO_MM` | 30 | Recuo lateral da percepção (`ConfiguracaoPercepcao.h`: 84 − 30 = 54 mm lidos com parede) |
+| `DISTANCIA_SENSOR_LATERAL_AO_CENTRO_MM` | 30 | Recuo lateral da percepção (`ConfiguracaoPercepcao.h`: 84 − 30 = 54 mm lidos com parede). Com a #188, passou para `ConfiguracaoDeslocamento.h`, porque a correção pelas paredes também usa |
+| `LIMIAR_PAREDE_LATERAL_CONTROLE_MM` | 100 | Leitura lateral (pela face) acima da qual o lado conta como sem parede na centralização ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)) |
 | `DISTANCIA_SENSOR_FRONTAL_AO_CENTRO_MM` | 50 | O mesmo do deslocamento sem encoder (`ConfiguracaoDeslocamento.h`) |
 | `TOLERANCIA_CHEGADA_MM` | 3 | Parada no centro da célula |
 | `DISTANCIA_DESACELERACAO_MM` | 60 | Rampa antes do centro de destino |
@@ -1063,7 +1065,7 @@ Com uma parede parada logo à frente da partida, o gatilho nunca arma: a largada
 
 ### Interface das Classes
 
-* **`ExecutorMovimentos::iniciar(Movimento)`:** começa `AvancarCelula`, `Girar90Esquerda`, `Girar90Direita` ou `Girar180`; recusa se outro estiver em andamento.
+* **`ExecutorMovimentos::iniciar(Movimento)`:** começa `AvancarCelula`, `Girar90Esquerda`, `Girar90Direita` ou `Girar180`; recusa se outro estiver em andamento. O `Realinhar` da [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188) precisa de um plano e começa por `iniciarRealinhamento(plano)` (veja [Correção pelas paredes](#localizacao-correcao-do-erro-acumulado-pelas-paredes)).
 * **`ExecutorMovimentos::atualizar(EntradaExecucao, IMotores&)`:** um ciclo de 10 ms. A entrada traz a leitura nova do ToF (ou `nullptr`), a `LeituraGiro` e a posição no eixo de avanço (`posicaoAoLongoDoAvancoUm`). Devolve `Ocioso`, `Executando`, `Concluido` ou `Falha` (motivo em `falha()`: `ParedeNaFrente`, `SemLeituraTof`, `TempoEsgotado` ou `GiroTempoEsgotado`). `restanteMm()` guarda o erro de chegada para a bancada.
 * **`ExecutorMovimentos::cancelar(IMotores&)`** e **`definirRumoAlvo(miligraus)`:** interrompe e freia; define o rumo de referência.
 * **`CicloNavegacao(Mapa&)`**, **`reiniciar(Pose, IMotores&)`** e **`atualizar(EntradaCiclo, IMotores&)`:** o ciclo completo. A entrada traz a permissão para mover (`liberado`), a pose e a posição da odometria, a leitura nova do ToF e a do giroscópio. `direcao()` e `direcaoDefinida()` dizem a quem chama em que direção manter a odometria.
@@ -1075,6 +1077,8 @@ Com uma parede parada logo à frente da partida, o gatilho nunca arma: a largada
 ### Folga do giro no lugar
 
 O chassi de 120 × 100 mm gira no lugar num corredor de 168 mm: a quina passa a √(60² + 50²) = **78,1 mm** do centro, e a parede fica a 84 mm. Sobram **5,9 mm**: um erro lateral ou de parada maior que isso encosta a quina na parede durante o giro. Na simulação, o avanço para a 2 a 4 mm do centro, mas com as rodas desiguais (5%) ou a largada 1° torta, a sintonia provisória da centralização e do rumo deixa o robô de 5 a 10 mm fora do centro, e alguns giros raspam a parede. Duas tentativas no executor (puxar o rumo para o eixo do corredor e compensar a diferença das rodas) não resolveram de forma confiável e foram descartadas. É um ponto para a mecânica (quinas chanfradas ou arredondadas) e para a sintonia na bancada ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)).
+
+**Atualização ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)).** A correção pelas paredes passou a tratar a folga no firmware: o robô se realinha ao centro antes de cada giro no lugar, e o rumo é puxado para o eixo do corredor de outra forma (sem exigir o robô centrado). Na mesma varredura de 189 corridas, as corridas com contato caíram de 92 para 2, sem nenhuma falha. Veja [Correção pelas paredes](#localizacao-correcao-do-erro-acumulado-pelas-paredes). Chanfrar as quinas continua sendo uma margem a mais.
 
 ### Bancada da execução
 
@@ -1088,6 +1092,184 @@ O firmware de bancada do deslocamento (`src/bancada/bancada_deslocamento.cpp`) g
 **Rastreabilidade:** `lib/execucao` (`ExecutorMovimentos`, `CicloNavegacao`, `GatilhoLargada`, `Movimento.h`), `Odometria::definirDirecao`, `ControleMovimento::definirTetoPotenciaBase`, `Mapa::corrigirParede`, `lib/simulacao/RoboSimulado` e as etapas 7 e 8 da bancada atendem à tarefa [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184), da [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01).
 
 **Pendências:** medir o erro de deslocamento na bancada com o robô montado (critério 3 da #184, etapas 7 e 8), conferir o gesto da largada com o VL53L0X real, unificar o recuo do sensor frontal entre a percepção (30 mm) e o deslocamento (50 mm) quando a estrutura informar a posição real, e ligar a fase da corrida da [#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242) à permissão para mover.
+
+## Localização: correção do erro acumulado pelas paredes
+
+A correção pelas paredes ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188), [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)) usa as paredes que o robô vê como referência fixa. Sem ela, a odometria e o giroscópio acumulam erro de três formas:
+
+* a posição lateral só muda pela diferença entre as rodas, que a estimativa sem encoder não enxerga;
+* com encoder, o erro de escala da roda se soma célula a célula;
+* a deriva do giroscópio entorta o rumo de referência.
+
+Com a folga de 5,9 mm do [giro no lugar](#folga-do-giro-no-lugar), alguns milímetros fora do centro já bastam para a quina do chassi encostar.
+
+O escopo foi combinado na análise da tarefa. Nenhuma outra tarefa cobre o rumo pelo corredor, por isso ele entrou aqui. São quatro partes:
+
+| Parte | O que faz | Onde |
+|---|---|---|
+| A. Posição pelas paredes | Corrige a posição lateral da `Odometria` pelas paredes laterais. Com encoder, também corrige ao longo do avanço pela parede da frente e pelas quinas, a mesma correção da [#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380) | `lib/localizacao` (`CorrecaoPelasParedes`), `Odometria::ajustarPosicao` |
+| B. Realinhamento antes do giro | Antes de girar no lugar, leva o robô fisicamente ao centro do corredor | `ExecutorMovimentos` (`Movimento::Realinhar`, `planejarRealinhamento`), `CicloNavegacao` (`Realinhando`) |
+| C. Testes e bancada | Testes unitários e de integração, e as etapas 9 e 10 da bancada para o critério "célula estimada = real" | `test_localizacao`, `test_integracao_localizacao`, `scripts/bancada_deslocamento.py` |
+| D. Rumo pelo corredor | Com duas paredes paralelas, puxa o rumo de referência para o eixo do corredor, o que corrige a deriva do giroscópio | `ExecutorMovimentos::ajustarRumoPeloCorredor` |
+
+Ficam fora, com as suas tarefas:
+
+* a recuperação depois de uma colisão ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192));
+* a sintonia dos ganhos da centralização e do giro ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190));
+* a calibração do giroscópio e a sua zona morta ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378));
+* os encoders físicos.
+
+```mermaid
+flowchart LR
+    tof["ToF (leitura nova)"] --> med["medirDesvioLateral<br/>duas paredes, só esquerda<br/>ou só direita"]
+    med --> lat["Correção lateral<br/>50% da diferença,<br/>descarta acima de 40 mm"]
+    tof --> av["Correção ao longo<br/>(só com encoder, #380)"]
+    lat --> odo["Odometria::ajustarPosicao"]
+    av --> odo
+    tof --> rumo["Rumo pelo corredor<br/>duas paredes e<br/>robô paralelo"]
+    rumo --> ctl["Rumo de referência<br/>do avanço e dos giros"]
+    perc["Percepção no centro<br/>(mediana de 3 leituras)"] --> dec{"Vai girar e está<br/>3 a 25 mm fora?"}
+    dec -- "sim" --> re["Realinhar<br/>giro pequeno → trecho →<br/>giro de volta → volta"]
+    re --> perc
+    dec -- "não" --> giro["Giro no lugar"]
+```
+
+**Figura 18.** As três correções da #188. A cada leitura nova do ToF, a odometria é corrigida (A) e o rumo é ajustado pelo corredor (D). Antes de um giro, o ciclo confere o desvio e realinha o robô (B), até duas vezes.
+
+### Regras de Negócio e Algoritmo
+
+* **Desvio lateral medido** (`medirDesvioLateral`). Cada lado conta como parede com leitura de até 120 mm pela face, o mesmo limiar das quinas da #380. A leitura recebe o recuo de 30 mm do sensor, e o desvio, positivo para a direita, sai assim:
+  * com as duas paredes, é a metade da diferença (esquerda − direita);
+  * com uma parede só, é a distância a ela comparada aos 84 mm do centro à parede;
+  * sem parede perto, não há referência e nada é corrigido.
+* **Correção lateral** (`CorrecaoPelasParedes::aplicar`). O alvo é o centro de célula mais próximo da posição lateral estimada, mais o desvio medido. Por isso o erro acumulado se corrige mesmo que a estimativa já esteja numa célula vizinha.
+  * Cada leitura nova aplica 50% da diferença (5 leituras levam a 97%), o que filtra o ruído do VL53L0X.
+  * Uma diferença acima de 40 mm é descartada como leitura suspeita: o robô está muito torto ou o sensor leu outra coisa.
+  * Durante uma manobra (giro ou realinhamento), nada é corrigido, e as leituras laterais guardadas para as quinas são esquecidas (`DeslocamentoEstimado::esquecerLaterais`), para a primeira leitura depois da manobra não parecer uma quina.
+* **Correção ao longo do avanço** (só com `ENCODERS_INSTALADOS`). É a correção da #380 pela parede da frente e pelas quinas, aplicada direto na odometria. No modo sem encoder, ela já acontece dentro do `DeslocamentoEstimado`. `CorretorDeslocamentoTof::avaliar` passou a aceitar a potência das rodas direto, para valer sem o estimador.
+* **`Odometria::ajustarPosicao(avanço, lateral)`**. Soma um deslocamento no referencial do robô: o avanço vai na direção atual, e a lateral é positiva para a direita (de Norte, a direita é Leste). A célula é recalculada e as contagens das rodas ficam como estão.
+* **Quando realinhar.** No centro da célula, antes de um giro, o ciclo calcula o desvio pela mediana das amostras da percepção.
+  * O robô realinha se houver parede lateral e o desvio estiver entre 3 mm (a margem para o ruído, abaixo da folga de 5,9 mm) e 25 mm (acima disso, a leitura é suspeita).
+  * Depois do realinhamento, o ciclo junta amostras novas e decide de novo: são até 2 tentativas por giro, porque um desvio grande pede um ângulo pequeno e um trecho maior que o espaço disponível.
+  * Sem permissão para mover, o realinhamento é cancelado e freado como os outros movimentos.
+* **A manobra** (`Movimento::Realinhar`) tem quatro etapas:
+  1. um giro pequeno de θ para o lado do centro;
+  2. um trecho reto s, na potência mínima (150), com o rumo inclinado mantido pelo giroscópio;
+  3. o giro de volta ao rumo nominal;
+  4. um trecho de volta s·cos θ no sentido oposto, para o robô voltar ao centro da célula ao longo do eixo.
+
+  O deslocamento lateral é s·sin θ. O robô vai primeiro de ré quando a célula de trás está livre (de onde veio) ou quando a frente tem parede. Cada trecho tem um tempo máximo de 3 s, e cada giro usa o tempo máximo dos giros.
+* **Plano sem encostar** (`planejarRealinhamento`). Com o robô girado θ, a quina do chassi avança para os dois lados:
+  * para o lado, ela fica a 78,1·sin(50,2° + θ) do centro;
+  * ao longo do eixo, ela fica a 78,1·cos(50,2° − θ) do centro.
+
+  O planejador testa os ângulos 5°, 8°, 10°, 12°, 15°, 20°, 25° e 30°. Escolhe o menor em que o trecho necessário cabe no espaço, deixando 4 mm entre a quina e a parede:
+  * para o lado, o espaço é 84 − 4 − desvio;
+  * ao longo do eixo, com paredes na frente e atrás, o espaço é 84 − 4 − o alcance ao longo da quina. Com um lado livre, o trecho vai até 60 mm.
+
+  Se nenhum ângulo couber, o plano corrige só o que cabe, e a segunda tentativa completa. Num beco com 6 mm de desvio, o plano é de 20° e 12,5 mm de ré, que corrigem 4,3 mm (no robô simulado, o desvio cai para 1,7 mm).
+* **Rumo pelo corredor** (`ajustarRumoPeloCorredor`). O ajuste acontece durante o avanço, a cada leitura nova, e só nestas condições:
+  * há paredes dos dois lados;
+  * o robô está a até 30 mm do centro;
+  * o desvio lateral varia até 10 mm/s, ou seja, o robô anda paralelo às paredes.
+
+  Nessas condições, o ângulo do giroscópio é o eixo do corredor, e o rumo de referência anda 15% (150‰) até ele. O ajuste não exige o robô centrado de propósito, porque é o erro de rumo que o tira do centro: com essa exigência, o ajuste ficava desligado justamente quando mais importava. O rumo nominal (os múltiplos de 90° desde a largada) pode se afastar até ±45°, o que cobre a deriva de uma corrida inteira (0,075 °/s em 10 minutos dá 45°). Os giros seguintes partem do rumo ajustado.
+
+**Parâmetros:** todos provisórios, em `lib/localizacao/src/ConfiguracaoLocalizacao.h`. Foram ajustados na varredura simulada (abaixo) com a geometria provisória dos ToF.
+
+| Parâmetro | Valor | Uso |
+|---|---|---|
+| `LIMIAR_PAREDE_CORRECAO_LATERAL_MM` | 120 | Leitura lateral (pela face) até a qual o lado conta como parede |
+| `CORRECAO_LATERAL_MAXIMA_MM` | 40 | Diferença acima da qual a leitura é descartada |
+| `GANHO_CORRECAO_LATERAL_PERCENTUAL` | 50 | Fração da diferença aplicada a cada leitura |
+| `DESVIO_MINIMO_REALINHAMENTO_MM` e `DESVIO_MAXIMO_REALINHAMENTO_MM` | 3 e 25 | Faixa de desvio em que o robô realinha antes de girar |
+| `TRECHO_MAXIMO_REALINHAMENTO_LIVRE_MM` | 60 | Trecho máximo com um lado livre |
+| `FOLGA_MINIMA_REALINHAMENTO_MM` | 4 | Folga entre a quina e a parede durante a manobra |
+| `TENTATIVAS_REALINHAMENTO` | 2 | Realinhamentos antes de cada giro |
+| `POTENCIA_REALINHAMENTO` e `GANHO_RUMO_REALINHAMENTO_DECIMOS` | 150 e 80 | Potência dos trechos e ganho do rumo neles (décimos por grau) |
+| `TEMPO_MAXIMO_TRECHO_REALINHAMENTO_MS` | 3000 | Tempo máximo de cada trecho |
+| `AJUSTE_RUMO_PELO_CORREDOR_POR_MIL` | 150 | Quanto o rumo anda até o eixo do corredor a cada leitura (0 desliga) |
+| `ERRO_LATERAL_MAXIMO_RUMO_MM` e `VARIACAO_LATERAL_MAXIMA_RUMO_MM_POR_S` | 30 e 10 | Condições do ajuste do rumo |
+| `AJUSTE_RUMO_MAXIMO_MILIGRAUS` | 45000 | Limite do rumo ajustado em relação ao nominal |
+
+### Interface das Classes
+
+* **`medirDesvioLateral(leitura, limiar, recuo)`:** devolve um `DesvioLateral` com a referência (`SemParede`, `DuasParedes`, `SoEsquerda` ou `SoDireita`) e o desvio em µm, positivo para a direita.
+* **`CorrecaoPelasParedes::aplicar(Odometria&, leitura, MovimentoRobo, corrigirAvanco)`:** aplica as correções de uma leitura nova. `MovimentoRobo` vale `Parado`, `Avancando` ou `Manobrando`. Devolve um `ResultadoCorrecaoParedes` com a referência lateral (ou `Descartada` ou `Manobrando`), o resultado da correção ao longo e os deltas aplicados.
+* **`CorrecaoPelasParedes::reiniciar()`**, **`correcoesLaterais()`** e **`nomeDaReferenciaLateral()`:** recomeço (comando `Z`), contagem e nome para o log.
+* **`planejarRealinhamento(desvio, recuarPrimeiro, trechoLivre, trechoMaximo, folga)`:** devolve um `PlanoRealinhamento` com o ângulo, o trecho, a volta e o deslocamento lateral esperado. O plano é vazio se não houver desvio ou espaço.
+* **`ExecutorMovimentos::iniciarRealinhamento(plano)`**, **`planoRealinhamento()`** e **`etapaRealinhamento()`:** a manobra e as suas etapas (`GiroIda`, `Trecho`, `GiroVolta`, `Volta`).
+* **`ExecutorMovimentos::rumoNominalMiligraus()`:** o rumo sem o ajuste do corredor. `definirRumoAlvo` define o rumo e o nominal juntos.
+* **`CicloNavegacao`:** o estado novo é `Realinhando`. `movimentoRobo()` diz à correção se o robô está parado, avançando ou manobrando. `realinhamentos()` e `ultimoDesvioLateralMm()` alimentam o log. O construtor recebe a `ConfiguracaoRealinhamento`.
+* **`ehManobra(movimento)`** (`Movimento.h`): verdadeiro para tudo que não é `AvancarCelula`. `ehGiro` cobre só os três giros.
+
+**No `main.cpp`.** A tarefa de navegação, a cada ciclo:
+
+* fixa a direção da odometria na do ciclo sempre que ela está definida;
+* durante uma manobra, no modo sem encoder, esquece as laterais do deslocamento e não passa a leitura a ele;
+* a cada leitura nova do ToF, chama `correcaoParedes.aplicar` com o `movimentoRobo()` do ciclo e `ENCODERS_INSTALADOS`, dentro da mesma seção crítica da odometria.
+
+O comando `Z` também reinicia a correção.
+
+### Resultado na simulação
+
+Para medir o efeito, foi feita uma varredura de 189 corridas simuladas no simulador dos testes de integração:
+
+* 3 robôs: o ideal, um com rodas a 92/97% da tabela e um com rodas a 103/95%;
+* 7 ângulos de largada, de −3° a +3°;
+* 3 desvios laterais na largada: 0 e ±8 mm;
+* 3 labirintos: 4×4, 8×4 e 12×4.
+
+A tabela compara a mesma varredura com e sem a #188, para cada deriva do giroscópio depois da calibração. "Sem a #188" já inclui o filtro de 100 mm na centralização. A base da #184 tinha 92 corridas com contato e 4 que não chegavam.
+
+| Deriva do giroscópio | Corridas com contato, sem a #188 | Corridas com contato, com a #188 | Tempo total em contato, com a #188 | Sem chegar, com a #188 | Tempo médio, com a #188 |
+|---|---|---|---|---|---|
+| 0 | 84 | 2 | 162 ms | 0 | 43,1 s |
+| +0,1 °/s | 128 | 2 | 86 ms | 0 | 43,5 s |
+| −0,1 °/s | 117 | 1 | 71 ms | 0 | 44,4 s |
+| +0,2 °/s | 172 | 2 | 188 ms | 0 | 45,1 s |
+| −0,2 °/s | 173 | 23 | 32,9 s | 0 | 45,6 s |
+
+* Em todas as corridas com a #188, a célula estimada no fim coincidiu com a real.
+* O tempo médio sobe de 35,3 s para cerca de 43 s, por causa dos realinhamentos (de 545 a 690 na varredura, conforme a deriva).
+* Os contatos que sobram sem deriva são do robô com rodas 8% desiguais, no meio de um giro em (3, 1).
+* A deriva de −0,2 °/s é o limite atual.
+* A zona morta de 0,3 °/s do integrador do giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)), somada ao ruído, retifica a deriva e a deixa maior que a real.
+
+### Bancada da correção pelas paredes
+
+O firmware de bancada do deslocamento ganhou três comandos:
+
+* `DESVIO` mede o desvio pela mediana de 3 leituras, sem mover.
+* `REALINHAR [F]` mede, realinha e mede de novo. Por padrão começa de ré; com `F`, começa para a frente.
+* `PERCURSO seq` executa a sequência: `A` avança, `D` e `E` giram 90°, `V` gira 180°. Antes de cada giro, realinha se for preciso, e no fim imprime uma linha `fim_percurso` com a célula estimada.
+
+O comando `ZERAR` também reinicia a correção. O menu `scripts/bancada_deslocamento.py` ganhou duas etapas:
+
+| Etapa | O que verifica | Critério provisório |
+|---|---|---|
+| 9. Desvio lateral e realinhamento | Desvio medido pelos ToF contra a régua (robô uns 8 mm fora do centro); realinhamento e o desvio que sobra; se o chassi encostou | Erro da medida até ±2 mm; desvio depois do realinhamento até ±2 mm; sem encostar |
+| 10. Percurso | Sequência (padrão `AAADAEA`) a partir de (0, 0), virado para o Norte; a célula estimada contra a real | Todos os movimentos feitos e a célula estimada igual à real (critério 2 da #188) |
+
+**Rastreabilidade:** atendem à tarefa [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188), da [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05):
+
+* `lib/localizacao` (`CorrecaoPelasParedes`, `ConfiguracaoLocalizacao.h`);
+* `Odometria::ajustarPosicao`;
+* o `Realinhar`, o planejador e o rumo pelo corredor no `ExecutorMovimentos`;
+* o estado `Realinhando` do `CicloNavegacao`;
+* a correção no `main.cpp`;
+* as etapas 9 e 10 da bancada.
+
+**Pendências:**
+
+* rodar as etapas 9 e 10 com o robô montado (critério 2 da #188);
+* medir as grandezas que fixam os parâmetros:
+  * a posição real dos ToF e o centro de giro;
+  * o formato das quinas do chassi;
+  * o ruído do VL53L0X;
+  * a deriva real do giroscópio depois da calibração;
+  * as medidas reais do labirinto;
+* rever a zona morta do giroscópio com a #378, se a deriva real passar de 0,1 °/s.
 
 ## Testes
 
@@ -1258,6 +1440,21 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | `test_odometria/test_odometria.cpp` | `test_definir_direcao_mantem_a_posicao` e `test_definir_direcao_zera_o_giro_acumulado` | A direção do giroscópio entra sem mexer na posição e zera o giro acumulado das rodas |
 | `test_controle_movimento/test_controle_movimento.cpp` | `test_teto_da_potencia_base_desacelera_sem_parede_a_frente` e `test_teto_da_potencia_base_nao_impede_a_parada_frontal` | O teto desacelera sem parede à frente, nunca abaixo da mínima, e a parada frontal continua valendo |
 | `test_mapeamento/test_mapa.cpp` | `test_corrigir_parede_sobrescreve_nos_dois_lados` e `test_corrigir_parede_recusa_entradas_invalidas_e_o_perimetro_livre` | A correção sobrescreve nas duas células e nunca abre o perímetro |
+| `test_localizacao/test_localizacao.cpp` | `test_desvio_com_as_duas_paredes_e_a_metade_da_diferenca` e `test_desvio_com_uma_parede_usa_a_distancia_ao_centro` | Desvio lateral com as duas paredes e com uma só |
+| | `test_correcao_lateral_leva_a_posicao_ao_desvio_medido` e `test_correcao_lateral_corrige_um_erro_acumulado_numa_celula_vizinha` | Correção de 50% por leitura até o desvio medido, também com a estimativa na célula vizinha |
+| | `test_correcao_lateral_grande_demais_e_descartada` e `test_correcao_nao_usa_leituras_de_manobra_nem_sem_parede` | Diferença acima de 40 mm descartada; nada é corrigido em manobra ou sem parede |
+| | `test_com_os_encoders_corrige_tambem_pela_parede_da_frente` | Com encoder, a correção ao longo do avanço da #380 entra na odometria |
+| | `test_plano_usa_o_menor_angulo_que_cabe`, `test_plano_nao_deixa_a_quina_chegar_a_parede` e `test_plano_num_beco_cabe_entre_a_quina_girada_e_a_parede` | Planejador do realinhamento: menor ângulo, folga de 4 mm para o lado e, no beco, ao longo do eixo |
+| | `test_realinhamento_faz_as_quatro_etapas_e_volta_ao_rumo` | Giro pequeno, trecho, giro de volta e volta, terminando no rumo nominal |
+| | `test_rumo_pelo_corredor_segue_o_angulo_com_duas_paredes_paralelas` e `test_rumo_pelo_corredor_nao_ajusta_se_o_robo_nao_esta_paralelo` | O rumo anda até o eixo do corredor só com duas paredes e o robô paralelo |
+| | `test_ciclo_realinha_antes_de_girar_quando_esta_fora_do_centro` e `test_ciclo_confere_depois_do_realinhamento_e_tenta_de_novo` | O ciclo realinha antes do giro, confere de novo e faz até 2 tentativas |
+| `test_integracao_localizacao/test_integracao_localizacao.cpp` | `test_posicao_lateral_estimada_segue_a_real_pelas_paredes` | Erro lateral estimado de −8,0 mm sem correção e −0,2 mm com ela |
+| | `test_com_encoders_a_correcao_segura_o_erro_de_escala` | Encoder 5% maior, 3 células: 25,6 mm de erro sem correção e −0,7 mm com ela |
+| | `test_realinhamento_leva_ao_centro_e_o_giro_nao_encosta` e `test_realinhamento_num_beco_cabe_no_espaco_curto` | 8 mm fora do centro terminam a 0,1 mm; no beco, 6 mm caem para −1,7 mm numa tentativa, sem encostar |
+| | `test_corridas_com_robo_imperfeito_nao_encostam_e_a_celula_coincide` | Corridas nos três labirintos com o robô imperfeito: sem contato e com a célula estimada igual à real |
+| | `test_rumo_pelo_corredor_segura_a_deriva_do_giroscopio` e `test_varredura_reduzida_de_largadas_e_robos` | Deriva de 0,1 °/s: 7 corridas com contato sem o rumo pelo corredor e 1 com ele; varredura de 18 corridas sem falhas |
+| `test_odometria/test_odometria.cpp` | `test_ajustar_posicao_no_referencial_do_robo_nas_quatro_direcoes` e `test_ajustar_posicao_muda_a_celula_e_nao_mexe_nas_contagens` | `ajustarPosicao` no referencial do robô; muda a célula sem mexer nas contagens |
+| `test_execucao_movimentos/test_execucao_movimentos.cpp` | `test_avanco_ignora_parede_lateral_distante_na_centralizacao` | A parede da célula vizinha (100 a 180 mm) não entra na centralização |
 
 Para rodar, dentro de `src/firmware`:
 
@@ -1308,6 +1505,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/inicializacao` (`AutotesteBoot`, `RelatorioBoot`), `IBarramentoI2c`, `BarramentoI2cEsp32`, `MotoresComTrava` | [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) |
 | `lib/hal` (`IImu`), `lib/simulacao` (`ImuSimulado`), `lib/imu` (`IntegradorGiro`, `ConversorGiro`, `AcompanhadorGiro`), `ImuMpu6050`, `BarramentoI2c`, tarefa da IMU no `main.cpp` | [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) Driver do MPU6050 e ângulo de giro | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
 | `lib/execucao` (`ExecutorMovimentos`, `CicloNavegacao`, `GatilhoLargada`), `Odometria::definirDirecao`, `ControleMovimento::definirTetoPotenciaBase`, `Mapa::corrigirParede`, `RoboSimulado`, ciclo da navegação no `main.cpp` e etapas 7 e 8 da bancada | [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184) Execução dos movimentos entre células | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
+| `lib/localizacao` (`CorrecaoPelasParedes`), `Odometria::ajustarPosicao`, `Realinhar` e rumo pelo corredor no `ExecutorMovimentos`, estado `Realinhando` do `CicloNavegacao`, correção no `main.cpp` e etapas 9 e 10 da bancada | [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188) Correção do erro acumulado pelas paredes | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
 
 ## Próximos passos
 
@@ -1323,6 +1521,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 - **Sensores VL53L0X** ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): o driver, a regra de validade (com fora da faixa limitado à faixa), o teste de integração com o mapa e a ligação no `main.cpp` estão prontos, e o build da placa compila. Falta rodar o roteiro da [bancada](#bancada-dos-vl53l0x) com o hardware montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)) e trocar os valores provisórios de `ConfiguracaoTof.h` pelos medidos. Dependem desta tarefa a percepção para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), a calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), o boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e a recuperação de falhas do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
 - **Boot do sistema** ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): o autoteste do I²C, a trava dos motores e o relatório estão prontos e testados no computador com dispositivos simulados. Falta a bancada: medir o tempo desde o ligar (o `boot_ms` não conta a ROM nem o bootloader), conferir o `WHO_AM_I` do módulo montado e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (0x68).
 - **Execução dos movimentos** ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)): os comandos "avançar uma célula", "girar 90°" e "girar 180°", o ciclo percepção → mapa → decisão → atuação e o gatilho da largada estão prontos, testados no computador (incluindo corridas completas no robô simulado) e ligados no `main.cpp`. Falta a bancada: medir o erro de deslocamento com as etapas 7 e 8 de `scripts/bancada_deslocamento.py` e registrar em [Testes de Software](../07-testes/software.md). A folga de 5,9 mm do giro no lugar ([Folga do giro no lugar](#folga-do-giro-no-lugar)) precisa da mecânica e da sintonia da centralização.
+- **Correção pelas paredes** ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)): a posição lateral pelas paredes, a correção ao longo do avanço com encoder, o realinhamento antes dos giros e o rumo pelo corredor estão prontos, testados no computador e ligados no `main.cpp`. Na simulação, as corridas com contato caíram de 84–92 para 2 em 189. Falta a bancada: rodar as etapas 9 e 10 de `scripts/bancada_deslocamento.py` e ajustar `ConfiguracaoLocalizacao.h` com a geometria real dos ToF e do chassi, o ruído do VL53L0X e a deriva real do giroscópio.
 
 ## Histórico de versões
 
@@ -1339,3 +1538,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | 1.1 | 24/10/2026 | Driver dos 3 VL53L0X: ligação, endereços, regra de validade com fora da faixa limitado, bancada e seus testes no CI, `TofSimulado` e integração com o mapa; interface renomeada para `ISensorDistancia` ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) | Marllon Fausto | — |
 | 1.2 | 24/10/2026 | Boot do sistema: autoteste do I²C, trava dos motores e relatório do boot; camadas dos motores com nome próprio e ordem combinada com as #341 e #380; integração do I²C com o #403 ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) | Marllon Fausto | — |
 | 1.3 | 25/10/2026 | Execução dos movimentos entre células: executor, ciclo de navegação, gatilho da largada, folga do giro no lugar, bancada da execução e seus testes ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) | Marllon Fausto | — |
+| 1.4 | 25/10/2026 | Correção do erro acumulado pelas paredes: posição lateral e ao longo do avanço, realinhamento antes dos giros, rumo pelo corredor, resultado da varredura, bancada e testes; filtro da parede lateral distante e direção da odometria a cada ciclo na execução ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)) | Marllon Fausto | — |

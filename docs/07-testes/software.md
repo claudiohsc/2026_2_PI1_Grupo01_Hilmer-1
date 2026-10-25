@@ -2840,3 +2840,282 @@ python3 -m unittest discover -s scripts/testes -v
 - **Geometria dos ToF:** unificar o recuo do sensor frontal (30 mm na percepção, 50 mm no deslocamento e na execução) quando a estrutura informar a posição real.
 - **Fase da corrida:** ligar a `FaseCorrida` da [#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242) (PR [#438](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/438)) à permissão para mover.
 - **Corrida completa no labirinto real:** fica com a [#185](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/185).
+
+---
+
+### Sprint 5 · Correção do erro acumulado pelas paredes
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#188 Correção do erro acumulado pelas paredes](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188) |
+| História de usuário | HU-05 · Orientação e posição ([#41](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)), RF05 |
+| Código testado | `src/firmware` (branch `feat/188-correcao-pelas-paredes`, sobre a `feat/184-execucao-movimentos`; commit `d6260e0`) |
+| Data da execução | 25/10/2026 |
+| Executado por | m4rllon |
+| Documentação do código | [Firmware: correção do erro acumulado pelas paredes](../04-projeto-conceitual/firmware.md#localizacao-correcao-do-erro-acumulado-pelas-paredes) |
+
+Esta etapa registra a correção da posição pelas paredes, o realinhamento ao centro antes dos giros e o rumo pelo corredor. Foram testados no computador, inclusive com corridas completas do robô simulado, com e sem a correção, e uma varredura de 189 corridas. O critério 2 no robô montado depende da bancada e está nas pendências.
+
+**Ambiente de execução:** o mesmo da [execução dos movimentos](#sprint-5-execucao-dos-movimentos-entre-celulas): Linux (Ubuntu 22.04.5 LTS, kernel 6.8), PlatformIO Core 6.2.0, g++ 11.4.0 (C++17), Unity 2.6.1, gcov 11.4.0 e gcovr 8.6, e Python 3.13.5 (`unittest`).
+
+#### Escopo combinado
+
+O escopo foi combinado na análise da tarefa:
+
+* **Entram:**
+  * A. a posição lateral pelas paredes e, com encoder, a correção ao longo do avanço;
+  * B. o realinhamento físico ao centro antes dos giros, por causa da folga de 5,9 mm do giro no lugar;
+  * C. os testes de integração e as etapas de bancada;
+  * D. o rumo pelo corredor contra a deriva do giroscópio, que nenhuma outra tarefa cobre.
+* **Ficam com as suas tarefas:**
+  * a recuperação de colisão ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192));
+  * a sintonia dos ganhos ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190));
+  * a calibração e a zona morta do giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378));
+  * a corrida completa no labirinto real ([#185](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/185)).
+
+#### Critérios de pronto da #188
+
+| Critério | Como foi atendido | Verificação |
+| :--- | :--- | :--- |
+| 1. Ao detectar paredes laterais, a posição é ajustada ao centro da célula | **Na estimativa:** a `CorrecaoPelasParedes` corrige a posição lateral da `Odometria` a cada leitura nova, com duas paredes ou uma só. **No robô:** o `CicloNavegacao` realinha o robô ao centro antes de cada giro (`Movimento::Realinhar`), e o rumo pelo corredor o mantém paralelo às paredes | `test_desvio_*`, `test_correcao_lateral_*`, `test_plano_*`, `test_realinhamento_*`, `test_ciclo_*`; `test_posicao_lateral_estimada_segue_a_real_pelas_paredes`, `test_realinhamento_leva_ao_centro_e_o_giro_nao_encosta` |
+| 2. Após uma corrida em bancada, a célula estimada coincide com a real | **Na simulação:** em todas as corridas com a #188 (testes e varredura de 189), a célula estimada no fim coincide com a real. A bancada ganhou o comando `PERCURSO` e a etapa 10 do `scripts/bancada_deslocamento.py`, que compara a célula estimada com a real | `test_corridas_com_robo_imperfeito_nao_encostam_e_a_celula_coincide`, `test_varredura_reduzida_de_largadas_e_robos`, `test_bancada_deslocamento.py`. **Medida no robô montado pendente** (abaixo) |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/localizacao/src/CorrecaoPelasParedes.h/.cpp` | Desvio lateral medido pelas paredes; correção lateral e, com encoder, ao longo do avanço |
+| `lib/localizacao/src/ConfiguracaoLocalizacao.h` | Parâmetros provisórios da correção, do realinhamento e do rumo pelo corredor |
+| `lib/execucao/src/ExecutorMovimentos.h/.cpp` | `Movimento::Realinhar`, `planejarRealinhamento`, rumo pelo corredor e leituras laterais acima de 100 mm fora da centralização |
+| `lib/execucao/src/CicloNavegacao.h/.cpp` | Estado `Realinhando`: decide pela mediana das amostras antes de cada giro, até 2 tentativas |
+| `lib/execucao/src/Movimento.h`, `ConfiguracaoExecucao.h` | `Realinhar`, `ehManobra`; limiar lateral da centralização |
+| `lib/navegacao/src/Odometria.h/.cpp` | `ajustarPosicao`, no referencial do robô |
+| `lib/deslocamento` | `CorretorDeslocamentoTof::avaliar` pela potência; `esquecerLaterais` público; recuo lateral em `ConfiguracaoDeslocamento.h` |
+| `lib/simulacao/src/RoboSimulado.h/.cpp` | Distância percorrida por roda, para simular encoders |
+| `src/main.cpp` | Correção a cada leitura nova do ToF; direção da odometria fixada a cada ciclo; `Z` reinicia a correção |
+| `src/bancada/bancada_deslocamento.cpp`, `scripts/bancada_deslocamento.py` | Comandos `DESVIO`, `REALINHAR [F]` e `PERCURSO seq`; etapas 9 e 10 do menu |
+| `test/test_localizacao/`, `test/test_integracao_localizacao/` | Suítes novas (31 e 7 casos) |
+| `test/test_integracao_execucao/SimulacaoCorrida.h` | Simulador da corrida compartilhado, agora com encoder, deriva do giroscópio e a correção ligável |
+| `test/test_odometria/`, `test/test_deslocamento/`, `test/test_execucao_movimentos/`, `scripts/testes/test_bancada_deslocamento.py` | 2, 2, 1 e 10 casos novos |
+
+#### Testes unitários (ambiente native)
+
+```bash
+pio test -e native -f test_localizacao
+```
+
+Entradas montadas à mão e `MotoresSimulados`. Os testes do realinhamento usam um mundo mínimo em que as rodas mudam o ângulo e a posição.
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_desvio_com_as_duas_paredes_e_a_metade_da_diferenca` | Esquerda 58 e direita 50 mm: 4 mm à direita; 48 e 60 mm: 6 mm à esquerda | 1 | Aprovado |
+| `test_desvio_com_uma_parede_usa_a_distancia_ao_centro` | Só a esquerda ou só a direita a 60 mm (90 mm do centro): ±6 mm; outro recuo muda a conta | 1 | Aprovado |
+| `test_desvio_sem_parede_perto_nao_tem_referencia` | Acima de 120 mm nos dois lados, não há referência; 120 mm ainda conta | 1 | Aprovado |
+| `test_posicao_lateral_nas_quatro_direcoes` | A direita de cada direção: Norte → Leste, Leste → Sul, Sul → Oeste, Oeste → Norte | 1 | Aprovado |
+| `test_correcao_lateral_leva_a_posicao_ao_desvio_medido` | 50% da diferença por leitura (1,5 mm de 3 mm); repetida, chega ao desvio medido sem mexer no avanço | 1 | Aprovado |
+| `test_correcao_lateral_vale_em_qualquer_direcao` | Virado para o Sul, 4 mm à direita do corredor são 4 mm a Oeste | 1 | Aprovado |
+| `test_correcao_lateral_corrige_um_erro_acumulado_numa_celula_vizinha` | A odometria 30 mm à esquerda com o robô centrado: volta ao centro | 1, 2 | Aprovado |
+| `test_correcao_lateral_grande_demais_e_descartada` | 50 mm de diferença: `Descartada`, a posição não muda | 1 | Aprovado |
+| `test_correcao_nao_usa_leituras_de_manobra_nem_sem_parede` | Em manobra, `Manobrando`; sem parede, `SemParede`; nada é corrigido | 1 | Aprovado |
+| `test_com_os_encoders_corrige_tambem_pela_parede_da_frente` | Com encoder, a parede da frente corrige 10 mm ao longo; no modo estimado, não (quem corrige é o `DeslocamentoEstimado`) | 2 | Aprovado |
+| `test_nomes_da_referencia_lateral` | Nomes das referências, do movimento `realinhar` e do estado `realinhando` | 1 | Aprovado |
+| `test_plano_vazio_sem_desvio_ou_sem_espaco` | Sem desvio ou sem espaço, o plano é vazio | 1 | Aprovado |
+| `test_plano_usa_o_menor_angulo_que_cabe` | 5 mm: 5° e 57,5 mm de trecho, volta de s·cos θ; 8 mm: 8° | 1 | Aprovado |
+| `test_plano_sinais_para_cada_lado_e_sentido` | Sinais do ângulo, do trecho e da volta para cada lado, de frente e de ré | 1 | Aprovado |
+| `test_plano_nao_deixa_a_quina_chegar_a_parede` | 15 mm fora: só 5° servem, correção parcial de 2,2 mm; 8 mm em 25 mm: 15° em vez de 20° (a quina iria a 73,5 mm); com folga de 2 mm, 20° | 1 | Aprovado |
+| `test_plano_num_beco_cabe_entre_a_quina_girada_e_a_parede` | Paredes na frente e atrás, 6 mm: 20° e 12,5 mm de ré (a quina girada avança 67,5 mm no eixo), corrigindo 4,3 mm; com o lado livre, 8° e o desvio inteiro | 1 | Aprovado |
+| `test_realinhamento_faz_as_quatro_etapas_e_volta_ao_rumo` | Só por `iniciarRealinhamento`; ré e frente; termina no rumo nominal, perto de onde começou no eixo, freado | 1 | Aprovado |
+| `test_realinhamento_mantem_o_rumo_inclinado_no_trecho` | No trecho, 2° fora do rumo inclinado: a roda certa recebe mais | 1 | Aprovado |
+| `test_realinhamento_preso_no_trecho_falha_por_tempo` | O robô não anda: `TempoEsgotado`, freado | 1 | Aprovado |
+| `test_realinhamento_sem_giroscopio_falha_no_giro` | Sem giroscópio: `GiroTempoEsgotado` | 1 | Aprovado |
+| `test_rumo_pelo_corredor_segue_o_angulo_com_duas_paredes_paralelas` | Giroscópio derivado 2°: o rumo vai a 2° (o nominal fica em 0) e o giro seguinte mira 92° | 1 | Aprovado |
+| `test_rumo_pelo_corredor_so_com_as_duas_paredes` | Com uma parede só, o rumo não muda | 1 | Aprovado |
+| `test_rumo_pelo_corredor_respeita_o_limite_e_pode_ser_desligado` | Limite de 1° respeitado; com 0‰, desligado | 1 | Aprovado |
+| `test_rumo_pelo_corredor_nao_ajusta_se_o_robo_nao_esta_paralelo` | A parede se aproxima a 30 mm/s: o rumo não segue o ângulo | 1 | Aprovado |
+| `test_ciclo_realinha_antes_de_girar_quando_esta_fora_do_centro` | 8 mm à direita antes de girar: `Realinhando`, de ré, dentro do espaço curto, para a esquerda | 1 | Aprovado |
+| `test_ciclo_perto_do_centro_ou_sem_parede_gira_direto` | 2 mm (abaixo do limiar), sem parede lateral ou 30 mm (suspeito): gira direto | 1 | Aprovado |
+| `test_ciclo_confere_depois_do_realinhamento_e_tenta_de_novo` | Confere parado; ainda 8 mm: segunda tentativa; esgotadas, gira | 1 | Aprovado |
+| `test_ciclo_realinha_de_re_quando_veio_de_tras` | Com a célula de trás livre, realinha de ré com o trecho maior | 1 | Aprovado |
+| `test_ciclo_sem_permissao_no_realinhamento_freia` | Sem permissão: `AguardandoLargada`, freado | 1 | Aprovado |
+| `test_ciclo_falha_do_realinhamento_para` | O giro de ida esgota o tempo: `Falha` com `GiroTempoEsgotado` | 1 | Aprovado |
+| `test_movimento_do_robo_para_a_correcao` | `ehManobra` e `ehGiro`; o `Realinhar` não muda a direção; `movimentoRobo()` parado e avançando | 1 | Aprovado |
+
+Nas suítes já existentes:
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_ajustar_posicao_no_referencial_do_robo_nas_quatro_direcoes` | Avanço na direção atual e lateral para a direita, nas quatro direções | 1 | Aprovado |
+| `test_ajustar_posicao_muda_a_celula_e_nao_mexe_nas_contagens` | O ajuste muda a célula e não mexe nas contagens das rodas | 1, 2 | Aprovado |
+| `test_corretor_pela_potencia_vale_sem_o_estimador` | A correção da #380 pela potência das rodas, sem o `DeslocamentoEstimado` | 2 | Aprovado |
+| `test_esquecer_laterais_evita_quina_falsa_depois_da_manobra` | Depois de esquecer as laterais, a primeira leitura não vira quina | 2 | Aprovado |
+| `test_avanco_ignora_parede_lateral_distante_na_centralizacao` | A parede da célula vizinha (100 a 180 mm) não entra na centralização | 1 | Aprovado |
+
+#### Testes de integração (ambiente native)
+
+```bash
+pio test -e native -f test_integracao_localizacao
+```
+
+A cadeia é a da [execução dos movimentos](#sprint-5-execucao-dos-movimentos-entre-celulas), agora no simulador compartilhado `SimulacaoCorrida.h`, com três acréscimos:
+
+* a `CorrecaoPelasParedes` e o realinhamento podem ser ligados ou desligados;
+* há um modo com encoder, com as distâncias reais das rodas vezes um fator de escala;
+* o giroscópio pode ter uma deriva depois da calibração.
+
+Cada cenário roda com e sem a #188, e o resultado sai pelo `TEST_MESSAGE`.
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_posicao_lateral_estimada_segue_a_real_pelas_paredes` | Largada 8 mm fora: erro lateral estimado de −8,0 mm sem correção e −0,2 mm com ela | 1 | Aprovado |
+| `test_com_encoders_a_correcao_segura_o_erro_de_escala` | Encoder 5% maior, 3 células: erro ao longo de 25,6 mm sem correção e −0,7 mm com ela | 2 | Aprovado |
+| `test_realinhamento_leva_ao_centro_e_o_giro_nao_encosta` | 8 mm fora: termina a 0,1 mm de lado, 0,1 mm ao longo e −0,01° de rumo, em 2,9 s; o giro seguinte não encosta | 1 | Aprovado |
+| `test_realinhamento_num_beco_cabe_no_espaco_curto` | Beco, 6 mm fora: 20° e 12 mm de ré; termina a −1,7 mm, sem encostar | 1 | Aprovado |
+| `test_corridas_com_robo_imperfeito_nao_encostam_e_a_celula_coincide` | Robô imperfeito largando torto nos três labirintos: chega, célula certa, sem contato | 2 | Aprovado |
+| `test_rumo_pelo_corredor_segura_a_deriva_do_giroscopio` | Deriva de 0,1 °/s em 18 largadas: 7 com contato sem o rumo pelo corredor e 1 com ele | 1, 2 | Aprovado |
+| `test_varredura_reduzida_de_largadas_e_robos` | 18 corridas (robôs, ângulos e desvios): até 2 com contato e nenhuma sem chegar | 2 | Aprovado |
+
+#### Resultado na simulação
+
+O resultado dos testes de integração, registrado pelo `TEST_MESSAGE`, não substitui a medida no robô montado:
+
+| Corrida (robô imperfeito, largada torta) | Com a #188 | Sem a #188 |
+| :--- | :--- | :--- |
+| 4×4 | Chegou, célula certa, sem contato, 53,6 s, 7 realinhamentos | 1,6 s em contato, 37,3 s |
+| 8×4 | Chegou, célula certa, sem contato, 42,3 s, 4 realinhamentos | Sem contato, 32,4 s |
+| 12×4 | Chegou, célula certa, sem contato, 49,9 s, 4 realinhamentos | Sem contato, 40,2 s |
+
+**Varredura de 189 corridas.** São 3 robôs (o ideal, um com rodas a 92/97% e um com rodas a 103/95%), 7 ângulos de largada (−3° a +3°), 3 desvios laterais (0 e ±8 mm) e os 3 labirintos, para cada deriva do giroscópio depois da calibração. A varredura rodou numa suíte temporária, removida depois. "Sem a #188" já inclui o filtro de 100 mm na centralização. A base da #184 tinha 92 corridas com contato, 4 sem chegar e 35,3 s de tempo médio.
+
+| Deriva do giroscópio | Corridas com contato, sem a #188 | Corridas com contato, com a #188 | Tempo total em contato, com a #188 | Sem chegar, com a #188 | Tempo médio, com a #188 | Realinhamentos |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 0 | 84 | 2 | 162 ms | 0 | 43,1 s | 545 |
+| +0,1 °/s | 128 | 2 | 86 ms | 0 | 43,5 s | 569 |
+| −0,1 °/s | 117 | 1 | 71 ms | 0 | 44,4 s | 633 |
+| +0,2 °/s | 172 | 2 | 188 ms | 0 | 45,1 s | 652 |
+| −0,2 °/s | 173 | 23 | 32,9 s | 0 | 45,6 s | 690 |
+
+Os contatos que sobram sem deriva são do robô com rodas 8% desiguais, no meio de um giro em (3, 1). A deriva de −0,2 °/s é o limite atual.
+
+**Problemas encontrados pelos testes no caminho:**
+
+| Problema | Causa | Correção |
+| :--- | :--- | :--- |
+| A direção da odometria virava para o Sul no meio do realinhamento, e o trecho terminava na hora | A estimativa sem encoder contava a mais nos giros pequenos, e a direção só era fixada quando já divergia | A direção passa a ser fixada a cada ciclo, no `main.cpp`, no simulador e na bancada |
+| Fim de parede mal lido: o robô virava 15° | O `ControleMovimento` (#191) aceita paredes até 180 mm do centro e tomava a parede da célula vizinha (100 a 180 mm pela face) por imediata | Leituras laterais acima de 100 mm contam como sem parede na centralização. As 4 corridas sem chegar foram a 0 |
+| O rumo pelo corredor nunca ligava | A primeira versão exigia o robô centrado, mas é o erro de rumo que o tira do centro | A exigência saiu (fica só o erro até 30 mm). Com deriva de 0,1 °/s, as corridas com contato caíram de 79 para 2 |
+| Contato no realinhamento num beco | A quina girada também avança ao longo do eixo (63,8 mm a 15°) | O planejador limita o trecho pelo espaço ao longo do eixo quando há paredes na frente e atrás |
+
+#### Saída da execução
+
+```text
+test/test_localizacao/test_localizacao.cpp:605:test_desvio_com_as_duas_paredes_e_a_metade_da_diferenca:PASS
+test/test_localizacao/test_localizacao.cpp:606:test_desvio_com_uma_parede_usa_a_distancia_ao_centro:PASS
+test/test_localizacao/test_localizacao.cpp:607:test_desvio_sem_parede_perto_nao_tem_referencia:PASS
+test/test_localizacao/test_localizacao.cpp:608:test_posicao_lateral_nas_quatro_direcoes:PASS
+test/test_localizacao/test_localizacao.cpp:609:test_correcao_lateral_leva_a_posicao_ao_desvio_medido:PASS
+test/test_localizacao/test_localizacao.cpp:610:test_correcao_lateral_vale_em_qualquer_direcao:PASS
+test/test_localizacao/test_localizacao.cpp:611:test_correcao_lateral_corrige_um_erro_acumulado_numa_celula_vizinha:PASS
+test/test_localizacao/test_localizacao.cpp:612:test_correcao_lateral_grande_demais_e_descartada:PASS
+test/test_localizacao/test_localizacao.cpp:613:test_correcao_nao_usa_leituras_de_manobra_nem_sem_parede:PASS
+test/test_localizacao/test_localizacao.cpp:614:test_com_os_encoders_corrige_tambem_pela_parede_da_frente:PASS
+test/test_localizacao/test_localizacao.cpp:615:test_nomes_da_referencia_lateral:PASS
+test/test_localizacao/test_localizacao.cpp:616:test_plano_vazio_sem_desvio_ou_sem_espaco:PASS
+test/test_localizacao/test_localizacao.cpp:617:test_plano_usa_o_menor_angulo_que_cabe:PASS
+test/test_localizacao/test_localizacao.cpp:618:test_plano_sinais_para_cada_lado_e_sentido:PASS
+test/test_localizacao/test_localizacao.cpp:619:test_plano_nao_deixa_a_quina_chegar_a_parede:PASS
+test/test_localizacao/test_localizacao.cpp:620:test_plano_num_beco_cabe_entre_a_quina_girada_e_a_parede:PASS
+test/test_localizacao/test_localizacao.cpp:621:test_realinhamento_faz_as_quatro_etapas_e_volta_ao_rumo:PASS
+test/test_localizacao/test_localizacao.cpp:622:test_realinhamento_mantem_o_rumo_inclinado_no_trecho:PASS
+test/test_localizacao/test_localizacao.cpp:623:test_realinhamento_preso_no_trecho_falha_por_tempo:PASS
+test/test_localizacao/test_localizacao.cpp:624:test_realinhamento_sem_giroscopio_falha_no_giro:PASS
+test/test_localizacao/test_localizacao.cpp:625:test_rumo_pelo_corredor_segue_o_angulo_com_duas_paredes_paralelas:PASS
+test/test_localizacao/test_localizacao.cpp:626:test_rumo_pelo_corredor_so_com_as_duas_paredes:PASS
+test/test_localizacao/test_localizacao.cpp:627:test_rumo_pelo_corredor_respeita_o_limite_e_pode_ser_desligado:PASS
+test/test_localizacao/test_localizacao.cpp:628:test_rumo_pelo_corredor_nao_ajusta_se_o_robo_nao_esta_paralelo:PASS
+test/test_localizacao/test_localizacao.cpp:629:test_ciclo_realinha_antes_de_girar_quando_esta_fora_do_centro:PASS
+test/test_localizacao/test_localizacao.cpp:630:test_ciclo_perto_do_centro_ou_sem_parede_gira_direto:PASS
+test/test_localizacao/test_localizacao.cpp:631:test_ciclo_confere_depois_do_realinhamento_e_tenta_de_novo:PASS
+test/test_localizacao/test_localizacao.cpp:632:test_ciclo_realinha_de_re_quando_veio_de_tras:PASS
+test/test_localizacao/test_localizacao.cpp:633:test_ciclo_sem_permissao_no_realinhamento_freia:PASS
+test/test_localizacao/test_localizacao.cpp:634:test_ciclo_falha_do_realinhamento_para:PASS
+test/test_localizacao/test_localizacao.cpp:635:test_movimento_do_robo_para_a_correcao:PASS
+31 Tests 0 Failures 0 Ignored 
+test/test_integracao_localizacao/test_integracao_localizacao.cpp:311:test_posicao_lateral_estimada_segue_a_real_pelas_paredes:PASS
+test/test_integracao_localizacao/test_integracao_localizacao.cpp:312:test_com_encoders_a_correcao_segura_o_erro_de_escala:PASS
+test/test_integracao_localizacao/test_integracao_localizacao.cpp:313:test_realinhamento_leva_ao_centro_e_o_giro_nao_encosta:PASS
+test/test_integracao_localizacao/test_integracao_localizacao.cpp:314:test_realinhamento_num_beco_cabe_no_espaco_curto:PASS
+test/test_integracao_localizacao/test_integracao_localizacao.cpp:315:test_corridas_com_robo_imperfeito_nao_encostam_e_a_celula_coincide:PASS
+test/test_integracao_localizacao/test_integracao_localizacao.cpp:316:test_rumo_pelo_corredor_segura_a_deriva_do_giroscopio:PASS
+test/test_integracao_localizacao/test_integracao_localizacao.cpp:317:test_varredura_reduzida_de_largadas_e_robos:PASS
+7 Tests 0 Failures 0 Ignored 
+```
+
+#### Verificação de detecção de falhas (teste negativo)
+
+As suítes `test_localizacao`, `test_integracao_localizacao`, `test_execucao_movimentos`, `test_odometria` e `test_integracao_execucao` rodaram contra quatro defeitos plantados, um de cada vez. Os testes rodaram numa cópia isolada do commit, e o código voltou ao commit depois de cada defeito.
+
+| Defeito plantado | Casos que falharam |
+| :--- | :--- |
+| Sinal da correção lateral trocado (alvo no centro menos o desvio) | 3: `test_correcao_lateral_leva_a_posicao_ao_desvio_medido` (`Expected 1500 Was -1500`), `test_correcao_lateral_vale_em_qualquer_direcao` e `test_posicao_lateral_estimada_segue_a_real_pelas_paredes` (erro estimado de −15,8 mm) |
+| O ciclo trata a frente e a trás como livres (sem o limite do beco) | 1: `test_ciclo_realinha_antes_de_girar_quando_esta_fora_do_centro` (`Expected 57553 to be less than or equal to 25000`) |
+| Rumo pelo corredor desligado (`AJUSTE_RUMO_PELO_CORREDOR_POR_MIL = 0`) | 3: `test_rumo_pelo_corredor_segue_o_angulo_com_duas_paredes_paralelas`, `test_rumo_pelo_corredor_respeita_o_limite_e_pode_ser_desligado` e `test_rumo_pelo_corredor_segura_a_deriva_do_giroscopio` (7 corridas com contato com e sem o ajuste) |
+| Sem o filtro da parede lateral distante (limiar de 1000 mm) | 3: `test_avanco_ignora_parede_lateral_distante_na_centralizacao` (`Expected 1000 Was 131`), `test_rumo_pelo_corredor_segura_a_deriva_do_giroscopio` e `test_varredura_reduzida_de_largadas_e_robos` (1 corrida sem chegar) |
+
+#### Suíte completa com cobertura (o mesmo comando do CI)
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa | **542 aprovados, 0 falhas** (eram 499) |
+| Cobertura das linhas de `lib/` | **97%** (2.683 de 2.746), acima da meta de 80% |
+| Cobertura de `lib/localizacao` | **97%** (81 de 83). As linhas restantes são retornos depois de `switch` completos |
+| Cobertura de `lib/execucao` | **97%** (`ExecutorMovimentos.cpp` 98%, `CicloNavegacao.cpp` 95%) |
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+pio run -e bancada_deslocamento
+pio run -e bancada_tof
+```
+
+| Ambiente | Compilação | RAM | Flash |
+|---|---|---|---|
+| `esp32c3` (robô) | **Sucesso**, sem avisos | 5,0% (16.332 de 327.680 bytes) | 23,4% (306.658 de 1.310.720 bytes) |
+| `bancada_deslocamento` | **Sucesso** | 4,6% (15.180 de 327.680 bytes) | 22,5% (295.256 de 1.310.720 bytes) |
+| `bancada_tof` | **Sucesso** | — | — |
+
+#### Ferramenta de bancada
+
+```bash
+python3 -m unittest discover -s scripts/testes -v
+```
+
+`test_bancada_deslocamento.py` confere as etapas 9 e 10 com respostas no formato do `bancada_deslocamento.cpp`:
+
+* o desvio medido contra a régua;
+* o realinhamento que leva ao centro;
+* a reprovação por desvio errado, por desvio que sobra e por encostar;
+* o caso sem parede lateral;
+* o realinhamento que falha;
+* o giroscópio sem calibração;
+* o percurso padrão com a célula certa e um percurso próprio com a célula errada.
+
+**54 de 54 aprovados** (10 novos). Essa execução não substitui o teste com o robô montado.
+
+#### Pendências desta etapa
+
+- **Célula estimada na bancada (critério 2):** rodar as etapas 9 e 10 de `./scripts/bancada_deslocamento.py` com o robô montado no labirinto e registrar aqui o relatório (desvio medido, realinhamento e célula estimada contra a real).
+- **Parâmetros:** ajustar `ConfiguracaoLocalizacao.h` com as medidas reais:
+  - a posição dos ToF e o centro de giro;
+  - o formato das quinas do chassi;
+  - o ruído do VL53L0X;
+  - a deriva do giroscópio depois da calibração;
+  - as medidas do labirinto.
+- **Deriva acima de 0,1 °/s:** com −0,2 °/s ainda há 23 corridas com contato em 189. A zona morta de 0,3 °/s do integrador ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)), somada ao ruído, retifica a deriva e a deixa maior que a real. Vale rever com a #378.
+- **Rodas muito desiguais:** o robô com rodas 8% desiguais ainda raspa em 2 giros (menos de 0,2 s no total); a sintonia na bancada ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191), [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)) e quinas chanfradas dão margem.
+- **Dependência:** o PR de código da #188 entra depois do da #184 (PR [#442](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/442)).
