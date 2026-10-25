@@ -405,6 +405,70 @@ O `boot_ms` é o `millis()` no fim do `setup()`, contado desde o início do prog
 
 Os parâmetros ficam em `lib/inicializacao/src/ConfiguracaoBoot.h`. O `WHO_AM_I` esperado é **provisório**: módulos com clone do MPU6050 respondem outro valor (0x70, 0x72, 0x98); se a bancada mostrar um desses em `mpu6050_who_am_i`, confirme com a eletrônica e troque lá. Repetir as tentativas durante a corrida é da [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), que pode usar a mesma trava (`motoresComTrava.travar()`).
 
+## Envio da telemetria ao Supabase
+
+A telemetria vai ao Supabase pelas Edge Functions, por HTTPS, a cada 1 s e sem atrasar a navegação (#236), sem perder amostras quando o Wi-Fi cai e sem duplicá-las quando ele volta (#238). O robô nunca escreve direto nas tabelas: a chave `anon` só lê.
+
+```mermaid
+flowchart LR
+    tel["tarefaTelemetria (1 s)<br/>coletarAmostra"] -->|"registrar(): nunca usa a rede"| buf["ControladorEnvio<br/>buffer de 600 amostras"]
+    buf -->|"ciclo() a cada 100 ms"| rede["tarefaRede<br/>ReconexaoWifi + EnvioHttpSupabase"]
+    rede -->|"POST /functions/v1/telemetria"| sb[("Supabase")]
+```
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| `ControladorEnvio`, `BufferCircular`, `PoliticaReenvio` | `lib/comunicacao` | Guardam as amostras até o servidor confirmar, reenviam em ordem com espera crescente e classificam as respostas |
+| `ContratoTelemetria` | `lib/comunicacao` | JSON do lote, da criação e do encerramento da corrida, e a leitura das respostas |
+| `ReconexaoWifi` | `lib/comunicacao` | Conecta e reconecta o Wi-Fi com espera crescente (1 s até 30 s), sem travar a tarefa |
+| `CredenciaisSupabase` | `lib/comunicacao` | Confere as credenciais e monta as URLs das funções |
+| `EnvioHttpSupabase` | `lib/drivers_esp32` | `IEnvioTelemetria` real: `HTTPClient` com `WiFiClientSecure`, cabeçalhos `apikey`, `Authorization` e `x-device-token` |
+| `RedeWifiEsp32`, `TravaSecaoCritica` | `lib/drivers_esp32` | O Wi-Fi do ESP32 e a `ITrava` real (seção crítica do FreeRTOS) |
+| `tarefaRede` | `src/main.cpp` | Prioridade 1 e pilha de 10 KB (TLS): Wi-Fi, criação da corrida, um lote por ciclo e o encerramento |
+
+**Fluxo de uma corrida.** Com o Wi-Fi conectado, a tarefa de rede cria a corrida (`POST /corridas`, labirinto 4×4 por enquanto) e só então a coleta começa a registrar amostras, numeradas na hora (`numero_sequencia` 1, 2, 3...). Na chegada ao objetivo, ou aos 10 minutos, a coleta registra a última amostra e pede o encerramento; o `POST /corridas/{id}/encerrar` só sai depois de o buffer esvaziar, com `status` `concluida` ou `nao_concluida`.
+
+### Credenciais
+
+As credenciais **não vão para o Git**. Copie `include/credenciais.exemplo.h` para `include/credenciais.h` (ignorado pelo Git) e preencha:
+
+| Campo | De onde vem |
+|---|---|
+| `CREDENCIAL_WIFI_SSID` e `CREDENCIAL_WIFI_SENHA` | Rede de 2,4 GHz do laboratório |
+| `CREDENCIAL_SUPABASE_URL` | Supabase → Settings → API → Project URL |
+| `CREDENCIAL_SUPABASE_ANON` | Supabase → Settings → API → chave `anon` |
+| `CREDENCIAL_DEVICE_TOKEN` | O mesmo `DEVICE_TOKEN` dos segredos das Edge Functions (peça a quem administra o Supabase) |
+| `CREDENCIAL_CERTIFICADO_RAIZ` | Certificado raiz do HTTPS do projeto, em PEM (cadeado do navegador → certificado → o primeiro da cadeia → exportar) |
+
+Sem `include/credenciais.h`, o firmware compila, inicia e não envia nada: o log mostra `{"status":"envio_desligado","motivo":"sem_credenciais"}`. `CREDENCIAL_SEM_VALIDAR_CERTIFICADO 1` aceita qualquer servidor (`setInsecure`): **só na bancada**, nunca na versão da competição (o log avisa com `https_sem_validar_certificado`).
+
+### Log
+
+| Mensagem | Quando |
+|---|---|
+| `corrida_criada` (com o `corrida_id`) | O servidor criou a corrida; a coleta começa |
+| `falha_criar_corrida` (com o `codigo`) | Não criou; tenta de novo em 1 s, 2 s, 4 s... até 30 s |
+| `envio` (a cada 10 s) | Contadores: `ocupacao` do buffer, `perdidas` por buffer cheio, `confirmadas`, `existentes` (reenvios que o servidor já tinha), `descartadas`, `tentativas`, `falhas`, `reenvios`, `wifi_quedas` e `pausado` |
+| `envio_pausado` | O servidor respondeu `401`/`403`: a chave ou o token estão errados; o envio para |
+| `corrida_encerrada` | O servidor confirmou o encerramento |
+
+### Valores provisórios e memória
+
+| Parâmetro | Arquivo | Valor |
+|---|---|---|
+| Capacidade do buffer | `ConfiguracaoReenvio.h` | 600 amostras (10 min a 1/s), 24 bytes cada: cerca de 14 KB |
+| Maior lote | `ConfiguracaoReenvio.h` | 100 amostras (o limite do servidor) |
+| Espera entre tentativas de envio | `ConfiguracaoReenvio.h` | 1 s, dobrando até 30 s; volta a 1 s depois de um sucesso |
+| Tempo limite do encerramento | `ConfiguracaoReenvio.h` | 10 s (depois disso o robô pode seguir; o envio continua tentando) |
+| Tempo limite de uma chamada HTTPS | `ConfiguracaoRede.h` | 5 s |
+| Ciclo da tarefa de rede | `ConfiguracaoRede.h` | 100 ms (um lote por ciclo, no máximo) |
+| Tempo para o Wi-Fi conectar e esperas entre tentativas | `ConfiguracaoRede.h` | 10 s; 1 s dobrando até 30 s |
+| Espaço do JSON do lote | `ConfiguracaoRede.h` | 280 bytes por amostra, cerca de 28 KB reservados no cliente HTTP |
+
+O envio ocupa cerca de 45 KB de RAM fixa (buffer, cópia do lote e JSON), de 320 KB do ESP32-C3.
+
+**Ainda falta, fora deste firmware:** a Edge Function `telemetria` (#229), que recebe o lote e responde `{"gravadas": n, "existentes": m}`. Enquanto ela não existir, o servidor responde `404` e o `ControladorEnvio` descarta os lotes (contados em `descartadas`). A velocidade vai zerada até o cálculo da velocidade instantânea entrar na telemetria, e a tensão e a corrente vão zeradas porque a Rev 2.0 não mede a bateria.
+
 ## Instalação
 
 Instale o PlatformIO por uma das opções:
