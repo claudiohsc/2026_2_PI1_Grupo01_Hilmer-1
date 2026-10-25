@@ -9,6 +9,7 @@
 
 #include "AcompanhadorGiro.h"
 #include "ClassificadorParede.h"
+#include "ConfiguracaoColisao.h"
 #include "ConfiguracaoControle.h"
 #include "ConfiguracaoExecucao.h"
 #include "ConfiguracaoGiro.h"
@@ -30,6 +31,7 @@ enum class EstadoCiclo : uint8_t {
   Realinhando,        ///< Indo para o centro do corredor antes de girar no lugar (#188).
   Girando,            ///< Girando para a direção decidida.
   Avancando,          ///< Avançando uma célula.
+  Recuperando,        ///< Recuando depois de uma colisão, antes de perceber de novo (#192).
   ObjetivoAlcancado,  ///< Na célula objetivo: parado.
   SemCaminho,         ///< O mapa conhecido não tem caminho até o objetivo: parado.
   Falha               ///< Um movimento falhou (veja `falhaExecucao()`) ou a pose saiu do mapa: parado.
@@ -53,6 +55,9 @@ struct EntradaCiclo {
   LeituraGiro giro;
   /// Tempo desde o ciclo anterior, em ms.
   uint32_t dtMs = 0;
+  /// Colisão percebida neste ciclo pelo `DetectorColisao` (#192), ou `Nenhuma`. Só vale com o robô em
+  /// movimento (`emMovimento()`); nas outras etapas é ignorada.
+  TipoColisao colisao = TipoColisao::Nenhuma;
 };
 
 /// Liga a percepção, o mapa, o Flood Fill e os movimentos, uma célula por vez:
@@ -77,9 +82,17 @@ struct EntradaCiclo {
 /// de fixar a direção, isso zera a diferença entre as rodas, que nos giros pequenos do
 /// realinhamento chegaria a virar a direção estimada.
 ///
-/// **Fora do escopo** (outras issues): recuperação de colisão (#192), motor travado (#341), falha
-/// no I²C (#241), tempo limite da corrida (#242/#185) e correção da posição pelas paredes (#188).
-/// Nesses casos o ciclo só para em `Falha`, com os motores freados.
+/// **Colisão (#192).** Se `EntradaCiclo::colisao` chega com o robô em movimento (avançando, girando
+/// ou realinhando), o ciclo cancela o movimento, freia, esquece o passo planejado e vai para
+/// **Recuperando**: o `ExecutorMovimentos` recua `recuoMm` em linha reta (ou até o centro da célula,
+/// se a parede da frente estiver à vista), com o rumo da direção atual. Depois, volta a **Percebendo**
+/// na mesma célula e decide de novo. O mapa e a pose da navegação (célula e direção) ficam como
+/// estavam: só a parede da frente é gravada, e só quando a colisão se repete na mesma célula e direção
+/// e o ToF frontal não mostra a frente livre (uma parede que a percepção não viu). Depois de
+/// `colisoesSeguidasMaximas` colisões sem concluir uma célula, pára em `Falha`.
+///
+/// **Fora do escopo** (outras issues): motor travado (#341), falha no I²C (#241) e tempo limite da
+/// corrida (#242/#185). Nesses casos o ciclo só para em `Falha`, com os motores freados.
 ///
 /// Não depende do Arduino e não aloca memória: testado no ambiente `native`.
 class CicloNavegacao {
@@ -88,7 +101,8 @@ class CicloNavegacao {
   CicloNavegacao(Mapa& mapa, const ConfiguracaoExecucao& config = ConfiguracaoExecucao{},
                  const ConfiguracaoControle& controle = ConfiguracaoControle{},
                  const ConfiguracaoGiro& giro = ConfiguracaoGiro{},
-                 const ConfiguracaoRealinhamento& realinhamento = ConfiguracaoRealinhamento{});
+                 const ConfiguracaoRealinhamento& realinhamento = ConfiguracaoRealinhamento{},
+                 const ConfiguracaoColisao& colisao = ConfiguracaoColisao{});
 
   /// Volta a aguardar a largada na pose dada: refaz o objetivo pelo tamanho atual do mapa, define
   /// a pose da navegação, cancela o movimento em andamento e freia os motores. Chame depois de
@@ -112,10 +126,32 @@ class CicloNavegacao {
     if (estado_ == EstadoCiclo::Avancando) {
       return MovimentoRobo::Avancando;
     }
+    if (estado_ == EstadoCiclo::Recuperando) {
+      return MovimentoRobo::Manobrando;
+    }
     const bool manobrando =
         estado_ == EstadoCiclo::Girando || (estado_ == EstadoCiclo::Realinhando && !conferindoRealinhamento_);
     return manobrando ? MovimentoRobo::Manobrando : MovimentoRobo::Parado;
   }
+
+  /// `true` enquanto o robô está sendo conduzido: avançando, girando ou realinhando (não parado
+  /// para perceber). É quando a detecção de colisão fica ligada.
+  bool emMovimento() const {
+    return estado_ == EstadoCiclo::Avancando || estado_ == EstadoCiclo::Girando ||
+           (estado_ == EstadoCiclo::Realinhando && !conferindoRealinhamento_);
+  }
+
+  /// Colisões tratadas desde a largada (o evento `colisao` da telemetria).
+  uint32_t colisoes() const { return colisoes_; }
+
+  /// Recuos concluídos desde a largada (colisões de que o robô se recuperou).
+  uint32_t recuperacoes() const { return recuperacoes_; }
+
+  /// Paredes gravadas no mapa por colisões repetidas (veja a classe).
+  uint32_t paredesPorColisao() const { return paredesPorColisao_; }
+
+  /// Tipo da última colisão tratada.
+  TipoColisao ultimaColisao() const { return ultimaColisao_; }
 
   /// Realinhamentos feitos desde a largada.
   uint32_t realinhamentos() const { return realinhamentos_; }
@@ -143,6 +179,9 @@ class CicloNavegacao {
   void decidir(IMotores& motores);
   void iniciarGiro(Movimento giro);
 
+  /// Trata a colisão: cancela o movimento, grava a parede se ela se repete e começa o recuo.
+  void iniciarRecuperacao(const EntradaCiclo& entrada, IMotores& motores);
+
   /// Realinha se o desvio medido nas amostras passa do limiar e ainda há tentativa; senão, gira.
   void realinharOuGirar(Movimento giro);
 
@@ -161,6 +200,7 @@ class CicloNavegacao {
   ExecutorMovimentos executor_;
   ConfiguracaoExecucao config_;
   ConfiguracaoRealinhamento configRealinhamento_;
+  ConfiguracaoColisao configColisao_;
 
   EstadoCiclo estado_ = EstadoCiclo::AguardandoLargada;
   Direcao direcao_ = Direcao::Norte;
@@ -173,6 +213,17 @@ class CicloNavegacao {
   uint32_t celulasAvancadas_ = 0;
   uint32_t girosFeitos_ = 0;
   uint32_t realinhamentos_ = 0;
+  uint32_t colisoes_ = 0;
+  uint32_t recuperacoes_ = 0;
+  uint32_t paredesPorColisao_ = 0;
+  uint8_t colisoesSeguidas_ = 0;        ///< Colisões desde a última célula concluída.
+  uint32_t celulasNaUltimaColisao_ = 0;
+  uint8_t colisoesNaMesmaFrente_ = 0;   ///< Colisões seguidas, avançando, na mesma célula e direção.
+  PosicaoCelula celulaDaColisao_ = {0, 0};
+  Direcao direcaoDaColisao_ = Direcao::Norte;
+  TipoColisao ultimaColisao_ = TipoColisao::Nenhuma;
+  uint16_t ultimaFrenteMm_ = 0;         ///< Última leitura do ToF frontal, a partir da face do sensor.
+  bool temFrente_ = false;
   Movimento giroPendente_ = Movimento::Girar180;  ///< Giro a fazer depois do realinhamento.
   uint8_t realinhamentosNoPasso_ = 0;             ///< Realinhamentos antes do giro pendente.
   bool conferindoRealinhamento_ = false;          ///< Juntando leituras para medir o desvio de novo.
@@ -183,8 +234,8 @@ class CicloNavegacao {
   uint8_t quantidadeAmostras_ = 0;
 };
 
-/// Nome da etapa para o log: `aguardando_largada`, `percebendo`, `girando`, `avancando`,
-/// `objetivo_alcancado`, `sem_caminho` ou `falha`.
+/// Nome da etapa para o log: `aguardando_largada`, `percebendo`, `realinhando`, `girando`,
+/// `avancando`, `recuperando`, `objetivo_alcancado`, `sem_caminho` ou `falha`.
 const char* nomeDoEstadoCiclo(EstadoCiclo estado);
 
 }  // namespace micromouse

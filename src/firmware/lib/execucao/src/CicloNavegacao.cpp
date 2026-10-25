@@ -1,6 +1,7 @@
 #include "CicloNavegacao.h"
 
 #include "AtualizadorMapa.h"
+#include "ConfiguracaoTof.h"
 #include "DetectorObjetivo.h"
 
 namespace micromouse {
@@ -8,16 +9,31 @@ namespace micromouse {
 namespace {
 
 constexpr int32_t VOLTA_MILIGRAUS = 360000;
+constexpr int64_t CELULA_UM = static_cast<int64_t>(TAMANHO_CELULA_MM) * 1000;
+
+/// Quanto a posição ao longo do eixo está além do centro de célula mais próximo, em µm (negativo =
+/// antes dele). Os centros estão nos múltiplos de `CELULA_UM`.
+int64_t excessoSobreOCentroUm(int64_t posicaoUm) {
+  int64_t resto = posicaoUm % CELULA_UM;
+  if (resto > CELULA_UM / 2) {
+    resto -= CELULA_UM;
+  } else if (resto < -CELULA_UM / 2) {
+    resto += CELULA_UM;
+  }
+  return resto;
+}
 
 }  // namespace
 
 CicloNavegacao::CicloNavegacao(Mapa& mapa, const ConfiguracaoExecucao& config, const ConfiguracaoControle& controle,
-                               const ConfiguracaoGiro& giro, const ConfiguracaoRealinhamento& realinhamento)
+                               const ConfiguracaoGiro& giro, const ConfiguracaoRealinhamento& realinhamento,
+                               const ConfiguracaoColisao& colisao)
     : mapa_(mapa),
       navegacao_(mapa),
       executor_(config, controle, giro, realinhamento),
       config_(config),
-      configRealinhamento_(realinhamento) {
+      configRealinhamento_(realinhamento),
+      configColisao_(colisao) {
   if (config_.amostrasPercepcao == 0) {
     config_.amostrasPercepcao = 1;
   } else if (config_.amostrasPercepcao > MAX_AMOSTRAS) {
@@ -39,6 +55,14 @@ void CicloNavegacao::reiniciar(const Pose& inicial, IMotores& motores) {
   celulasAvancadas_ = 0;
   girosFeitos_ = 0;
   realinhamentos_ = 0;
+  colisoes_ = 0;
+  recuperacoes_ = 0;
+  paredesPorColisao_ = 0;
+  colisoesSeguidas_ = 0;
+  celulasNaUltimaColisao_ = 0;
+  colisoesNaMesmaFrente_ = 0;
+  ultimaColisao_ = TipoColisao::Nenhuma;
+  temFrente_ = false;
   realinhamentosNoPasso_ = 0;
   conferindoRealinhamento_ = false;
   ultimoDesvio_ = DesvioLateral{};
@@ -85,6 +109,15 @@ EstadoCiclo CicloNavegacao::atualizar(const EntradaCiclo& entrada, IMotores& mot
       conferindoRealinhamento_ = false;
       parar(EstadoCiclo::AguardandoLargada, motores);
     }
+    return estado_;
+  }
+
+  if (entrada.leituraNova != nullptr) {
+    ultimaFrenteMm_ = entrada.leituraNova->frenteMm;
+    temFrente_ = true;
+  }
+  if (entrada.colisao != TipoColisao::Nenhuma && emMovimento()) {
+    iniciarRecuperacao(entrada, motores);
     return estado_;
   }
 
@@ -183,12 +216,100 @@ EstadoCiclo CicloNavegacao::atualizar(const EntradaCiclo& entrada, IMotores& mot
       break;
     }
 
+    case EstadoCiclo::Recuperando: {
+      const EntradaExecucao exec{entrada.leituraNova, entrada.giro, entrada.posicaoAvancoUm, entrada.dtMs};
+      const EstadoExecucao resultado = executor_.atualizar(exec, motores);
+      if (resultado == EstadoExecucao::Concluido) {
+        ++recuperacoes_;
+        entrarEmPercepcao();
+      } else if (resultado == EstadoExecucao::Falha) {
+        falhaExecucao_ = executor_.falha();
+        parar(EstadoCiclo::Falha, motores);
+      }
+      break;
+    }
+
     case EstadoCiclo::ObjetivoAlcancado:
     case EstadoCiclo::SemCaminho:
     case EstadoCiclo::Falha:
       break;
   }
   return estado_;
+}
+
+void CicloNavegacao::iniciarRecuperacao(const EntradaCiclo& entrada, IMotores& motores) {
+  const EstadoCiclo antes = estado_;
+  ++colisoes_;
+  ultimaColisao_ = entrada.colisao;
+  executor_.cancelar(motores);
+  motores.parar();
+  navegacao_.cancelarPasso();
+  conferindoRealinhamento_ = false;
+  realinhamentosNoPasso_ = 0;
+  quantidadeAmostras_ = 0;
+
+  // A contagem das colisões seguidas recomeça quando o robô conclui uma célula.
+  if (celulasAvancadas_ != celulasNaUltimaColisao_) {
+    colisoesSeguidas_ = 0;
+    colisoesNaMesmaFrente_ = 0;
+  }
+  celulasNaUltimaColisao_ = celulasAvancadas_;
+  if (colisoesSeguidas_ < UINT8_MAX) {
+    ++colisoesSeguidas_;
+  }
+
+  // Colisão repetida avançando, na mesma célula e direção: uma parede que a percepção não viu. Grava
+  // só ela, e só se o ToF frontal não mede a frente livre (o impacto pode ter vindo de outro lado).
+  // Um ToF que não vê nada (leitura no alcance máximo) não contradiz o impacto.
+  if (antes == EstadoCiclo::Avancando) {
+    const PosicaoCelula aqui = navegacao_.obterPosicao();
+    const bool mesmoLugar = colisoesNaMesmaFrente_ > 0 && aqui.linha == celulaDaColisao_.linha &&
+                            aqui.coluna == celulaDaColisao_.coluna && direcao_ == direcaoDaColisao_;
+    colisoesNaMesmaFrente_ = mesmoLugar ? static_cast<uint8_t>(colisoesNaMesmaFrente_ + 1) : 1;
+    celulaDaColisao_ = aqui;
+    direcaoDaColisao_ = direcao_;
+    // Só vale se o robô está onde a batida na parede da própria célula acontece: a odometria concorda com
+    // a célula da navegação e o robô está a ~34 mm além do centro. Senão, a batida foi noutro lugar
+    // (por exemplo, já na célula seguinte) e gravar essa parede apagaria um caminho livre.
+    const int64_t excessoUm = excessoSobreOCentroUm(entrada.posicaoAvancoUm);
+    const bool naParede = entrada.poseValida && entrada.pose.celula.linha == aqui.linha &&
+                          entrada.pose.celula.coluna == aqui.coluna &&
+                          excessoUm >= static_cast<int64_t>(configColisao_.excessoMinimoParedeMm) * 1000 &&
+                          excessoUm <= static_cast<int64_t>(configColisao_.excessoMaximoParedeMm) * 1000;
+    const bool frenteLivre = temFrente_ && ultimaFrenteMm_ > configColisao_.limiarFrenteLivreMm &&
+                             ultimaFrenteMm_ < DISTANCIA_MAXIMA_VALIDA_TOF_MM;
+    if (colisoesNaMesmaFrente_ >= 2 && naParede && !frenteLivre &&
+        mapa_.obterParede(aqui, direcao_) != EstadoParede::Parede) {
+      mapa_.corrigirParede(aqui, direcao_, EstadoParede::Parede);
+      ++paredesPorColisao_;
+    }
+  } else {
+    colisoesNaMesmaFrente_ = 0;
+  }
+
+  if (colisoesSeguidas_ > configColisao_.colisoesSeguidasMaximas) {
+    falhaExecucao_ = FalhaExecucao::ColisoesSeguidas;
+    estado_ = EstadoCiclo::Falha;
+    return;
+  }
+
+  // O recuo mantém o rumo da direção atual (o giro interrompido já tinha mudado o rumo alvo).
+  if (entrada.giro.valida) {
+    executor_.definirRumoAlvo(rumoDaDirecao(direcao_, entrada.giro.anguloMiligraus));
+  } else if (antes == EstadoCiclo::Girando) {
+    executor_.definirRumoAlvo(executor_.rumoNominalMiligraus() - variacaoRumoMiligraus(executor_.movimento()));
+  }
+  // Recua até o centro da célula (pela odometria), no mínimo `recuoMinimoMm` e no máximo `recuoMm`.
+  int64_t recuoMm = entrada.poseValida ? excessoSobreOCentroUm(entrada.posicaoAvancoUm) / 1000
+                                       : static_cast<int64_t>(configColisao_.recuoMm);
+  recuoMm = recuoMm < configColisao_.recuoMinimoMm ? configColisao_.recuoMinimoMm : recuoMm;
+  recuoMm = recuoMm > configColisao_.recuoMm ? configColisao_.recuoMm : recuoMm;
+  if (!executor_.iniciarRecuo(static_cast<uint16_t>(recuoMm))) {
+    falhaExecucao_ = FalhaExecucao::Nenhuma;
+    estado_ = EstadoCiclo::Falha;
+    return;
+  }
+  estado_ = EstadoCiclo::Recuperando;
 }
 
 void CicloNavegacao::confirmarChegada(const EntradaCiclo& entrada) {
@@ -303,6 +424,8 @@ const char* nomeDoEstadoCiclo(EstadoCiclo estado) {
       return "girando";
     case EstadoCiclo::Avancando:
       return "avancando";
+    case EstadoCiclo::Recuperando:
+      return "recuperando";
     case EstadoCiclo::ObjetivoAlcancado:
       return "objetivo_alcancado";
     case EstadoCiclo::SemCaminho:

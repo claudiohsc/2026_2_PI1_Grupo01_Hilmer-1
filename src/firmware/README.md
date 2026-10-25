@@ -311,6 +311,46 @@ O serializador `TelemetriaJson` (`lib/comunicacao`) gera payloads compatíveis c
 
 Campos diagnósticos adicionais (`esq_pulsos`, `dir_pulsos`, `esq_mm`, `dir_mm`, `medio_mm`, `pose_valida`) são úteis para calibração de bancada e scripts de teste (como `calibrar_deslocamento_18cm.py`), e podem ser descartados pelo gateway antes da inserção no banco de dados.
 
+## Detecção de colisão e recuperação (#192)
+
+Se o robô bate numa parede que não viu, ele detecta a batida, recua até o centro da célula e volta a perceber e decidir, **sem perder o mapa nem a posição** da navegação (HU-17). A lógica fica em `lib/execucao` e é testada no computador; só a leitura do acelerômetro é do hardware.
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| `IAcelerometro` | `lib/hal` | `lerAceleracaoPlano(ax, ay)`: aceleração nos eixos X e Y do chão, em mg |
+| `DetectorColisao` | `lib/execucao` | Percebe a colisão por **impacto** (pico de aceleração) ou por **frente parada** (ToF) e a avisa uma vez |
+| `RegistradorPotencia` | `lib/atuacao` | Camada de fora de `motoresTracao`: guarda a última potência comandada, que a detecção compara com o movimento |
+| `ExecutorMovimentos::iniciarRecuo` | `lib/execucao` | Recuo em linha reta, de ré, segurando o rumo pelo giroscópio |
+| `EstadoCiclo::Recuperando` | `lib/execucao` | Etapa do `CicloNavegacao` entre a batida e a nova percepção |
+
+**Como a colisão é percebida.** Duas evidências independentes, ligadas só com o robô sendo conduzido (avançando, girando ou realinhando; parado ou em recuperação a detecção fica desligada, para um robô erguido ou empurrado à mão não contar):
+
+- **Impacto (IMU):** a aceleração no plano se afasta da referência de repouso por `LIMIAR_IMPACTO_MG` (1 g) ou mais. A referência é uma média lenta das leituras calmas, então a inclinação do sensor e o zero dele não contam, e um impacto não vira o "novo repouso".
+- **Frente parada (ToF):** potência alta por 500 ms e nem o ToF frontal nem o giroscópio mostram movimento (a mesma regra da `ProtecaoMotorTravado`, #341). Uma frente além do alcance do ToF (leitura no máximo, 1200 mm) não conta: ela também não muda andando por um corredor longo, como o do 12×4.
+- A detecção por encoder parado fica para quando os encoders existirem.
+
+**O que o ciclo faz.** Com `EntradaCiclo::colisao` e o robô em movimento:
+
+1. Cancela o movimento, freia e esquece o passo planejado.
+2. **Recuperando:** recua até o centro da célula pela odometria (no mínimo 10 mm, no máximo 40 mm). Com a parede da frente à vista, termina antes, quando o ToF mostra o robô a 84 mm dela. O rumo alvo volta ao da direção atual, também depois de um giro interrompido.
+3. Volta a **Percebendo** na mesma célula e decide de novo.
+
+**Mapa e posição.** A célula e a direção da navegação não mudam. A única escrita no mapa é a parede da frente, e só quando a batida **se repete** avançando na mesma célula e direção, o robô está onde a batida na parede da própria célula acontece (odometria na mesma célula, a 10–70 mm além do centro) e o ToF frontal não mede a frente livre. Uma batida isolada só recua e percebe de novo: se a percepção vê a parede, o mapa a grava como sempre. Depois de `COLISOES_SEGUIDAS_MAXIMAS` (4) colisões sem concluir uma célula, o ciclo pára em `Falha` (`colisoes_seguidas`).
+
+**Telemetria.** Cada colisão sai no log como `{"status":"colisao","tipo":"impacto","desvio_mg":...}` e como o evento `colisao` da telemetria (um evento por amostra: a chegada ao objetivo vai primeiro, e cada colisão pendente espera a sua amostra).
+
+**Valores provisórios**, para conferir na bancada (`ConfiguracaoColisao.h` e `ConfiguracaoImu.h`):
+
+| Parâmetro | Valor | Como ajustar |
+|---|---|---|
+| `LIMIAR_IMPACTO_MG` | 1000 mg | Bata o robô devagar contra a parede e veja `desvio_mg` no log; fique entre o maior desvio andando sem bater e o menor batendo |
+| `FAIXA_ACELEROMETRO` | ±4 g | Se o pico saturar (4000 mg), suba a faixa |
+| Filtro do sensor | 42 Hz (o mesmo do giroscópio) | Uma batida curta pode sair atenuada; se faltar sensibilidade, aumente a banda do filtro |
+| `RECUO_COLISAO_MM` e `RECUO_MINIMO_COLISAO_MM` | 40 e 10 mm | Confira onde o robô para depois do recuo |
+| Eixos do acelerômetro | qualquer | A detecção usa só o módulo no plano: o sinal e a orientação dos eixos não importam. O sensor tem que estar plano (a gravidade fora de X e Y) |
+
+**Limites.** O recuo corrige a posição ao longo do eixo só até onde a odometria e o ToF frontal permitem. Depois de uma batida num giro, o rumo é refeito pelo giroscópio no giro seguinte, e não no recuo. A colisão lateral (raspar numa parede sem bater de frente) é detectada pelo impacto, mas o robô só recua e percebe de novo: não grava parede lateral.
+
 ## Sensores de distância (VL53L0X)
 
 Na Rev 2.0 do hardware, o LiDAR deu lugar a 3 VL53L0X no I²C (esquerdo, frontal e direito). O `TofVl53l0x` (`lib/drivers_esp32`) implementa o `ISensorDistancia`, então mapa, percepção e navegação não mudaram ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)). A regra de validade fica no `CombinadorTof` (`lib/tof`), testado no `native`; a biblioteca `pololu/VL53L0X` só entra no `esp32c3`.
@@ -451,8 +491,9 @@ O giroscópio do MPU6050 dá o **ângulo de giro** (yaw) do robô, a principal f
 | `IImu` | `lib/hal` | `lerTaxaGiroZ(taxa)`: taxa de giro em décimos de °/s, positiva para a esquerda |
 | `ImuMpu6050` | `lib/drivers_esp32` | Reinicia o sensor, confere o `WHO_AM_I`, liga o filtro de 42 Hz, configura a faixa e lê os dois bytes do eixo Z (registradores 0x47 e 0x48) |
 | `BarramentoI2c` | `lib/drivers_esp32` | O `Wire` com um mutex do FreeRTOS: toda transação I²C passa por `BarramentoI2c::Uso` |
+| `IAcelerometro` | `lib/hal` | `lerAceleracaoPlano(ax, ay)`: aceleração no plano do chão, em mg (detecção de colisão, #192). O `ImuMpu6050` também a implementa, lendo os registradores 0x3B a 0x3E |
 | `AcompanhadorGiro` | `lib/imu` | Um ciclo da tarefa da IMU: calibra o viés na largada (recomeça sozinha se o robô se mexer), integra o ângulo e invalida o ângulo depois de 5 falhas seguidas |
-| `tarefaImu` | `src/main.cpp` | Lê a IMU a cada 10 ms com `vTaskDelayUntil` (intervalo fixo), com prioridade 3, e publica a `LeituraGiro`, que as outras tarefas leem por `lerGiro()` |
+| `tarefaImu` | `src/main.cpp` | Lê a IMU a cada 10 ms com `vTaskDelayUntil` (intervalo fixo), com prioridade 3, e publica a `LeituraGiro`, que as outras tarefas leem por `lerGiro()`, e a aceleração no plano, que a navegação lê por `lerAceleracao()` |
 
 **Barramento compartilhado.** Os 3 VL53L0X (lidos pela navegação) e o MPU6050 (lido pela tarefa da IMU) usam o mesmo SDA/SCL. Uma transação no meio de outra mistura os bytes dos dois sensores, então **todo acesso ao `Wire` precisa estar dentro de um `BarramentoI2c::Uso`**, inclusive o do driver dos ToF. A proteção é um mutex, e não uma seção crítica (`portENTER_CRITICAL`): a seção crítica desliga as interrupções, de que o driver I²C depende. Se o barramento não vier em `ESPERA_MAXIMA_I2C_MS` (8 ms), a leitura falha e é contada, em vez de atrasar a tarefa.
 
@@ -470,6 +511,7 @@ if (uso.conseguiu()) {
 | Parâmetro | Arquivo | Valor |
 |---|---|---|
 | Faixa do giroscópio | `ConfiguracaoImu.h` | ±500 °/s |
+| Faixa do acelerômetro | `ConfiguracaoImu.h` | ±4 g |
 | Período de leitura | `ConfiguracaoImu.h` | 10 ms (100 leituras por segundo, igual à taxa configurada no sensor) |
 | Amostras da calibração, variação máxima e zona morta | `ConfiguracaoImu.h` | 200, 5 °/s e 0,3 °/s |
 | Sensor de cabeça para baixo | `ConfiguracaoImu.h` (`INVERTER_GIRO_Z`) | `false`: girando o robô para a esquerda com a mão, a taxa tem que ser positiva |

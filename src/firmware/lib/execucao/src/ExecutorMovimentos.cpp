@@ -1,6 +1,7 @@
 #include "ExecutorMovimentos.h"
 
 #include "Configuracao.h"
+#include "ConfiguracaoPercepcao.h"
 
 namespace micromouse {
 
@@ -118,8 +119,18 @@ bool ExecutorMovimentos::iniciarRealinhamento(const PlanoRealinhamento& plano) {
   return true;
 }
 
+bool ExecutorMovimentos::iniciarRecuo(uint16_t distanciaMm) {
+  if (ocupado() || distanciaMm == 0) {
+    return false;
+  }
+  iniciar(Movimento::AvancarCelula);  // zera o estado comum
+  movimento_ = Movimento::Recuar;
+  recuoUm_ = -static_cast<int32_t>(distanciaMm) * 1000;
+  return true;
+}
+
 bool ExecutorMovimentos::iniciar(Movimento movimento) {
-  if (ocupado() || movimento == Movimento::Realinhar) {
+  if (ocupado() || movimento == Movimento::Realinhar || movimento == Movimento::Recuar) {
     return false;
   }
   movimento_ = movimento;
@@ -145,6 +156,9 @@ EstadoExecucao ExecutorMovimentos::atualizar(const EntradaExecucao& entrada, IMo
   }
   if (movimento_ == Movimento::AvancarCelula) {
     return atualizarAvanco(entrada, motores);
+  }
+  if (movimento_ == Movimento::Recuar) {
+    return atualizarRecuo(entrada, motores);
   }
   return movimento_ == Movimento::Realinhar ? atualizarRealinhamento(entrada, motores)
                                             : atualizarGiro(entrada, motores);
@@ -354,6 +368,30 @@ EstadoExecucao ExecutorMovimentos::atualizarRealinhamento(const EntradaExecucao&
   return estado_;
 }
 
+bool ExecutorMovimentos::noCentroPelaFrente(const DistanciasLaterais& leitura) const {
+  if (leitura.frenteMm >= DISTANCIA_OUT_OF_RANGE_TOF_MM) {
+    return false;
+  }
+  const uint32_t doCentroMm = static_cast<uint32_t>(leitura.frenteMm) + config_.distanciaSensorFrontalAoCentroMm;
+  return doCentroMm + TOLERANCIA_CENTRO_RECUO_MM >= DISTANCIA_CENTRO_A_PAREDE_MM &&
+         doCentroMm <= static_cast<uint32_t>(DISTANCIA_CENTRO_A_PAREDE_MM) + FOLGA_PAREDE_DA_CELULA_RECUO_MM;
+}
+
+EstadoExecucao ExecutorMovimentos::atualizarRecuo(const EntradaExecucao& entrada, IMotores& motores) {
+  tempoMs_ += entrada.dtMs;
+  if (entrada.leituraNova != nullptr && noCentroPelaFrente(*entrada.leituraNova)) {
+    return terminar(EstadoExecucao::Concluido, FalhaExecucao::Nenhuma, motores);
+  }
+  const EstadoExecucao resultado = passoDeTrecho(recuoUm_, rumoAlvoMiligraus_, entrada, motores);
+  if (resultado == EstadoExecucao::Concluido) {
+    return terminar(EstadoExecucao::Concluido, FalhaExecucao::Nenhuma, motores);
+  }
+  if (resultado == EstadoExecucao::Falha) {
+    return terminar(EstadoExecucao::Falha, FalhaExecucao::TempoEsgotado, motores);
+  }
+  return estado_;
+}
+
 const char* nomeDoEstadoExecucao(EstadoExecucao estado) {
   switch (estado) {
     case EstadoExecucao::Ocioso:
@@ -380,6 +418,8 @@ const char* nomeDaFalhaExecucao(FalhaExecucao falha) {
       return "tempo_esgotado";
     case FalhaExecucao::GiroTempoEsgotado:
       return "giro_tempo_esgotado";
+    case FalhaExecucao::ColisoesSeguidas:
+      return "colisoes_seguidas";
   }
   return "nenhuma";
 }
