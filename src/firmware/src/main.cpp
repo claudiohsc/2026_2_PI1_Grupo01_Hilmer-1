@@ -32,6 +32,8 @@
 #include "ConfiguracaoRede.h"
 #include "ContratoTelemetria.h"
 #include "ControladorEnvio.h"
+#include "ControleGiro.h"
+#include "ControleMovimento.h"
 #include "ConversorDeslocamento.h"
 #include "CredenciaisSupabase.h"
 #include "DeslocamentoEstimado.h"
@@ -187,6 +189,12 @@ static portMUX_TYPE travaGiro = portMUX_INITIALIZER_UNLOCKED;
   portEXIT_CRITICAL(&travaGiro);
   return copia;
 }
+
+/// Controle de giro no próprio eixo (90° e 180°) em malha fechada pelo giroscópio (#190).
+[[maybe_unused]] static micromouse::ControleGiro controleGiro;
+
+/// Controle de movimento: avanço com centralização e controle de rumo pelo giroscópio (#190, #191).
+[[maybe_unused]] static micromouse::ControleMovimento controleMovimento;
 
 /// Tarefa da IMU: lê o giroscópio a cada `PERIODO_LEITURA_IMU_MS` (10 ms), em intervalo fixo.
 ///
