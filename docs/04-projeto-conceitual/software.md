@@ -990,6 +990,59 @@ um `id` traz só as daquele labirinto. O retorno não mudou: `{ corridas, carreg
 Com poucas corridas por labirinto não faz diferença; se o histórico crescer, vale
 `CREATE INDEX ON corridas (labirinto_id);`.
 
+#### Mapa, percurso e paredes do robô no dashboard em tempo real (HU-06)
+
+A visualização do labirinto no dashboard web (`GradeLabirinto`, Frames `01_Idle`, `02_Running` e `03_Completed`) foi integrada ao fluxo de dados real provido pelo robô e pelo banco de dados Supabase (tarefa [#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239), HU-06). Na etapa inicial (#230), o componente operava apenas em modo simulado estático; com esta implementação, a malha vetorial responde dinamicamente às leituras de odometria (`telemetria`) e às células descobertas (`mapa_celulas`) via Supabase Realtime.
+
+```mermaid
+sequenceDiagram
+    participant MM as Robô (ESP32-C3)
+    participant EF as Edge Functions
+    participant DB as Supabase · PostgreSQL
+    participant RT as Supabase Realtime (WebSocket)
+    participant HOOK as useTelemetriaAoVivo
+    participant GL as GradeLabirinto (SVG)
+
+    MM->>EF: POST /telemetria (lote de odometria: linha, coluna, orientação)
+    EF->>DB: INSERT INTO telemetria
+    DB-->>RT: postgres_changes (INSERT telemetria)
+    RT-->>HOOK: payload.new (Telemetria)
+    HOOK->>GL: atualiza percurso (Robot Path) e robo (Robot marker)
+
+    MM->>EF: POST /corridas/mapa (células e paredes mapeadas)
+    EF->>DB: INSERT INTO mapa_celulas
+    DB-->>RT: postgres_changes (INSERT/UPDATE mapa_celulas)
+    RT-->>HOOK: payload.new (MapaCelula)
+    HOOK->>GL: desenha paredes mapeadas (parede_norte, sul, leste, oeste)
+```
+
+**Figura.** Fluxo de dados em tempo real: leituras periódicas de telemetria alimentam o traçado e o marcador do robô, enquanto as paredes descobertas são desenhadas na malha conforme chegam ao Realtime.
+
+**Regras e decisões técnicas:**
+
+- **Sistema de coordenadas SVG e dimensões da malha:**
+  - O sistema do firmware adota a célula $(0, 0)$ na largada (canto inferior esquerdo), com o eixo Norte aumentando a linha e o eixo Leste aumentando a coluna.
+  - Para conciliar com o sistema de coordenadas do SVG (cujo eixo $y$ cresce para baixo), a conversão é calculada por:
+    $$x(\text{coluna}) = \text{MARGEM} + \text{coluna} \times \text{LADO}$$
+    $$y(\text{linha}) = \text{MARGEM} + (\text{linhas} - 1 - \text{linha}) \times \text{LADO}$$
+    onde $\text{LADO} = 48$ unidades e $\text{MARGEM} = 6$ unidades de *viewBox*.
+  - A malha ajusta seu *viewBox* dinamicamente para as três dimensões oficiais da competição: $204 \times 204$ (`4x4`), $396 \times 204$ (`8x4`) e $588 \times 204$ (`12x4`).
+- **Partida e Chegada:**
+  - Partida (`grade__largada`): retângulo em verde suave (`--largada: #bbf7d0`) posicionado na célula $(0, 0)$.
+  - Chegada / Objetivo (`grade__objetivo`): retângulo em vermelho suave (`--objetivo: #fecdd3`, com borda tracejada `--objetivo-borda: #f43f5e`) posicionado na célula oposta $(linhas - 1, colunas - 1)$.
+- **Marcador `Robot`:**
+  - Indicador circular com vetor de proa estilizado em triângulo, centrado na célula atual ocupada pelo micromouse.
+  - Rotação angular em torno do centro da célula conforme a orientação cardinal informada pela telemetria: $N = 0^\circ$, $L = 90^\circ$, $S = 180^\circ$ e $O = 270^\circ$.
+- **Traçado `Robot Path`:**
+  - Vetor dinâmico em laranja vibrante (`--trajeto: #f97316`) desenhado como `<polyline>` SVG com junções e terminações arredondadas (`stroke-linejoin: round`, `stroke-linecap: round`).
+  - Conecta sequencialmente o ponto central de cada célula registrada no histórico de telemetria da corrida.
+- **Paredes Mapeadas (`mapa_celulas`):**
+  - Cada célula recebida com valor booleano `true` em `parede_norte`, `parede_sul`, `parede_leste` ou `parede_oeste` projeta um segmento de reta de espessura 3 px sobre a grade.
+  - Paredes não exploradas (`null`) ou livres (`false`) não geram traços internos, mantendo apenas as linhas tênues da malha de fundo e o perímetro externo fechado.
+  - No modo ao vivo, o mapa não oculta paredes por ausência de visita física (`mapaConhecido` atua exclusivamente no modo exemplo/simulado), respeitando leituras de sensores de alcance (LiDAR/ToF) que identificam paredes de células adjacentes.
+- **Persistência ao final da corrida:**
+  - Ao transitar para o estado `concluido` (detecção de objetivo alcançado) ou `nao_concluido` (tempo limite de 10:00 esgotado), o painel mantém intactas as listas de telemetria e o mapa de células, garantindo a exibição permanente do trajeto completo percorrido para análise de bancada.
+
 #### Infraestrutura de testes automatizados e cliente Supabase simulado (#394)
 
 Para garantir a confiabilidade do dashboard e permitir que as próximas tarefas (#231, #234, #239 e #242) implementem testes de unidade e integração sem depender de conexão com o banco de dados nem expor chaves de serviço, foi desenvolvida a infraestrutura de testes automatizados em `src/frontend` (tarefa [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)).
@@ -1190,3 +1243,4 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 1.3 | 23/10/2026 | Atualiza o contexto, os critérios da HU-02 e da HU-13 e a arquitetura para a Rev 2.0 do hardware: 3 VL53L0X e MPU6050 por I²C no lugar do LiDAR, e pinagem nova ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)) | Ana Carolina Fialho | — |
 | 1.4 | 23/10/2026 | Documenta a infraestrutura de testes do frontend (Vitest e Testing Library), o cliente Supabase simulado e o CI ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) | Rafael Lima | Eduardo Viana |
 | 1.5 | 24/10/2026 | Documenta o filtro do histórico por labirinto na consulta ao banco ([#234](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234)) | Ana Carolina Fialho | — |
+| 1.6 | 24/10/2026 | Documenta a renderização vetorial da malha, percurso e paredes em tempo real no dashboard ([#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239)) | Rafael Lima | Ana Carolina Fialho |
