@@ -1745,7 +1745,144 @@ pio run -e esp32c3
 
 - Integração com a `Odometria` (a célula troca 90 mm antes do centro): o mapa e o `darPasso` devem ser chamados com o robô perto do centro da célula. Fica para a integração do Épico 02, como registrado na issue.
 
----
+### Sprint 5 · IMU MPU6050 e ângulo de giro (testes com giroscópio simulado)
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, com o giroscópio simulado `ImuSimulado` no lugar do MPU6050. Os valores de taxa, viés e ruído foram **definidos pelos testes** para reproduzir as condições do sensor real. O driver do MPU6050, a tarefa da IMU e a trava do barramento I²C dependem do ESP32-C3 e **não rodam no computador**: deles, só foi verificado que o firmware compila. **Ainda não houve leitura do MPU6050 real**; a validação na placa faz parte da bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#378 Driver do MPU6050 e ângulo de giro (yaw)](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) |
+| História de usuário | HU-05 · Odometria e localização ([#41](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)), RF05 |
+| Código testado | `src/firmware/lib/imu`, `lib/hal/src/IImu.h` e `lib/simulacao/src/ImuSimulado.h`, na `main` depois do merge do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) (commit `6bf0c06`) |
+| Autoria do código | Ana Carolina Fialho (`IImu`, `ImuSimulado`, `IntegradorGiro`, conversão) e Eduardo Viana (`ImuMpu6050`, `BarramentoI2c`, `AcompanhadorGiro`, tarefa da IMU) |
+| Data da execução | 23/10/2026 (primeira parte) e 24/10/2026 (código completo, depois do merge) |
+| Executado por | Ana Carolina Fialho |
+| Tipo de teste | Unitário e de integração, no computador, com dados simulados |
+| Documentação do código | [Orientação: IMU e ângulo de giro](../04-projeto-conceitual/firmware.md#orientacao-imu-e-angulo-de-giro) |
+
+**Ambiente de execução:** macOS (Apple Silicon), PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1 e `gcovr` 8.6.
+
+#### Critérios da issue e testes
+
+| Critério da #378 | Testes | Situação |
+|---|---|:-:|
+| `IImu` e `ImuSimulado`, com testes no computador | 5 testes da `ImuSimulado` (viés, ruído, falha, saturação, uso pela interface) | Aprovado |
+| Faixa de medição em arquivo de configuração e conversão da leitura | 5 testes da conversão (4 faixas, sinal, arredondamento, fundo de escala, faixa cobre giro rápido) | Aprovado |
+| Integração do yaw com viés removido (giro, deriva e viés simulados) | 16 testes unitários do `IntegradorGiro`, 3 de integração e 7 do `AcompanhadorGiro` (ciclo da tarefa com o `ImuSimulado`) | Aprovado |
+| Leitura do MPU6050 (bits da faixa, bytes do sensor, sinal) | 3 testes das funções puras do driver (`valorGyroConfig`, `juntarBytesGiro`, `ajustarSinalGiro`) | Aprovado |
+| I²C compartilhado com os ToF, protegido contra uso simultâneo | `BarramentoI2c` com mutex, usado pela IMU e pela leitura dos ToF na navegação; depende do FreeRTOS, sem teste no computador | Implementado; validação na bancada pendente |
+| Biblioteca do sensor só no `esp32c3` | `ImuMpu6050` em `lib/drivers_esp32`, ignorada no ambiente `native` (`lib_ignore`); `pio run -e esp32c3` compila | Aprovado |
+
+#### Testes unitários e de integração
+
+```bash
+pio test -e native -f test_imu
+```
+
+| Grupo | Casos | Nível | O que verificam |
+|---|:-:|---|---|
+| Conversão da leitura bruta | 5 | Unitário | 1 °/s nas 4 faixas, sinal, arredondamento, fundo de escala de ±500 e ±2000 °/s, faixa do robô cobre um giro de 300 °/s |
+| Funções do driver | 3 | Unitário | Bits da faixa no `GYRO_CONFIG`, dois bytes em complemento de dois, sinal invertido com o sensor de cabeça para baixo |
+| `ImuSimulado` | 5 | Unitário | Soma de taxa e viés, ruído alternado, falha sem alterar a saída, saturação em `int16_t`, uso pela interface `IImu` |
+| Integração do ângulo | 6 | Unitário | 90°/s por 1 s = 90°, giro para a direita negativo, `dt` zero, frações acumuladas sem perda, `zerarAngulo` mantém o viés, normalização em (−180°, 180°] |
+| Viés, deriva e calibração | 10 | Unitário | Sem calibrar, 1,2 °/s viram 12° em 10 s; calibrado, 0°; viés negativo; média arredondada; calibração incompleta, recusada por movimento e no limite exato; amostra fora da calibração ignorada; zona morta; deriva do viés depois da calibração |
+| IMU simulada + integrador | 3 | Integração | Calibração com viés de 1,5 °/s e ruído, giro de 90° terminando exatamente em 90° e sem deriva parado por 5 s; giro de 180° para a direita; leitura com falha não soma ao ângulo |
+| `AcompanhadorGiro` + IMU simulada | 7 | Integração | Só fica válido depois de calibrar na largada; giro de 90° sem o viés; calibração recomeça se o robô se mexer; falhas seguidas invalidam o ângulo; sem calibrar integra mas não é válido; falha na calibração não conta amostra; taxa publicada não estoura com o viés |
+
+**Resultado:** 39 de 39 aprovados (29 unitários e 10 de integração).
+
+```text
+test/test_imu/test_imu.cpp:530: test_conversao_um_grau_por_segundo_em_cada_faixa [PASSED]
+test/test_imu/test_imu.cpp:531: test_conversao_preserva_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:532: test_conversao_arredonda_para_o_mais_proximo [PASSED]
+test/test_imu/test_imu.cpp:533: test_conversao_no_limite_da_faixa [PASSED]
+test/test_imu/test_imu.cpp:534: test_faixa_do_robo_cobre_um_giro_rapido [PASSED]
+test/test_imu/test_imu.cpp:535: test_valor_do_gyro_config_para_cada_faixa [PASSED]
+test/test_imu/test_imu.cpp:536: test_juntar_bytes_em_complemento_de_dois [PASSED]
+test/test_imu/test_imu.cpp:537: test_sensor_de_cabeca_para_baixo_inverte_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:538: test_imu_simulada_soma_taxa_e_vies [PASSED]
+test/test_imu/test_imu.cpp:539: test_imu_simulada_ruido_alterna_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:540: test_imu_simulada_em_falha_nao_altera_a_saida [PASSED]
+test/test_imu/test_imu.cpp:541: test_imu_simulada_satura_no_limite_de_int16 [PASSED]
+test/test_imu/test_imu.cpp:542: test_imu_simulada_pode_ser_usada_pela_interface [PASSED]
+test/test_imu/test_imu.cpp:543: test_noventa_graus_por_segundo_durante_um_segundo_da_noventa_graus [PASSED]
+test/test_imu/test_imu.cpp:544: test_giro_para_a_direita_e_negativo [PASSED]
+test/test_imu/test_imu.cpp:545: test_dt_zero_nao_muda_o_angulo [PASSED]
+test/test_imu/test_imu.cpp:546: test_fracoes_nao_se_perdem_entre_ciclos [PASSED]
+test/test_imu/test_imu.cpp:547: test_zerar_angulo_mantem_o_vies [PASSED]
+test/test_imu/test_imu.cpp:548: test_angulo_normalizado_fica_entre_menos_180_e_180 [PASSED]
+test/test_imu/test_imu.cpp:549: test_sem_calibrar_o_vies_vira_deriva [PASSED]
+test/test_imu/test_imu.cpp:550: test_calibracao_remove_o_vies_e_a_deriva [PASSED]
+test/test_imu/test_imu.cpp:551: test_calibracao_com_vies_negativo [PASSED]
+test/test_imu/test_imu.cpp:552: test_calibracao_usa_a_media_arredondada [PASSED]
+test/test_imu/test_imu.cpp:553: test_calibracao_incompleta_segue_calibrando_e_nao_troca_o_vies [PASSED]
+test/test_imu/test_imu.cpp:554: test_robo_se_mexendo_na_calibracao_e_recusada [PASSED]
+test/test_imu/test_imu.cpp:555: test_limite_da_variacao_na_calibracao [PASSED]
+test/test_imu/test_imu.cpp:556: test_amostra_fora_de_calibracao_e_ignorada [PASSED]
+test/test_imu/test_imu.cpp:557: test_zona_morta_segura_o_ruido_do_sensor_parado [PASSED]
+test/test_imu/test_imu.cpp:558: test_deriva_do_vies_depois_da_calibracao [PASSED]
+test/test_imu/test_imu.cpp:559: test_integracao_giro_de_90_graus_com_vies_e_ruido [PASSED]
+test/test_imu/test_imu.cpp:560: test_integracao_giro_de_180_graus_para_a_direita [PASSED]
+test/test_imu/test_imu.cpp:561: test_integracao_leitura_com_falha_nao_soma_ao_angulo [PASSED]
+test/test_imu/test_imu.cpp:562: test_acompanhador_calibra_na_largada_e_so_entao_fica_valido [PASSED]
+test/test_imu/test_imu.cpp:563: test_acompanhador_integra_um_giro_de_90_graus_sem_o_vies [PASSED]
+test/test_imu/test_imu.cpp:564: test_acompanhador_recomeca_a_calibracao_se_o_robo_se_mexer [PASSED]
+test/test_imu/test_imu.cpp:565: test_acompanhador_falhas_seguidas_invalidam_o_angulo [PASSED]
+test/test_imu/test_imu.cpp:566: test_acompanhador_sem_calibrar_nao_e_valido_mas_integra [PASSED]
+test/test_imu/test_imu.cpp:567: test_acompanhador_falha_durante_a_calibracao_nao_conta_amostra [PASSED]
+test/test_imu/test_imu.cpp:568: test_acompanhador_taxa_publicada_nao_estoura_com_o_vies [PASSED]
+================= 39 test cases: 39 succeeded in 00:00:01.758 =================
+```
+
+#### Cobertura e suíte completa
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --txt --fail-under-line 80
+```
+
+| Arquivo | Linhas | Cobertura |
+|---|:-:|:-:|
+| `lib/imu/src/IntegradorGiro.cpp` | 54 | 100% |
+| `lib/imu/src/AcompanhadorGiro.cpp` | 43 | 100% |
+| `lib/imu/src/ConversorGiro.h` | 14 | 100% |
+| `lib/simulacao/src/ImuSimulado.h` | 32 | 100% |
+| `lib/imu/src/ConfiguracaoImu.h`, `IntegradorGiro.h`, `AcompanhadorGiro.h`, `lib/hal/src/IImu.h` | 16 | 100% |
+| **Total do firmware** (`lib/`) | 2028 | **98%** |
+
+`ImuMpu6050` e `BarramentoI2c` ficam em `lib/drivers_esp32`, fora do ambiente `native`, e por isso fora da cobertura.
+
+Suíte completa do firmware: **412 de 412 aprovados**. `pio run -e esp32c3`: compilação concluída.
+
+#### Prova de mutação
+
+Para conferir se os testes detectam erros, e não só passam, 17 alterações propositais foram feitas no código, uma de cada vez. Por exemplo: somar o viés em vez de subtrair, deixar a zona morta só de um lado, errar a sensibilidade de uma faixa, aceitar amostras fora da calibração e trocar `>` por `>=` nos limites. Depois de cada alteração, os testes foram rodados de novo.
+
+| Execução | Resultado |
+|---|---|
+| Primeira rodada | 16 de 17 alterações detectadas; "aceitar amostra fora da calibração" passou despercebida |
+| Correção | O teste `test_amostra_fora_de_calibracao_e_ignorada` passou a usar uma calibração de 1 amostra, em que a alteração calibraria sozinha |
+| Rodada final | **17 de 17 alterações detectadas** |
+
+Na segunda parte (código do Eduardo, 24/10), 15 alterações foram feitas no `AcompanhadorGiro` e nas funções do driver. Por exemplo: somar o viés em vez de subtrair, errar o deslocamento dos bits da faixa, trocar a ordem dos bytes, não inverter o sinal e não recomeçar a calibração recusada.
+
+| Execução | Resultado |
+|---|---|
+| Rodada única | **12 de 15 alterações detectadas**; 3 passaram despercebidas (abaixo) |
+
+| Alteração não detectada | O que falta testar |
+|---|---|
+| `iniciarCalibracao()` do `AcompanhadorGiro` não zera o ângulo do integrador | Integrar um giro, recalibrar e conferir que o ângulo recomeça de zero depois da calibração |
+| A contagem de falhas seguidas não volta a zero depois de uma leitura boa | Falhas, uma leitura boa e mais falhas, abaixo do limite: o ângulo deve continuar válido |
+| O `ciclo` ignora o `dtMs` recebido e usa sempre 10 ms | Um ciclo com `dtMs` diferente de 10 ms (todos os testes usam 10 ms) |
+
+#### Pendências desta etapa
+
+- Três testes do `AcompanhadorGiro`, para as alterações não detectadas na prova de mutação (vão num PR de código para a `main`).
+- Leitura do sensor real na bancada: viés e ruído do MPU6050 parado, para ajustar a zona morta e os limites da calibração, e o sinal do eixo Z (`INVERTER_GIRO_Z`) (#381).
+- Bancada com os 3 VL53L0X e o MPU6050 ligados ao mesmo tempo, para confirmar o barramento compartilhado: a contagem `esperasEsgotadas()` e as falhas de leitura devem ficar em zero com o robô rodando (#381).
+- Frequência do I²C (100 kHz) e espera máxima pelo barramento (8 ms), ainda provisórias.
 
 ### Sprint 5 · Driver dos 3 sensores VL53L0X
 
@@ -1889,6 +2026,651 @@ O menu `scripts/bancada_tof.py` foi executado contra uma placa simulada (porta s
 - **Bancada ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)):** rodar `./scripts/bancada_tof.py` com os sensores montados e registrar aqui o relatório: fiação de cada XSHUT, endereços, taxa, tempo da leitura, erro contra a régua em pelo menos 5 distâncias e comportamento fora da faixa.
 - **Valores provisórios:** trocar os de `ConfiguracaoTof.h` pelos medidos na bancada.
 - **Hardware:** confirmar com a eletrônica que o módulo aceita o XSHUT em 3,3 V e que os pinos de *strapping* (GPIO2, GPIO8 e GPIO9) não impedem o boot com os sensores ligados.
+
+#### Revisão do PR #391 (24/10/2026)
+
+A revisão do PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391) pediu quatro mudanças no código, feitas no branch `feat/344-driver-vl53l0x` (commits `579fff7`, `e466217`, `2a51308` e `aa4f134`). Esta execução registra o resultado depois delas; a execução de 22/10, acima, fica como estava.
+
+| Pedido da revisão | O que foi feito | Verificação |
+| :--- | :--- | :--- |
+| Renomear a interface, que agora representa os 3 VL53L0X | `ILidar` → `ISensorDistancia`, `LidarSimulado` → `SensorDistanciaSimulado` e `test_lidar_simulado.cpp` → `test_sensor_distancia_simulado.cpp`, num commit só (`579fff7`); `LidarUart` e `DecodificadorLd06` mantidos | Suíte completa e build da placa |
+| Fora de alcance e abaixo do mínimo não devem derrubar a leitura inteira | Decidido com a [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379), que já satura as distâncias: `ForaDeAlcance` sai como 1200 mm (livre) e `AbaixoDoMinimo` como 30 mm (parede); só `Falha`, `SemAmostra` e idade acima de 100 ms recusam (`e466217`). **Muda o 4º critério de pronto da tabela acima:** fora da faixa deixou de devolver `false` | 5 casos novos no `test_tof` |
+| Teste de integração com amostras brutas | `TofSimulado` (`lib/simulacao`) e `test_integracao_tof`: `TofSimulado → CombinadorTof → ClassificadorParede → AtualizadorMapa → Mapa` nos labirintos 4×4, 8×4 e 12×4 (`2a51308`) | 8 casos no `test_integracao_tof` |
+| Bancada sem testes e fora do CI | `scripts/testes/test_bancada_tof.py` (32 casos, sem placa nem `pyserial`); o CI compila o `bancada_tof` e ganhou o job "Scripts de bancada" (`aa4f134`) | 32 casos e o CI do push |
+
+**Casos novos ou alterados**
+
+| Caso de teste | O que verifica | Resultado |
+| :--- | :--- | :--- |
+| `test_fora_de_alcance_vale_limitado_ao_maximo_e_fica_exposto_por_sensor` | 8190 mm na frente: a leitura vale com 1200 mm; a amostra guarda 8190 mm, `ForaDeAlcance` e o instante. Substitui `test_fora_de_alcance_invalida_a_leitura_mas_fica_exposto_por_sensor` | Aprovado |
+| `test_abaixo_do_minimo_vale_limitado_ao_minimo` | 12 mm na esquerda: a leitura vale com 30 mm. Substitui `test_abaixo_do_minimo_invalida_a_leitura` | Aprovado |
+| `test_os_tres_lados_fora_da_faixa_ainda_montam_a_leitura` | 8191, 0 e 65535 mm viram 1200, 30 e 1200 mm | Aprovado |
+| `test_falha_derruba_a_leitura_mesmo_com_os_outros_fora_da_faixa` | Uma falha recusa a leitura mesmo com os outros lados fora da faixa | Aprovado |
+| `test_leitura_fora_da_faixa_velha_tambem_falha` | Com 101 ms, a leitura fora da faixa também falha | Aprovado |
+| `test_configuracao_altera_faixa_e_idade` | Também confere a limitação na faixa configurada (50 a 500 mm) | Aprovado |
+| `test_mapa_final_identico_ao_labirinto_4x4`, `_8x4` e `_12x4` | Pelas amostras brutas, o robô simulado visita todas as células, sem leitura recusada nem conflito, e o mapa final é igual ao labirinto | Aprovado |
+| `test_corredores_sem_alvo_viram_passagem_livre_e_o_mapa_fecha` | 12×4 em serpentina (corredores a 2070 mm do centro): há amostras de 8190 mm e o mapa fecha igual ao labirinto | Aprovado |
+| `test_amostra_bruta_e_a_distancia_da_face_do_sensor` | Em (0, 0) Norte, `{630, 90, 90}` do centro viram `{600, 60, 60}` da face dos sensores | Aprovado |
+| `test_sensor_sem_alvo_entrega_o_alcance_maximo` | Amostra de 8190 mm (`ForaDeAlcance`) e leitura de 1200 mm | Aprovado |
+| `test_sensor_encostado_registra_parede` | 12 mm forçados na esquerda viram 30 mm e a parede Oeste entra no mapa sem conflito | Aprovado |
+| `test_sensor_sem_resposta_nao_altera_o_mapa` | Sensor direito em falha: leitura recusada, estado `Falha` e mapa igual; volta ao religar | Aprovado |
+
+**Saída da execução**
+
+```bash
+pio test -e native -f test_tof -f test_integracao_tof -v
+```
+
+```text
+test/test_tof/test_tof.cpp:216:test_sem_amostras_a_leitura_falha:PASS
+test/test_tof/test_tof.cpp:217:test_tres_amostras_validas_montam_a_leitura_por_lado:PASS
+test/test_tof/test_tof.cpp:218:test_classificacao_nos_limites_da_faixa:PASS
+test/test_tof/test_tof.cpp:219:test_falha_tem_prioridade_sobre_a_distancia:PASS
+test/test_tof/test_tof.cpp:220:test_sensor_com_falha_invalida_a_leitura:PASS
+test/test_tof/test_tof.cpp:221:test_fora_de_alcance_vale_limitado_ao_maximo_e_fica_exposto_por_sensor:PASS
+test/test_tof/test_tof.cpp:222:test_abaixo_do_minimo_vale_limitado_ao_minimo:PASS
+test/test_tof/test_tof.cpp:223:test_os_tres_lados_fora_da_faixa_ainda_montam_a_leitura:PASS
+test/test_tof/test_tof.cpp:224:test_falha_derruba_a_leitura_mesmo_com_os_outros_fora_da_faixa:PASS
+test/test_tof/test_tof.cpp:225:test_leitura_fora_da_faixa_velha_tambem_falha:PASS
+test/test_tof/test_tof.cpp:226:test_sensor_que_nunca_mediu_invalida_a_leitura:PASS
+test/test_tof/test_tof.cpp:227:test_a_idade_e_a_da_amostra_mais_antiga:PASS
+test/test_tof/test_tof.cpp:228:test_leitura_velha_falha_e_volta_quando_chega_amostra_nova:PASS
+test/test_tof/test_tof.cpp:229:test_leitura_volta_depois_de_uma_falha:PASS
+test/test_tof/test_tof.cpp:230:test_idade_correta_quando_o_relogio_da_a_volta:PASS
+test/test_tof/test_tof.cpp:231:test_reiniciar_esquece_as_amostras:PASS
+test/test_tof/test_tof.cpp:232:test_configuracao_altera_faixa_e_idade:PASS
+17 Tests 0 Failures 0 Ignored
+test/test_integracao_tof/test_integracao_tof.cpp:225:test_mapa_final_identico_ao_labirinto_4x4:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:226:test_mapa_final_identico_ao_labirinto_8x4:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:227:test_mapa_final_identico_ao_labirinto_12x4:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:228:test_corredores_sem_alvo_viram_passagem_livre_e_o_mapa_fecha:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:229:test_amostra_bruta_e_a_distancia_da_face_do_sensor:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:230:test_sensor_sem_alvo_entrega_o_alcance_maximo:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:231:test_sensor_encostado_registra_parede:PASS
+test/test_integracao_tof/test_integracao_tof.cpp:232:test_sensor_sem_resposta_nao_altera_o_mapa:PASS
+8 Tests 0 Failures 0 Ignored
+```
+
+**Verificação de detecção de falhas:** com o `CombinadorTof` voltado temporariamente à regra antiga (qualquer estado diferente de `Valida` recusa a leitura), o `test_integracao_tof` reprovou 3 casos: no 12×4 de corredores, o robô parou na partida (1 de 48 células visitadas), e o "sem alvo" e o sensor encostado tiveram a leitura recusada. O arquivo foi restaurado depois da verificação.
+
+**Testes do menu de bancada**
+
+```bash
+python3 -m unittest discover -s scripts/testes -v
+```
+
+O `test_bancada_tof.py` troca a porta serial por um falso que devolve as linhas JSON do `bancada_tof.cpp` e confere: o protocolo (resposta pedida, log e JSON quebrado no meio, erro da placa, prazo esgotado e sem conexão); cada etapa do roteiro (fiação, endereços, taxa e tempo, régua com a tolerância de 10 mm ou 5%, fora da faixa e sensor ausente) com APROVADO, REPROVADO ou OBSERVADO; o relatório em Markdown; e se os limites do passo 5 são os do `ConfiguracaoTof.h`. Resultado: **32 testes, OK**, também sem o `pyserial` instalado (`python3 -S`).
+
+**Suíte completa, build e CI**
+
+| Verificação | Resultado |
+|---|---|
+| `pio test -e native_cobertura` | **303 aprovados, 0 falhas** (eram 263 na execução de 22/10; a diferença inclui o que veio da `main` desde então) |
+| `pio run -e esp32c3` | **Sucesso**; RAM 4,6% (15.156 de 327.680 bytes), Flash 21,9% (286.858 de 1.310.720 bytes) |
+| `pio run -e bancada_tof` | **Sucesso**; RAM 4,4% (14.388 de 327.680 bytes), Flash 21,4% (280.010 de 1.310.720 bytes) |
+| CI do push (`aa4f134`) | Testes nativos (com o mínimo de 80% de cobertura), Build ESP32-C3 (com o `bancada_tof`), Scripts de bancada, backend e frontend: **todos aprovados** |
+
+As pendências da execução de 22/10 continuam valendo: bancada com os sensores montados ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)), troca dos valores provisórios e confirmação do XSHUT em 3,3 V com a eletrônica.
+
+### Sprint 5 · Boot do sistema: varredura I²C e autoteste
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#50 Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) |
+| Requisito | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) · Inicialização de software (sistema pronto em até 2 s) |
+| Código testado | `src/firmware` (branch `feat/50-boot-autoteste`, sobre a `feat/344-driver-vl53l0x`; commit `1ecbd04`) |
+| Data da execução | 23/10/2026 |
+| Executado por | m4rllon |
+| Documentação do código | [Firmware: boot do sistema](../04-projeto-conceitual/firmware.md#boot-do-sistema-autoteste-do-i2c-autotesteboot) |
+
+Esta etapa registra a lógica do boot testada no computador com dispositivos simulados e a compilação para a placa. A medição do tempo de boot no hardware depende do robô montado e fica como pendência.
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 24.04.4 LTS, kernel 7.0) |
+| PlatformIO | Core 6.2.0 |
+| Compilador (`native`) | g++ 13.3.0 (C++17) |
+| Framework de testes | Unity 2.6.1 |
+| Cobertura | gcov 13.3.0 e gcovr 8.6 |
+
+#### Critérios de pronto da #50
+
+| Critério | Como foi atendido | Verificação |
+| :--- | :--- | :--- |
+| Varredura I²C confere os 4 endereços esperados | `AutotesteBoot::verificar` varre de 0x08 a 0x77 depois do `TofVl53l0x::iniciar()` e confere 0x30, 0x31, 0x32 e 0x68; no 0x68, também o `WHO_AM_I` = 0x68. Alguém no 0x29 reprova o boot | `test_os_quatro_presentes_aprovam_o_boot`, `test_a_varredura_cobre_0x08_a_0x77`, `test_outro_chip_no_0x68_nao_passa_por_mpu6050`, `test_tof_no_endereco_de_fabrica_reprova` |
+| Falha de qualquer dispositivo mantém os motores parados e informa qual falhou | `MotoresComTrava` começa travada e só o boot aprovado a libera; a linha `{"tipo":"boot",...}` e a telemetria (`boot_ok`, `boot_falhas`) nomeiam o que falhou | `test_cada_dispositivo_ausente_reprova_e_e_nomeado`, `test_tof_que_responde_mas_nao_iniciou_reprova`, `test_trava_comeca_travada_e_freia_em_vez_de_andar`, `test_sequencia_do_boot_so_libera_os_motores_com_tudo_presente`, `test_serializa_resultado_do_boot` |
+| Tempo de boot medido e registrado | `boot_ms` (o `millis()` no fim do `setup()`) no relatório e em todo pacote de telemetria, comparado com os 2 s do RNF-09 (`no_prazo`) | `test_prazo_de_2_s_do_rnf_09`, `test_relatorio_do_boot_com_falhas_e_atrasado`. **Medição no hardware pendente** (abaixo) |
+| Lógica testada no computador com dispositivos simulados | `BarramentoI2cSimulado` liga e desliga dispositivos e define registradores; a lógica fica em `lib/inicializacao`, sem Arduino | Suíte `test_boot` (24 casos) e suíte completa com 304 aprovados |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/hal/src/IBarramentoI2c.h` | Interface nova: `responde(endereco)` e `lerRegistrador(...)` |
+| `lib/simulacao/src/BarramentoI2cSimulado.h` | Barramento falso para os testes |
+| `lib/inicializacao/src/ConfiguracaoBoot.h` | Prazo de 2 s, `WHO_AM_I` esperado (provisório), faixa varrida e limite de inesperados |
+| `lib/inicializacao/src/AutotesteBoot.h/.cpp` | Varredura, estado de cada dispositivo, aprovação e texto das falhas |
+| `lib/inicializacao/src/RelatorioBoot.h/.cpp` | Linha JSON do boot |
+| `lib/atuacao/src/MotoresComTrava.h` | `IMotores` que mantém o robô freado até `liberar()` |
+| `lib/drivers_esp32/src/BarramentoI2cEsp32.h/.cpp` | Varredura e leitura de registrador pelo `Wire` |
+| `lib/comunicacao/src/TelemetriaJson.h/.cpp` | Campos `boot_ok`, `boot_falhas` e `boot_ms`; buffer de 512 para 768 bytes |
+| `src/main.cpp` | Sequência de boot, trava nos motores (o detector do objetivo freia pela trava) e comando `B` |
+| `test/test_boot/test_boot.cpp`, `test/test_telemetria_json/test_telemetria_json.cpp` | Suíte nova com 24 casos e 1 caso novo de telemetria |
+
+#### Testes unitários (ambiente native)
+
+```bash
+pio test -e native -f test_boot -f test_telemetria_json
+```
+
+| Suíte | Casos | Resultado |
+| :--- | :--- | :--- |
+| `test_boot` | 24 | **24 aprovados** |
+| `test_telemetria_json` | 7 | **7 aprovados** |
+
+Os casos estão descritos na tabela de testes da [documentação do firmware](../04-projeto-conceitual/firmware.md#testes).
+
+#### Saída da execução
+
+```text
+test/test_boot/test_boot.cpp:409:test_os_quatro_presentes_aprovam_o_boot:PASS
+test/test_boot/test_boot.cpp:410:test_a_varredura_cobre_0x08_a_0x77:PASS
+test/test_boot/test_boot.cpp:411:test_cada_dispositivo_ausente_reprova_e_e_nomeado:PASS
+test/test_boot/test_boot.cpp:412:test_tof_que_responde_mas_nao_iniciou_reprova:PASS
+test/test_boot/test_boot.cpp:413:test_tof_iniciado_pelo_driver_mas_sem_resposta_fica_ausente:PASS
+test/test_boot/test_boot.cpp:414:test_todos_ausentes_listam_todas_as_falhas_em_ordem:PASS
+test/test_boot/test_boot.cpp:415:test_outro_chip_no_0x68_nao_passa_por_mpu6050:PASS
+test/test_boot/test_boot.cpp:416:test_who_am_i_que_nao_le_reprova:PASS
+test/test_boot/test_boot.cpp:417:test_who_am_i_aceito_vem_da_configuracao:PASS
+test/test_boot/test_boot.cpp:418:test_tof_no_endereco_de_fabrica_reprova:PASS
+test/test_boot/test_boot.cpp:419:test_endereco_inesperado_so_avisa:PASS
+test/test_boot/test_boot.cpp:420:test_inesperados_alem_da_capacidade_so_entram_na_contagem:PASS
+test/test_boot/test_boot.cpp:421:test_enderecos_fora_da_faixa_varrida_sao_ignorados:PASS
+test/test_boot/test_boot.cpp:422:test_pior_caso_das_falhas_cabe_em_tamanho_max_falhas_boot:PASS
+test/test_boot/test_boot.cpp:423:test_falhas_que_nao_cabem_devolvem_texto_vazio:PASS
+test/test_boot/test_boot.cpp:424:test_nomes_dos_estados:PASS
+test/test_boot/test_boot.cpp:425:test_prazo_de_2_s_do_rnf_09:PASS
+test/test_boot/test_boot.cpp:426:test_relatorio_do_boot_aprovado:PASS
+test/test_boot/test_boot.cpp:427:test_relatorio_do_boot_com_falhas_e_atrasado:PASS
+test/test_boot/test_boot.cpp:428:test_pior_caso_do_relatorio_cabe_e_buffer_pequeno_devolve_zero:PASS
+test/test_boot/test_boot.cpp:429:test_trava_comeca_travada_e_freia_em_vez_de_andar:PASS
+test/test_boot/test_boot.cpp:430:test_trava_liberada_repassa_a_potencia:PASS
+test/test_boot/test_boot.cpp:431:test_travar_freia_na_hora_e_parar_sempre_passa:PASS
+test/test_boot/test_boot.cpp:432:test_sequencia_do_boot_so_libera_os_motores_com_tudo_presente:PASS
+24 Tests 0 Failures 0 Ignored
+test/test_telemetria_json/test_telemetria_json.cpp:189:test_serializa_resultado_do_boot:PASS
+test/test_telemetria_json/test_telemetria_json.cpp:190:test_pior_caso_cabe_em_tamanho_max_json_telemetria:PASS
+7 Tests 0 Failures 0 Ignored
+```
+
+#### Verificação de detecção de falhas (teste negativo)
+
+Para confirmar que os testes pegam uma regra errada, a suíte foi compilada contra uma cópia do código, sem alterar o repositório, com três defeitos: `aprovado()` ignorando o 0x29, o MPU6050 aceito com qualquer `WHO_AM_I` e a `MotoresComTrava` repassando a potência mesmo travada. Resultado: **5 de 24 casos falharam**: `test_outro_chip_no_0x68_nao_passa_por_mpu6050`, `test_tof_no_endereco_de_fabrica_reprova`, `test_trava_comeca_travada_e_freia_em_vez_de_andar`, `test_travar_freia_na_hora_e_parar_sempre_passa` e `test_sequencia_do_boot_so_libera_os_motores_com_tudo_presente`.
+
+#### Suíte completa com cobertura (o mesmo comando do CI)
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa | **304 aprovados, 0 falhas** (eram 279) |
+| Cobertura das linhas de `lib/` | **97%** (1211 de 1246), acima da meta de 80% |
+| Cobertura de `AutotesteBoot.cpp`, `RelatorioBoot.cpp` e `MotoresComTrava.h` | 100% (88, 29 e 13 linhas) |
+
+O `BarramentoI2cEsp32` fica em `drivers_esp32`, que não compila no `native`; por isso a regra do boot está no `AutotesteBoot`, que recebe só a interface.
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+pio run -e bancada_tof
+```
+
+| Ambiente | Compilação | RAM | Flash |
+|---|---|---|---|
+| `esp32c3` (robô) | **Sucesso**, sem avisos nos arquivos novos | 4,7% (15.268 de 327.680 bytes) | 22,1% (290.156 de 1.310.720 bytes) |
+| `bancada_tof` | **Sucesso** | 4,4% (14.388 de 327.680 bytes) | 21,4% (279.872 de 1.310.720 bytes) |
+
+#### Pendências desta etapa
+
+- **Tempo de boot no hardware:** gravar o firmware, reiniciar e anotar o `boot_ms` (comando `B` no `pio device monitor`), e medir com cronômetro ou osciloscópio o tempo desde o ligar, que inclui a ROM e o bootloader. Registrar aqui as duas medidas contra os 2 s do RNF-09.
+- **Falha real de cada dispositivo:** com a placa desligada, desconectar um ToF e depois o MPU6050, e conferir que o relatório nomeia o dispositivo e que os motores não andam.
+- **Valores provisórios:** conferir o `WHO_AM_I` do módulo montado (`mpu6050_who_am_i` no relatório) e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (endereço 0x68).
+- **Calibração do giroscópio:** a configuração do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) calibra com 200 amostras de 10 ms (2 s), o que sozinho estoura os 2 s do RNF-09 e o 1 s do RNF-08. A decisão fica com a [#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240) e a [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378).
+
+#### Atualização com o #391 revisado e ajustes de integração (24/10/2026)
+
+O branch `feat/50-boot-autoteste` recebeu o driver dos VL53L0X já revisado no PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391) (merge `93392c3`): interface renomeada para `ISensorDistancia`, medida fora da faixa limitada à faixa, `TofSimulado` e a bancada no CI. O autoteste do boot não muda com isso, porque usa só o `sensorIniciado()` de cada ToF, não a leitura.
+
+No mesmo branch, o commit `b605db7` fez os ajustes de integração com as [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341), [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) e [#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380), sem mudar a regra do boot:
+
+| Ajuste | O que mudou |
+| :--- | :--- |
+| Camadas dos motores com nome próprio | A trava passou a se chamar `motoresComTrava`; `motoresTracao` virou uma referência (`IMotores&`) à camada de fora, a única que a navegação aciona |
+| Ordem dos decoradores | Registrada no `main.cpp` e no README: `MotoresComTrava` → `MotoresComProtecao` → `MotoresComEstimativa` → `MotoresDrv8833` |
+| Freio na primeira linha | `motores.iniciar()` voltou a ser a primeira linha do `setup()`, antes do `Serial.begin` |
+| I²C com a IMU | Comentário no `setup()`: o `barramentoI2c.iniciar()` do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) toma o lugar do `Wire.begin`; o autoteste roda antes dos `xTaskCreate` |
+
+| Verificação | Resultado |
+|---|---|
+| `pio test -e native` | **328 aprovados, 0 falhas** (eram 304); `test_boot` com os mesmos 24 casos |
+| `pio run -e esp32c3` | **Sucesso**; RAM 4,7% (15.268 de 327.680 bytes), Flash 22,1% (290.212 de 1.310.720 bytes) |
+| `pio run -e bancada_tof` | **Sucesso**; RAM 4,4% (14.388 de 327.680 bytes), Flash 21,4% (280.010 de 1.310.720 bytes) |
+
+A pendência da bancada continua: medir na placa o tempo desde o ligar, que o `boot_ms` não conta (critério "tempo de boot medido e registrado" da #50).
+
+### Sprint 5 · Percepção para ToF: limiares, filtro e geometria dos sensores
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#379 Percepção para ToF: limiares, filtro e geometria dos sensores](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) |
+| História de usuário | HU-02 · Percepção e classificação parede/livre ([#43](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/43)) |
+| Código testado | `src/firmware/lib/percepcao` (branch `feat/379-percepcao-tof`) |
+| Data da execução | 23/10/2026 |
+| Executado por | Rafael Sant'Ana |
+| Documentação do código | [Percepção: classificação de paredes](../04-projeto-conceitual/firmware.md#percepcao-classificacao-de-paredes) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04 LTS, x86_64), PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1, `gcovr` 8.6 e GCC 13.x.
+
+#### Testes unitários e de integração da percepção
+
+```bash
+pio test -e native -f test_percepcao
+```
+
+| Caso de teste | O que verifica | Resultado |
+|---|---|:-:|
+| `test_classificador_parede_proxima` | Amostras próximas (< 140/180 mm) são classificadas como `Parede` nas 3 direções | Aprovado |
+| `test_classificador_passagem_livre` | Amostras distantes (> 140/180 mm) são classificadas como `Livre` nas 3 direções | Aprovado |
+| `test_classificador_valor_no_limiar` | Valida condição de borda estrita ($\le \text{limiar}$ é `Parede`, $> \text{limiar}$ é `Livre`) | Aprovado |
+| `test_classificador_limiar_configuravel` | Alteração e consulta dinâmica do limiar de detecção em tempo de execução | Aprovado |
+| `test_classificador_leituras_com_ruido` | Atenuação e descarte de ruído pontual em lote de 5 amostras | Aprovado |
+| `test_classificador_vetor_vazio` | Fail-safe: vetor nulo ou vazio retorna `Desconhecido` nas 3 direções | Aprovado |
+| `test_classificador_limiares_independentes_por_lado` | Configuração e aplicação de limiares distintos para frente, esquerda e direita | Aprovado |
+| `test_classificador_tratamento_abaixo_do_minimo` | Detecção explícita e saturação defensiva de leituras < 30 mm para o piso de 30 mm (`Parede`) | Aprovado |
+| `test_classificador_tratamento_fora_de_alcance` | Detecção explícita e saturação defensiva de leituras > 1200 mm ou código 8190 mm para o teto de 1200 mm (`Livre`) | Aprovado |
+| `test_classificador_filtro_mediana_rejeita_outliers` | Rejeição estrita de spikes de 8190 mm diante de parede e quedas espúrias para 0 mm em corredor livre | Aprovado |
+| `test_classificador_filtro_media_aritmetica` | Funcionamento do filtro alternativo por média aritmética parametrizável | Aprovado |
+| `test_classificador_labirinto_simulado_4x4_com_ruido` | Varredura de 100% das células do labirinto 4×4 com injeção de ruído e leituras espúrias | Aprovado |
+| `test_classificador_labirinto_simulado_8x4_com_ruido` | Varredura de 100% das células do labirinto 8×4 com injeção de ruído e leituras espúrias | Aprovado |
+| `test_classificador_labirinto_simulado_12x4_com_ruido` | Varredura de 100% das células do labirinto 12×4 com injeção de ruído e leituras espúrias | Aprovado |
+
+```text
+native         test_percepcao  PASSED    00:00:00.784
+================= 14 test cases: 14 succeeded in 00:00:00.784 =================
+```
+
+#### Suíte completa com cobertura e build da placa
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --txt --fail-under-line 80
+pio run -e esp32c3
+```
+
+| Verificação | Resultado |
+|---|---|
+| Todos os testes do firmware | **270 de 270 aprovados** |
+| Cobertura das linhas de `lib/` | **96%** (1087 de 1123); `ClassificadorParede.cpp` com **97%** |
+| Compilação para o ESP32-C3 | **Sucesso** (Flash: 20.1%, RAM: 4.5%) |
+
+#### Pendências desta etapa
+
+- Validação física dos offsets reais dos sensores e limiares calibrados na bancada de ensaios com o chassi montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
+
+### Sprint 5 · Testes do frontend (Vitest e Testing Library) e CI
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#394 Testes do frontend (Vitest e Testing Library) e CI do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394) |
+| Histórias de usuário | HU-14 · Supervisionar corrida pelo dashboard ([#48](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/48)), HU-10 · Histórico de corridas ([#44](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/44)), RNF-03 |
+| Código testado | `src/frontend` (branch `feat/394-testes-frontend`) |
+| Data da execução | 23/10/2026 |
+| Executado por | Rafael Lima e Eduardo Viana |
+| Documentação do código | [Software: testes do frontend e cliente simulado](../04-projeto-conceitual/software.md#infraestrutura-de-testes-automatizados-e-cliente-supabase-simulado-394) e [README do frontend](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/tree/main/src/frontend#testes) |
+
+**Ambiente de execução**
+
+| Componente | Versão |
+|---|---|
+| Node.js e npm | Node.js v22+ (LTS), npm 11+ |
+| Framework de testes | Vitest 5.0.5 |
+| Bibliotecas de teste | `@testing-library/react` 16.3.3, `@testing-library/jest-dom` 7.0.1, `@testing-library/user-event` 14.6.8 |
+| Ambiente de emulação DOM | `jsdom` 29.1.1 |
+| Provedor de cobertura | `@vitest/coverage-v8` 5.0.5 |
+| Ferramentas de build | Vite 6.4.4 e TypeScript 5.6.3 (`tsc --noEmit`) |
+| Sistema operacional | Linux (Ubuntu 24.04 LTS) |
+
+#### Critérios de pronto da #394
+
+- [x] Vitest e Testing Library configurados em `src/frontend` (`npm test`).
+- [x] Cliente Supabase simulado reutilizável, com consulta de `corridas` e canal Realtime.
+- [x] Testes unitários de `formatacao`, `labirinto` e do hook `useReproducaoCorrida`.
+- [x] Um teste de integração: a tela de histórico renderiza as corridas do cliente simulado.
+- [x] Workflow `.github/workflows/ci-frontend.yml` (check "Testes do frontend": `npm ci`, `npm test` com cobertura e `npm run build`), sem filtro de caminhos.
+- [x] README do frontend com a seção "Testes".
+
+#### Cliente Supabase simulado em memória (`src/test/supabaseSimulado.ts`)
+
+Para garantir que os testes rodem em milissegundos, de forma determinística, sem depender de internet nem expor ou consumir recursos do banco de produção do Supabase, foi construído um cliente simulado reutilizável (`criarClienteSupabaseSimulado`). 
+
+O cliente oferece:
+1. **Padrão Query Builder compatível com `supabase-js`:** permite chamadas encadeadas como `.from('corridas').select('*').order('data_hora_inicio', { ascending: false }).eq(...).limit(...)`. O objeto retornado implementa a interface `PromiseLike`, resolvendo via `await` para `{ data, error }`.
+2. **Canais Realtime:** implementação completa de `.channel(nome).on('postgres_changes', filtro, callback).subscribe()`, permitindo aos testes emitir eventos assíncronos (`cliente.emitirRealtime('telemetria', 'INSERT', leitura)` ou via `.insert()`) e acionar reativamente os hooks do dashboard.
+3. **Controle de testes:** métodos `definirTabela()`, `definirErro()`, `obterDados()` e `limpar()`, facilitando a simulação de falhas de rede e cenários anômalos.
+
+A própria infraestrutura do cliente simulado foi validada com 6 testes unitários em `src/test/supabaseSimulado.test.ts`.
+
+#### Casos de teste e execução da suíte (`npm test`)
+
+Comando executado em `src/frontend`:
+
+```bash
+npm test
+```
+
+| Suíte / Arquivo | Casos | O que verifica | Resultado |
+|---|:---:|---|:---:|
+| `supabaseSimulado.test.ts` | 6 | Consulta e ordenação decrescente de corridas; filtros `eq`, `neq` e `limit`; injeção de dados e simulação de erros de banco; canais Realtime e notificação de eventos; inserção reativa com emissão automática; desinscrição e remoção de canais | **Aprovado (6/6)** |
+| `formatacao.test.ts` | 15 | Constantes de negócio (`LIMITE_TEMPO_S`, `TENSAO_CHEIA_V`, etc.); nomes de labirinto no cabeçalho e histórico (`nomeLabirinto`, `nomeLabirintoHistorico`); formatação de cronômetro `mm:ss.mmm` com valores zero e negativos; formatação inteira `m:ss`; formatação de velocidade em `m/s`; cálculo linear de carga da LiPo 2S entre 6.6V e 8.4V com saturação; notas de 1ª (10), 2ª (7.5) e 3ª (5) tentativa; ordinais femininos; formatação de datas pt-BR; rótulos completos de tentativas | **Aprovado (15/15)** |
+| `labirinto.test.ts` | 9 | Deslocamentos cardeais (`DESLOCAMENTO`); parsing de matrizes ASCII (`lerLabirintoAscii`) com cantos, paredes horizontais e verticais; detecção de dimensões inválidas com lançamento de erro; leitura pontual de paredes (`parede`); busca de células (`buscarCelula`); orientação do passo (`orientacaoDoPasso`); algoritmo de exploração até o objetivo; algoritmo de retorno de becos sem saída; mapa de células conhecidas (`mapaConhecido`) com preservação de paredes exploradas e `null` nas demais | **Aprovado (9/9)** |
+| `useReproducaoCorrida.test.ts` | 6 | Estado inicial `aguardando` com tempo 0 e sem telemetria exposta; transição para `em_execucao` via `iniciar()`; avanço temporal acelerado (4×) e entrega gradual de leituras com fake timers; transição para `concluido` ao atingir `objetivo_alcancado`; transição para `nao_concluido` ao estourar o limite de 600 s (10:00); restauração completa via `reiniciar()` | **Aprovado (6/6)** |
+| `TelaHistorico.test.tsx` (Integração) | 4 | **Renderização inicial:** exibição da mensagem de carregamento e posterior renderização das corridas mockadas do Supabase nas 7 colunas com cálculo de carga e notas; **Filtro interativo:** filtragem por labirinto 4×4 e retorno a todos os labirintos; **Atualização sob demanda:** clique no botão "Atualizar" reflete novas corridas inseridas no cliente simulado; **Tratamento de erro:** exibição do alerta acessível com `role="alert"` e botão "Tentar novamente" em caso de falha de conexão simulada | **Aprovado (4/4)** |
+| **Total consolidado** | **40** | **Todas as suítes unitárias, de integração e de simulação** | **40 aprovados, 0 falhas** |
+
+Saída da execução do Vitest:
+
+```text
+ RUN  v5.0.5 src/frontend
+
+ ✓ src/lib/labirinto.test.ts (9 tests) 10ms
+ ✓ src/lib/formatacao.test.ts (15 tests) 6ms
+ ✓ src/hooks/useReproducaoCorrida.test.ts (6 tests) 26ms
+ ✓ src/test/supabaseSimulado.test.ts (6 tests) 59ms
+ ✓ src/paginas/TelaHistorico.test.tsx (4 tests) 192ms
+
+ Test Files  5 passed (5)
+      Tests  40 passed (40)
+   Start at  17:47:03
+   Duration  1.29s (environment 75%, setup 12%, tests 6%, transform 4%, import 2%, worker 1%)
+```
+
+#### Suíte com cobertura de código (`npm run test:cobertura`)
+
+Comando executado:
+
+```bash
+npm run test:cobertura
+```
+
+O relatório gerado pelo motor V8 confirmou **100% de cobertura** nos módulos utilitários e no hook testados, superando com folga a meta de 80%:
+
+```text
+ % Coverage report from v8
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+-------------------|---------|----------|---------|---------|-------------------
+ src/hooks         |         |          |         |         |                   
+  ...caoCorrida.ts |     100 |      100 |     100 |     100 |                   
+ src/lib           |         |          |         |         |                   
+  formatacao.ts    |     100 |      100 |     100 |     100 |                   
+  labirinto.ts     |     100 |      100 |     100 |     100 |                   
+ src/paginas       |         |          |         |         |                   
+  ...Historico.tsx |    92.3 |      100 |   85.71 |    90.9 | 57                
+ src/componentes   |         |          |         |         |                   
+  ...Historico.tsx |     100 |    46.15 |     100 |     100 | 45-65             
+  BadgeDesafio.tsx |     100 |       50 |     100 |     100 | 29-33             
+  ...Labirinto.tsx |     100 |      100 |     100 |     100 |                   
+-------------------|---------|----------|---------|---------|-------------------
+```
+
+#### Verificação de tipagem e build (`npm run build`)
+
+A checagem de tipos estáticos com TypeScript (`tsc --noEmit`) e a compilação do bundle de produção do Vite foram executadas com sucesso, confirmando que os arquivos de teste respeitam as regras estritas de tipagem (`noUnusedLocals`, `strict: true`):
+
+```text
+> micromouse-dashboard@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v6.4.4 building for production...
+✓ 717 modules transformed.
+dist/index.html                              0.60 kB │ gzip:   0.37 kB
+dist/assets/index-BkxvmZS-.css               8.65 kB │ gzip:   2.36 kB
+dist/assets/index-Cuq3WBMg.js              163.12 kB │ gzip:  53.09 kB
+dist/assets/GraficoVelocidade-CnwW5whP.js  395.18 kB │ gzip: 108.76 kB
+✓ built in 2.91s
+```
+
+#### Workflow de Integração Contínua (`.github/workflows/ci-frontend.yml`)
+
+Foi configurado o workflow do GitHub Actions com as seguintes características:
+- **Gatilhos:** disparado em todo `pull_request` e `push` direcionados à branch `main`, além de acionamento manual (`workflow_dispatch`).
+- **Sem filtro de caminhos:** atende à política de proteção de branch do repositório, garantindo que o check obrigatório `"Testes do frontend"` sempre reporte status em qualquer PR.
+- **Passos automatizados:**
+  1. `actions/checkout@v4` e `actions/setup-node@v4` com cache de dependências do npm baseado no `package-lock.json`.
+  2. `npm ci` para instalação reprodutível e limpa.
+  3. `npm run test:cobertura` com exportação do resumo de execução e tabela de cobertura para o `$GITHUB_STEP_SUMMARY`.
+  4. `npm run build` para garantir a integridade dos tipos e do empacotamento final.
+
+#### Pendências e próximas etapas
+
+A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários e de integração das seguintes tarefas do dashboard:
+- [#231 Dashboard ao vivo com Supabase Realtime](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/231): utilizará o canal Realtime do cliente simulado para validar a recepção de telemetria.
+- [#234 Filtro de histórico](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234): expandirá os testes de filtros e paginação da tela de histórico.
+- [#239 Exibição de mapa e percurso](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239): utilizará os testes de parsing e células de `labirinto.ts` integrados à grade visual.
+- [#242 Estado "Aguardando Largada"](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242): utilizará o hook `useReproducaoCorrida` e os estados do painel.
+
+### Sprint 5 · Filtro do histórico por labirinto
+
+!!! warning "Testes em simulação"
+    Os testes automatizados deste registro rodaram **no computador**, com o Supabase simulado em memória (`src/test/supabaseSimulado.ts`, do [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) no lugar do banco real. As corridas usadas foram **inventadas pelos testes**, só com o formato real da tabela `corridas`.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#234 Filtro do histórico por tipo de labirinto](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234) |
+| História de usuário | HU-15 · Gestão de corridas, RF15 |
+| Código testado | `src/frontend` (branch `feat/234-filtro-historico`, commit `76dd7ea`) |
+| Data da execução | 24/10/2026 |
+| Executado por | Ana Carolina Fialho |
+| Tipo de teste | Unitário e de integração, no computador, com dados simulados |
+| Documentação do código | [Software: filtro do histórico por labirinto na consulta ao banco](../04-projeto-conceitual/software.md#filtro-do-historico-por-labirinto-na-consulta-ao-banco-hu-15) |
+
+**Ambiente de execução:** macOS (Apple Silicon), Node.js 22.22.3, Vitest 5.0.5, Testing Library, jsdom, Vite 6 e TypeScript 5.
+
+#### Critérios da issue e testes
+
+| Critério da #234 | Testes | Situação |
+|---|---|:-:|
+| Cada opção mostra só as corridas daquele labirinto; "Todos" mostra tudo | Integração da tela: cada opção consulta o banco com o `labirinto_id` certo e a tabela mostra só as corridas dele; "Todos" consulta sem filtro e mostra todas. Integração do hook: as 3 opções, "Todos", troca de filtro, resposta atrasada, erro e modo sem Supabase | Aprovado |
+| Consulta ao banco com o filtro escolhido | O auxiliar `src/test/registroConsultas.ts` registra cada consulta feita ao Supabase simulado e os testes conferem o `eq('labirinto_id', id)` enviado | Aprovado |
+| Layout igual aos Frames 04_History_View_M1 a M3 | Unitário do `FiltroLabirinto`: as 4 opções na ordem dos Frames e só a escolhida marcada como ativa. A comparação visual com o protótipo é feita pelas capturas anexadas ao PR | Aprovado no automatizado; comparação visual no PR |
+
+#### Testes unitários e de integração
+
+```bash
+cd src/frontend
+npm install
+npx vitest run src/componentes/FiltroLabirinto.test.tsx src/hooks/useCorridas.test.ts src/paginas/TelaHistorico.test.tsx
+```
+
+| Arquivo | Casos novos | Nível | O que verificam |
+|---|:-:|---|---|
+| `componentes/FiltroLabirinto.test.tsx` | 6 | Unitário | As 4 opções na ordem dos Frames; para cada valor, só a opção certa fica ativa (`aria-pressed` e classe); o clique avisa a opção escolhida |
+| `hooks/useCorridas.test.ts` | 8 | Integração | Sem filtro, consulta sem `labirinto_id` e traz tudo em ordem decrescente; com os labirintos 1, 2 e 3, o filtro vai na consulta e só voltam as corridas dele; trocar o filtro refaz a consulta; resposta atrasada do filtro anterior é ignorada; erro do banco; modo sem Supabase |
+| `paginas/TelaHistorico.test.tsx` | 3 | Integração | Cada opção do filtro consulta o banco com o labirinto escolhido e mostra só as corridas dele; com as corridas por props, o filtro funciona no navegador; "Atualizar" repete a consulta com o filtro escolhido |
+
+**Resultado:** 21 de 21 aprovados nos três arquivos (17 casos novos e os 4 que já existiam em `TelaHistorico.test.tsx`).
+
+```text
+✓ hooks/useCorridas.test.ts > sem filtro, consulta o banco sem labirinto_id e traz todas, da mais recente para a mais antiga
+✓ hooks/useCorridas.test.ts > com o labirinto 1, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > com o labirinto 2, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > com o labirinto 3, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > trocar o labirinto refaz a consulta com o filtro novo
+✓ hooks/useCorridas.test.ts > uma resposta atrasada do filtro anterior não sobrescreve a do filtro atual
+✓ hooks/useCorridas.test.ts > com erro no banco, avisa e não troca a lista
+✓ hooks/useCorridas.test.ts > sem Supabase configurado, filtra as corridas de exemplo
+✓ componentes/FiltroLabirinto.test.tsx > mostra as 4 opções na ordem dos Frames M1 a M3: Todos, 4×4, 8×4 e 12×4
+✓ componentes/FiltroLabirinto.test.tsx > com o valor todos, só a opção "Todos os Labirintos" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 4x4, só a opção "Labirinto 1 (4×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 8x4, só a opção "Labirinto 2 (8×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 12x4, só a opção "Labirinto 3 (12×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > avisa a opção clicada
+✓ paginas/TelaHistorico.test.tsx > renderiza as corridas retornadas pelo cliente Supabase simulado
+✓ paginas/TelaHistorico.test.tsx > permite filtrar as corridas pelo tipo de labirinto selecionado
+✓ paginas/TelaHistorico.test.tsx > cada opção do filtro consulta o banco com o labirinto escolhido e mostra só as corridas dele (#234)
+✓ paginas/TelaHistorico.test.tsx > com as corridas recebidas por props, o filtro funciona no navegador
+✓ paginas/TelaHistorico.test.tsx > o botão Atualizar repete a consulta com o filtro escolhido
+✓ paginas/TelaHistorico.test.tsx > atualiza os dados na tabela ao clicar no botão Atualizar
+✓ paginas/TelaHistorico.test.tsx > exibe mensagem de erro quando o cliente Supabase falha na consulta
+
+ Test Files  3 passed (3)
+      Tests  21 passed (21)
+```
+
+#### Cobertura, suíte completa e build
+
+```bash
+npm run test:cobertura
+npm run build
+```
+
+| Arquivo | Linhas | Desvios |
+|---|:-:|:-:|
+| `componentes/FiltroLabirinto.tsx` | 100% | 100% |
+| `hooks/useCorridas.ts` | 100% | 94% |
+| `paginas/TelaHistorico.tsx` | 92% | 96% |
+
+A linha sem cobertura em `TelaHistorico.tsx` é o botão "Tentar novamente" do alerta de erro, que já não tinha teste antes desta tarefa.
+
+Suíte completa do frontend: **57 de 57 aprovados** (eram 40). `npm run build` (`tsc --noEmit` e Vite): concluído sem erros.
+
+#### Prova de mutação
+
+Para conferir se os testes detectam erros, e não só passam, 13 alterações propositais foram feitas no código, uma de cada vez. Por exemplo: não mandar o filtro ao banco, mandar sempre o labirinto 1, aceitar a resposta atrasada, não refazer a consulta na troca de filtro, inverter a ordenação, marcar a opção ativa errada e tirar uma das opções do filtro.
+
+| Execução | Resultado |
+|---|---|
+| Primeira rodada | 12 de 13 alterações detectadas; "tirar o filtro no navegador" passou despercebida, porque o banco simulado já devolvia só as corridas certas |
+| Correção | Teste novo com as corridas recebidas por props, em que só o filtro no navegador atua |
+| Rodada final | **13 de 13 alterações detectadas** |
+
+#### Pendências desta etapa
+
+- Comparação visual com os Frames `04_History_View_M1` a `M3`: capturas da tela com cada filtro anexadas ao PR de código.
+- Índice em `corridas.labirinto_id` no banco (sugestão para o backend; sem efeito com poucas corridas).
+
+### Sprint 5 · Mapa e percurso do robô no dashboard
+
+!!! warning "Testes em simulação"
+    Os testes automatizados deste registro rodaram **no computador**, utilizando o Supabase simulado em memória (`src/test/supabaseSimulado.ts`, originado na tarefa [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) em substituição ao banco real. As linhas de `corridas`, `telemetria` e `mapa_celulas` foram **geradas pelos testes com o esquema real das tabelas**, simulando eventos de inserção e canais Realtime WebSocket.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#239 Mapa e percurso do robô no dashboard](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239) |
+| História de usuário | HU-06 · Visualizar o percurso do robô sobre o mapa ([#9](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/9)), RF06 |
+| Código testado | `src/frontend` (branch `feat/239-mapa-percurso-dashboard`, commit `d5f2b39`) |
+| Data da execução | 24/10/2026 |
+| Executado por | Rafael Lima |
+| Tipo de teste | Unitário e de integração, no computador, com dados simulados e canais Realtime |
+| Documentação do código | [Software: mapa, percurso e paredes do robô no dashboard em tempo real](../04-projeto-conceitual/software.md#mapa-percurso-e-paredes-do-robo-no-dashboard-em-tempo-real-hu-06) |
+
+**Ambiente de execução:** Linux (x86_64), Node.js 20+, Vitest 5.0.5, Testing Library (`@testing-library/react`), jsdom, Vite 6 e TypeScript 5.
+
+#### Critérios da issue e testes
+
+| Critério da #239 | Testes associados | Situação |
+|---|---|:-:|
+| Malha com as dimensões do labirinto da corrida, partida em verde e chegada em vermelho | Unitário em `GradeLabirinto.test.tsx` (viewBox proporcional para 4×4, 8×4 e 12×4; partida em verde suave em `(0, 0)`; chegada em vermelho suave no canto oposto). Integração em `TelaAoVivo.test.tsx` validando renderização conforme labirinto da corrida | Aprovado |
+| Marcador `Robot` e traçado `Robot Path` atualizados em tempo real | Unitário em `GradeLabirinto.test.tsx` (posicionamento do marcador e rotações cardeais N/L/S/O; polilinha `Robot Path` conectando as coordenadas). Integração em `TelaAoVivo.test.tsx` e `useTelemetriaAoVivo.test.ts` com recepção reativa de telemetria e paredes em `mapa_celulas` | Aprovado |
+| Traçado completo mantido ao final da corrida | Unitário em `GradeLabirinto.test.tsx` (todos os pontos da trajetória mantidos no término). Integração em `TelaAoVivo.test.tsx` e `painelAoVivo.test.ts` conferindo que ao concluir (`objetivo_alcancado`) o traçado e paredes não são resetados | Aprovado |
+
+#### Testes unitários e de integração
+
+```bash
+cd src/frontend
+npx vitest run src/componentes/GradeLabirinto.test.tsx src/lib/painelAoVivo.test.ts src/hooks/useTelemetriaAoVivo.test.ts src/paginas/TelaAoVivo.test.tsx
+```
+
+| Arquivo | Casos novos | Nível | O que verificam |
+|---|:-:|---|---|
+| `componentes/GradeLabirinto.test.tsx` | 10 | Unitário | Proporções e viewBox para 4×4, 8×4 e 12×4; posicionamento de partida `(0,0)` e chegada `(linhas-1, colunas-1)`; marcador `Robot` com translação e rotação em 0°, 90°, 180° e 270°; geração do traçado `Robot Path`; projeção de paredes conhecidas (`true`) e descarte de `null`/`false`; retenção do traçado completo |
+| `lib/painelAoVivo.test.ts` | 5 | Unitário (regras puras) | Adição de células descobertas ao estado do painel (`aplicarMapaCelula`); atualização idempotente de células pré-existentes sem duplicatas; descarte de células pertencentes a outra corrida; recepção de mapa final pós-término de corrida; aplicação de lote completo (`aplicarMapa`) |
+| `hooks/useTelemetriaAoVivo.test.ts` | 3 | Integração (hook) | Assinatura simultânea de três canais Realtime isolados (`telemetria`, `corridas` e `mapa`); carga inicial assíncrona de células existentes em `mapa_celulas`; recepção de eventos de inserção/atualização de paredes em tempo real |
+| `paginas/TelaAoVivo.test.tsx` | 2 | Integração (página) | Renderização integrada da malha com partida e chegada; atualização em tempo real do marcador e do traçado a cada leitura de telemetria; desenho de paredes mapeadas recebidas por Realtime; manutenção integral do percurso após encerramento da corrida |
+
+**Resultado:** 20 novos casos de teste implementados e aprovados, elevando a suíte do frontend de 99 para 119 testes:
+
+```text
+✓ src/componentes/GradeLabirinto.test.tsx (10 tests)
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 4x4
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 8x4
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 12x4
+  ✓ Malha com as dimensões do labirinto da corrida > posiciona a partida em (0, 0) no canto inferior esquerdo e a chegada em (linhas-1, colunas-1) no canto oposto
+  ✓ Marcador Robot > renderiza o marcador do robô na posição e orientação iniciais (0, 0, N)
+  ✓ Marcador Robot > atualiza a translação e a rotação conforme o robô se desloca e gira
+  ✓ Traçado Robot Path > não desenha traçado quando o percurso tem apenas a largada (1 ponto)
+  ✓ Traçado Robot Path > desenha e atualiza o traçado em tempo real conforme as posições avançam
+  ✓ Traçado Robot Path > mantém o traçado completo ao final da corrida
+  ✓ Paredes mapeadas > desenha linhas para paredes com valor true e ignora paredes false ou null
+✓ src/lib/painelAoVivo.test.ts (25 tests)
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > acrescenta células novas ao mapa do painel
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > atualiza célula já existente sem duplicar
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > ignora células de outra corrida
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > aceita células do mapa final após encerramento da corrida (HU-04)
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > aplicarMapa aplica um lote inteiro de células
+✓ src/hooks/useTelemetriaAoVivo.test.ts (18 tests)
+  ✓ assina telemetria, corridas e mapa em canais separados e aguarda quando não há corrida em andamento
+  ✓ ao abrir no meio da corrida, carrega também as células do mapa já mapeadas (#239)
+  ✓ recebe atualizações de células do mapa em tempo real via Realtime (#239)
+✓ src/paginas/TelaAoVivo.test.tsx (7 tests)
+  ✓ desenha a malha com largada verde e chegada vermelha, atualizando robô, percurso e paredes em tempo real (#239)
+  ✓ mantém o traçado completo e o mapa ao final da corrida (#239)
+```
+
+#### Cobertura, suíte completa e build
+
+```bash
+npm run test:cobertura
+npm run build
+```
+
+| Arquivo | Linhas | Desvios (*Branches*) | Funções |
+|---|:-:|:-:|:-:|
+| `componentes/GradeLabirinto.tsx` | 100% | 100% | 100% |
+| `paginas/TelaAoVivo.tsx` | 100% | 100% | 100% |
+| `lib/painelAoVivo.ts` | 100% | 93,5% | 100% |
+| `hooks/useTelemetriaAoVivo.ts` | 97,1% | 78,3% | 100% |
+
+Suíte completa do frontend: **119 de 119 testes aprovados** em 12 arquivos de teste (cobertura global de 94,1% de linhas e 88,0% de *branches*). Compilação estática (`tsc --noEmit`) e *bundle* do Vite (`npm run build`) concluídos com sucesso.
+
+#### Prova de mutação
+
+Para atestar que a suíte é sensível a defeitos e não apenas confirmatória, foram introduzidas 10 mutações manuais deliberadas no código da malha e do painel, uma por vez:
+
+| Mutação introduzida | Efeito esperado | Resultado |
+|---|---|:-:|
+| Inverter o cálculo do eixo $y$ no SVG (`MARGEM + linha * LADO`) | Origem $(0, 0)$ ficaria no canto superior esquerdo | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Não rotacionar o marcador do robô pelo ângulo da orientação | Ângulo de rotação permaneceria fixo em 0° | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Remover a checagem `if (c.parede_*)` ao montar os segmentos | Paredes `false` ou `null` desenhariam linhas pretas | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Resetar o traçado (`leituras: []`) na transição para `concluido` | O traçado desapareceria no encerramento da corrida | **Detectada** (`TelaAoVivo.test.tsx`) |
+| Não passar `aoVivo.mapa` para o painel em `App.tsx` | O mapa ao vivo permaneceria vazio no dashboard | **Detectada** (`TelaAoVivo.test.tsx`) |
+| Assinar `mapa_celulas` no mesmo canal Realtime de `telemetria` | Conflito de isolamento de canais | **Detectada** (`useTelemetriaAoVivo.test.ts`) |
+| Descartar células recebidas após a corrida estar encerrada | Mapa final (HU-04) seria ignorado | **Detectada** (`painelAoVivo.test.ts`) |
+| Não atualizar paredes de células já conhecidas | Atualizações de exploração seriam perdidas | **Detectada** (`painelAoVivo.test.ts`) |
+| Não aplicar o `offset` de margem de 3 px na partida e chegada | Posição dos retângulos ficaria colada na borda externa | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Renderizar `Robot Path` com apenas 1 ponto | SVG desenharia polilinha com ponto singular | **Detectada** (`GradeLabirinto.test.tsx`) |
+
+**Taxa de detecção da prova de mutação:** 10 de 10 mutações detectadas (100%).
+
+#### Pendências desta etapa
+
+- Validação em bancada integrada com o robô físico navegando no labirinto de testes (depende da conclusão da montagem mecânica e dos testes em pista).
 
 ---
 

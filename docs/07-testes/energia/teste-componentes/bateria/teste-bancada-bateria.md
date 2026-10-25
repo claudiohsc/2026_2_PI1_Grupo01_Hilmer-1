@@ -102,12 +102,9 @@ Pelo fato de a capacidade nominal não ser conhecida formalmente, adotou-se uma 
 
 Abaixo está o registro da bancada instrumental de ensaios montada, contendo os equipamentos de medição, o carregador balanceador e a bateria conectada para inspeção e carga:
 
-![Bancada instrumental de ensaio e inspeção das baterias](../../../../figs/bateria-bancada.jpeg){ width="800" }
+![Bancada instrumental de ensaio e inspeção das baterias](../../../../figs/bateria-bancada.jpeg)
 
 *Figura 1: Bancada de medição e teste contendo carregador balanceador iMAX B6 V3, fonte de bancada, multímetro e bateria LiPo 2S.*
-
-> [!NOTE]
-> O arquivo de evidência fotográfica deve estar localizado em `docs/figs/bateria-bancada.jpeg`.
 
 ---
 

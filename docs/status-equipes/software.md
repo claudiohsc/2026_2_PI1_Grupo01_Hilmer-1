@@ -42,6 +42,7 @@
 | [#373](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/373) | Documentação do algoritmo de resolução ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)) | Documentação |
 | [#392](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/392) | Documentação do driver dos VL53L0X ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) | Documentação |
 | [#401](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/401) | Documentação da robustez da navegação ([#357](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/357)) | Documentação |
+| — | Testes do frontend (Vitest e Testing Library) e CI ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) | Testes / CI |
 
 ## Em aberto, por prioridade para a ED1 (26/10)
 
@@ -49,7 +50,7 @@
 - **Sensores e movimento:** driver dos VL53L0X ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)), limiares para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), IMU ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)), deslocamento sem encoder ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)), motores N20 ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) e execução dos movimentos entre células ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)).
 - **Navegação:** correção do erro acumulado pelas paredes ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)) e detecção de colisão e recuperação sem perda do mapa ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)).
 - **Telemetria:** envio do ESP32 ao Supabase ([#236](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/236)), buffer e reenvio ([#238](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/238)), dashboard ao vivo ([#231](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/231)) e mapa e percurso no dashboard ([#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239)).
-- **Frontend:** testes com Vitest e Testing Library e CI do frontend ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)), que destrava as demais tarefas do dashboard.
+- **Frontend:** testes com Vitest e Testing Library e CI do frontend ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)), implementados na branch feat e documentados, destravando as demais tarefas do dashboard (#231, #234, #239 e #242).
 
 **Depois da ED1:** corrida completa ([#185](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/185)), latência ([#237](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/237)), filtro do histórico ([#234](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234)), teste ponta a ponta ([#232](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/232)), calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), falha de I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)), estado "Aguardando Largada" ([#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242)) e controle de rumo pelo giroscópio ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190), APT).
 
@@ -72,7 +73,7 @@ Veja a tabela completa em [Status das equipes](README.md#dependencias-entre-equi
 - A ED1 é em 26/10 e a percepção com os VL53L0X ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344), [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) e a IMU ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)) seguem abertas; os testes de software com o hardware real dependem delas e do hardware montado.
 - Não consta nos documentos nenhum teste do firmware com o hardware Rev 2.0 concluído; os testes registrados rodam no computador. A [#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381) prevê que, sem hardware a tempo, a validação em bancada passe para a ED2.
 - Até os encoders dos N20 serem integrados ao firmware, o deslocamento é estimado pelo comando dos motores e corrigido pelos ToF ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)); com os encoders já disponíveis, vale rever com a equipe o escopo da #380 e da detecção de motor travado (#341), que foram pensadas para o robô sem encoder.
-- O frontend ainda não tem testes automatizados nem CI ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)).
+- A infraestrutura de testes automatizados e o CI do frontend foram configurados com sucesso ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)), mitigando o risco de regressões no dashboard.
 
 ## Fontes
 
@@ -84,3 +85,4 @@ Veja a tabela completa em [Status das equipes](README.md#dependencias-entre-equi
 |:----------:|:--------:|---------------|---------------|-----------------|
 | 1.0 | 19/10/2026 | Criação da página e primeiro levantamento a partir das *issues*, dos PRs e dos documentos do projeto | Cláudio Henrique | Paulo Henrique |
 | 1.1 | 23/10/2026 | Atualização para a Rev 2.0 do hardware: entregas, PRs em revisão, prioridades da ED1 (#377 a #382 e #394), dependências e riscos | Ana Carolina Fialho | — |
+| 1.2 | 23/10/2026 | Atualiza status da infraestrutura de testes do frontend e CI (#394) | Rafael Lima | Eduardo Viana |

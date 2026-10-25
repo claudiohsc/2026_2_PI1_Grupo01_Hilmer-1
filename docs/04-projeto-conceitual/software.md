@@ -76,7 +76,7 @@ para consulta posterior no histórico (RF10), o que marca o nó final do fluxo.
 | Insumo | Origem | Resultado | Destino |
 |---|---|---|---|
 | Posicionamento do robô / início do desafio | Usuário | Próxima ação calculada | Micromouse |
-| Leituras do LiDAR e dos *encoders* | Hardware | Mapa do labirinto e localização atualizados | Micromouse |
+| Leituras dos sensores de distância (3 VL53L0X), da IMU e dos *encoders* | Hardware | Mapa do labirinto e localização atualizados | Micromouse |
 | Dados de telemetria (posição, velocidade, bateria) | Micromouse | Registro persistido da corrida | Sistema Web |
 | Dados persistidos da corrida | Sistema Web | Dashboard atualizado e histórico consultável | Usuário |
 
@@ -243,7 +243,7 @@ As HUs com interface gráfica (HU-06, HU-07, HU-08, HU-10, HU-14 e HU-15) estão
   * **Quero** que o micromouse identifique a presença de paredes à frente, à esquerda e à direita de cada célula,
   * **Para que** o algoritmo de navegação saiba quais passagens estão livres e o mapa seja construído corretamente.
 * **Critérios de Aceitação:**
-  1. Ao chegar ao centro de cada célula (18 × 18 cm), o robô deve classificar os lados frontal, esquerdo e direito como `parede` ou `livre` a partir das leituras do LiDAR ToF 360°.
+  1. Ao chegar ao centro de cada célula (18 × 18 cm), o robô deve classificar os lados frontal, esquerdo e direito como `parede` ou `livre` a partir das leituras dos 3 sensores de distância VL53L0X (Rev 2.0 do hardware; antes, LiDAR ToF 360°).
   2. A classificação deve ser feita com base em um limiar de distância definido em calibração, filtrando leituras espúrias (ex.: média de múltiplas amostras).
   3. Em teste de bancada com as configurações de parede conhecidas, a taxa de acerto da classificação deve ser de 100% nas células avaliadas.
 * **Protótipo da HU:** Não possui tela própria (*firmware*). As paredes identificadas são refletidas no `Maze Grid` do [Frame 02_Running](https://www.figma.com/design/90hJ4r7jT0yDMtCwJ0yzy9/Prot%C3%B3tipo-Telemetria-Web?node-id=13-211).
@@ -426,7 +426,7 @@ As HUs com interface gráfica (HU-06, HU-07, HU-08, HU-10, HU-14 e HU-15) estão
   * **Quero** que o micromouse execute automaticamente uma rotina de calibração dos sensores de distância e inerciais ao ser ligado,
   * **Para que** as leituras sejam confiáveis desde a primeira célula, sem ajustes manuais antes de cada tentativa.
 * **Critérios de Aceitação:**
-  1. Ao ser ligado na célula de partida, o robô deve calibrar o sensor de distância (LiDAR ToF), a IMU (*offset* do giroscópio com o robô parado) e zerar a contagem dos *encoders*.
+  1. Ao ser ligado na célula de partida, o robô deve calibrar os sensores de distância (3 VL53L0X), a IMU (*offset* do giroscópio com o robô parado) e zerar a contagem dos *encoders*.
   2. Cada execução da autocalibração deve ser concluída em até 1 s (RNF-08) e, quando a primeira execução for bem-sucedida, o sistema deve estar pronto para largada em até 2 s após ligado (RNF-09).
   3. Caso algum sensor não responda ou retorne valores fora da faixa esperada, a calibração deve ser considerada malsucedida e a rotina deve ser executada novamente; o robô não deve iniciar o deslocamento enquanto a calibração não for bem-sucedida, e cada falha deve ser reportada na telemetria.
   4. Concluída a calibração com sucesso, o estado do robô deve ser informado ao *dashboard* como `Aguardando Largada`.
@@ -584,8 +584,10 @@ receber, persistir e apresentar a telemetria em tempo real e o histórico de cor
 
 - Firmware: `WiFi.h` e `HTTPClient.h` para o envio de telemetria via HTTP, `ArduinoJson`
   para serialização dos pacotes, leitura dos *encoders* por interrupção de GPIO
-  (quadratura A/B), PWM nativo do ESP32-C3 para o DRV8833 (`GPIO4` a `GPIO7`), e leitura
-  do LiDAR TOF 360° por UART, no *baud rate* informado no manual do módulo comprado.
+  (quadratura A/B, `GPIO4` a `GPIO7`), PWM nativo do ESP32-C3 para o DRV8833 (`GPIO10`, `GPIO3`,
+  `GPIO20` e `GPIO21`) e leitura dos 3 VL53L0X e do MPU6050 por I²C (`GPIO9`/`GPIO8`, com XSHUT
+  dos VL53L0X em `GPIO0`, `GPIO1` e `GPIO2`), conforme a Rev 2.0 do hardware (21/10/2026). A
+  versão anterior previa um LiDAR ToF 360° por UART, que deixou de ser usado.
 - Sistema Web: SDK oficial **`supabase-js`** no frontend, usado tanto para consultas
   (histórico de corridas) quanto para assinar mudanças em tempo real via Realtime
   (substitui um servidor Socket.IO próprio); Supabase Edge Functions em TypeScript para
@@ -808,7 +810,7 @@ lê-lo no navegador.
 
 #### Visões 4+1
 
-1. **Lógica:** módulos do firmware (Navegação, Percepção via LiDAR e *encoders*,
+1. **Lógica:** módulos do firmware (Navegação, Percepção pelos sensores de distância, IMU e *encoders*,
    Comunicação) e do sistema web (Ingestão de Telemetria, Encerramento de Corrida,
    Dashboard, Histórico).
 2. **Processos:** no ESP32-C3, navegação e envio de telemetria rodam concorrentemente
@@ -938,6 +940,128 @@ o ciclo de vida da requisição e expõe os estados `{ corridas, carregando, err
 - **Tratamento de estado vazio:** caso o banco de dados ainda não possua registros de corridas,
   a interface exibe `"Nenhuma corrida registrada."`. Caso o usuário aplique um filtro que não
   tenha correspondências, a mensagem passa a ser `"Nenhuma corrida registrada para este filtro."`.
+
+#### Filtro do histórico por labirinto na consulta ao banco (HU-15)
+
+O controle segmentado do histórico (`FiltroLabirinto`: Todos, Labirinto 1 (4×4), Labirinto 2
+(8×4) e Labirinto 3 (12×4), Frames `04_History_View_M1` a `M3`) passou a **consultar o banco já
+filtrado** (tarefa [#234](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234), HU-15). Antes, o `useCorridas` buscava todas as
+corridas e a tela escondia no navegador as de outros labirintos.
+
+```mermaid
+sequenceDiagram
+    actor U as Usuário
+    participant F as FiltroLabirinto
+    participant T as TelaHistorico
+    participant H as useCorridas(labirintoId)
+    participant DB as Supabase · corridas
+    U->>F: clica em "Labirinto 2 (8×4)"
+    F->>T: aoMudar('8x4')
+    T->>T: '8x4' → labirintoId = 2 (tabela labirintos)
+    T->>H: useCorridas(2)
+    H->>DB: select * where labirinto_id = 2<br/>order by data_hora_inicio desc
+    DB-->>H: só as corridas do labirinto 2
+    H-->>T: corridas
+    T-->>U: tabela e contagem do filtro
+```
+
+**Figura.** Fluxo do filtro: a opção escolhida vira o `id` do labirinto, e o filtro vai na
+consulta ao banco. "Todos" consulta sem filtro.
+
+**Regras.**
+
+- **Consulta filtrada:** com um labirinto escolhido, o hook consulta
+  `corridas` com `.eq('labirinto_id', id)`; com "Todos", sem filtro. A ordenação continua da
+  mais recente para a mais antiga.
+- **Troca de filtro:** cada troca refaz a consulta, e o botão "Atualizar" repete a consulta
+  com o filtro atual.
+- **Resposta fora de ordem:** se a pessoa trocar o filtro depressa, só vale a resposta da
+  consulta mais recente. Uma resposta atrasada do filtro anterior é ignorada e não
+  sobrescreve a tabela.
+- **Sem Supabase configurado:** o filtro é aplicado às corridas de exemplo.
+- **Filtro no navegador:** continua só como garantia, para as corridas recebidas por props e
+  para um tipo de labirinto que não exista na tabela `labirintos` (nesse caso a tabela fica
+  vazia).
+
+**Interface.** `useCorridas(labirintoId: number | null = null)`: `null` traz todas as corridas;
+um `id` traz só as daquele labirinto. O retorno não mudou: `{ corridas, carregando, erro, recarregar }`.
+
+**Observação para o backend.** A coluna `corridas.labirinto_id` não tem índice nas migrações.
+Com poucas corridas por labirinto não faz diferença; se o histórico crescer, vale
+`CREATE INDEX ON corridas (labirinto_id);`.
+
+#### Mapa, percurso e paredes do robô no dashboard em tempo real (HU-06)
+
+A visualização do labirinto no dashboard web (`GradeLabirinto`, Frames `01_Idle`, `02_Running` e `03_Completed`) foi integrada ao fluxo de dados real provido pelo robô e pelo banco de dados Supabase (tarefa [#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239), HU-06). Na etapa inicial (#230), o componente operava apenas em modo simulado estático; com esta implementação, a malha vetorial responde dinamicamente às leituras de odometria (`telemetria`) e às células descobertas (`mapa_celulas`) via Supabase Realtime.
+
+```mermaid
+sequenceDiagram
+    participant MM as Robô (ESP32-C3)
+    participant EF as Edge Functions
+    participant DB as Supabase · PostgreSQL
+    participant RT as Supabase Realtime (WebSocket)
+    participant HOOK as useTelemetriaAoVivo
+    participant GL as GradeLabirinto (SVG)
+
+    MM->>EF: POST /telemetria (lote de odometria: linha, coluna, orientação)
+    EF->>DB: INSERT INTO telemetria
+    DB-->>RT: postgres_changes (INSERT telemetria)
+    RT-->>HOOK: payload.new (Telemetria)
+    HOOK->>GL: atualiza percurso (Robot Path) e robo (Robot marker)
+
+    MM->>EF: POST /corridas/mapa (células e paredes mapeadas)
+    EF->>DB: INSERT INTO mapa_celulas
+    DB-->>RT: postgres_changes (INSERT/UPDATE mapa_celulas)
+    RT-->>HOOK: payload.new (MapaCelula)
+    HOOK->>GL: desenha paredes mapeadas (parede_norte, sul, leste, oeste)
+```
+
+**Figura.** Fluxo de dados em tempo real: leituras periódicas de telemetria alimentam o traçado e o marcador do robô, enquanto as paredes descobertas são desenhadas na malha conforme chegam ao Realtime.
+
+**Regras e decisões técnicas:**
+
+- **Sistema de coordenadas SVG e dimensões da malha:**
+  - O sistema do firmware adota a célula $(0, 0)$ na largada (canto inferior esquerdo), com o eixo Norte aumentando a linha e o eixo Leste aumentando a coluna.
+  - Para conciliar com o sistema de coordenadas do SVG (cujo eixo $y$ cresce para baixo), a conversão é calculada por:
+    $$x(\text{coluna}) = \text{MARGEM} + \text{coluna} \times \text{LADO}$$
+    $$y(\text{linha}) = \text{MARGEM} + (\text{linhas} - 1 - \text{linha}) \times \text{LADO}$$
+    onde $\text{LADO} = 48$ unidades e $\text{MARGEM} = 6$ unidades de *viewBox*.
+  - A malha ajusta seu *viewBox* dinamicamente para as três dimensões oficiais da competição: $204 \times 204$ (`4x4`), $396 \times 204$ (`8x4`) e $588 \times 204$ (`12x4`).
+- **Partida e Chegada:**
+  - Partida (`grade__largada`): retângulo em verde suave (`--largada: #bbf7d0`) posicionado na célula $(0, 0)$.
+  - Chegada / Objetivo (`grade__objetivo`): retângulo em vermelho suave (`--objetivo: #fecdd3`, com borda tracejada `--objetivo-borda: #f43f5e`) posicionado na célula oposta $(linhas - 1, colunas - 1)$.
+- **Marcador `Robot`:**
+  - Indicador circular com vetor de proa estilizado em triângulo, centrado na célula atual ocupada pelo micromouse.
+  - Rotação angular em torno do centro da célula conforme a orientação cardinal informada pela telemetria: $N = 0^\circ$, $L = 90^\circ$, $S = 180^\circ$ e $O = 270^\circ$.
+- **Traçado `Robot Path`:**
+  - Vetor dinâmico em laranja vibrante (`--trajeto: #f97316`) desenhado como `<polyline>` SVG com junções e terminações arredondadas (`stroke-linejoin: round`, `stroke-linecap: round`).
+  - Conecta sequencialmente o ponto central de cada célula registrada no histórico de telemetria da corrida.
+- **Paredes Mapeadas (`mapa_celulas`):**
+  - Cada célula recebida com valor booleano `true` em `parede_norte`, `parede_sul`, `parede_leste` ou `parede_oeste` projeta um segmento de reta de espessura 3 px sobre a grade.
+  - Paredes não exploradas (`null`) ou livres (`false`) não geram traços internos, mantendo apenas as linhas tênues da malha de fundo e o perímetro externo fechado.
+  - No modo ao vivo, o mapa não oculta paredes por ausência de visita física (`mapaConhecido` atua exclusivamente no modo exemplo/simulado), respeitando leituras de sensores de alcance (LiDAR/ToF) que identificam paredes de células adjacentes.
+- **Persistência ao final da corrida:**
+  - Ao transitar para o estado `concluido` (detecção de objetivo alcançado) ou `nao_concluido` (tempo limite de 10:00 esgotado), o painel mantém intactas as listas de telemetria e o mapa de células, garantindo a exibição permanente do trajeto completo percorrido para análise de bancada.
+
+#### Infraestrutura de testes automatizados e cliente Supabase simulado (#394)
+
+Para garantir a confiabilidade do dashboard e permitir que as próximas tarefas (#231, #234, #239 e #242) implementem testes de unidade e integração sem depender de conexão com o banco de dados nem expor chaves de serviço, foi desenvolvida a infraestrutura de testes automatizados em `src/frontend` (tarefa [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)).
+
+**Tecnologias adotadas:**
+- **Vitest:** executor de testes nativo para projetos Vite com suporte direto a ESM e TypeScript sem etapa extra de compilação.
+- **Testing Library (`@testing-library/react` e `@testing-library/jest-dom`):** testes centrados no comportamento do usuário a partir da árvore de acessibilidade do DOM.
+- **JSDOM:** ambiente de emulação do DOM do navegador em Node.js.
+- **V8 Coverage (`@vitest/coverage-v8`):** mensuração de cobertura de código por linhas, funções, *branches* e *statements*.
+
+**Cliente Supabase simulado reutilizável (`src/test/supabaseSimulado.ts`).**
+Para isolar os testes de requisições de rede reais, foi criada a fábrica `criarClienteSupabaseSimulado`. O cliente provê:
+- **Padrão Query Builder:** suporta métodos encadeados como `.from('corridas').select('*').order('data_hora_inicio', { ascending: false }).eq(...).limit(...)`. Retorna um objeto que implementa `PromiseLike` (método `.then()`), comportando-se como uma *Promise* idêntica ao cliente real do `@supabase/supabase-js`.
+- **Canais Realtime:** suporte a `.channel(nome).on('postgres_changes', filtro, callback).subscribe()`, permitindo testar fluxos reativos em que novas telemetrias ou corridas chegam via WebSocket simulado.
+- **Disparo de eventos:** o método `cliente.emitirRealtime(tabela, evento, novoRegistro)` despacha payloads formatados aos ouvintes de forma assíncrona (`queueMicrotask`), reproduzindo o comportamento do Supabase Realtime nos testes de componentes e hooks.
+- **Injeção via mock:** no Vitest, os testes substituem o cliente real por `vi.mock('../lib/supabase', () => ({ supabase: clienteSimulado }))`, permitindo que os componentes executem seu ciclo de vida completo sem alterações no código de produção.
+
+**Integração Contínua (CI):**
+O workflow `.github/workflows/ci-frontend.yml` valida todo PR e *push* para a branch `main`, executando `npm ci`, a suíte de testes com cobertura (`npm run test:cobertura`) e a verificação estática de tipos e build (`npm run build`). O workflow opera sem filtro de caminhos, garantindo conformidade com a política de proteção de branch do repositório.
 
 > - **Roteiro de testes funcionais:**
 >   - Código do caso de teste;
@@ -1116,3 +1240,7 @@ Esta matriz relaciona os Requisitos Funcionais e Não-Funcionais definidos no pr
 | 1.0 | 18/10/2026 | Documenta a escrita de corridas mediada por Edge Function e a decisão sobre quem cria a corrida ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)) | Eduardo Viana | Cláudio Henrique |
 | 1.1 | 19/10/2026 | Documenta a implementação do frontend: estrutura, variáveis de ambiente, telas, componentes e dados de exemplo ([#230](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/230)) | Eduardo Viana | Ana Carolina Fialho |
 | 1.2 | 19/10/2026 | Documenta a consulta do histórico de corridas no Supabase: hook useCorridas, ordenação e estado vazio ([#235](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/235)) | Rafael Lima | Ana Carolina Fialho |
+| 1.3 | 23/10/2026 | Atualiza o contexto, os critérios da HU-02 e da HU-13 e a arquitetura para a Rev 2.0 do hardware: 3 VL53L0X e MPU6050 por I²C no lugar do LiDAR, e pinagem nova ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)) | Ana Carolina Fialho | — |
+| 1.4 | 23/10/2026 | Documenta a infraestrutura de testes do frontend (Vitest e Testing Library), o cliente Supabase simulado e o CI ([#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) | Rafael Lima | Eduardo Viana |
+| 1.5 | 24/10/2026 | Documenta o filtro do histórico por labirinto na consulta ao banco ([#234](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234)) | Ana Carolina Fialho | — |
+| 1.6 | 24/10/2026 | Documenta a renderização vetorial da malha, percurso e paredes em tempo real no dashboard ([#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239)) | Rafael Lima | Ana Carolina Fialho |
