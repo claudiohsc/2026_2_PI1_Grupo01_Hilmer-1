@@ -2703,7 +2703,7 @@ Esta etapa registra a estimativa, as correções pelo ToF e a ligação no `main
 | :--- | :--- | :--- |
 | Estimador testado no computador, com velocidade por duty em tabela de calibração (valores provisórios documentados) | `EstimadorDeslocamento` com a `TABELA_VELOCIDADE` (zona morta, interpolação, saturação e ré) em `ConfiguracaoDeslocamento.h`, cada valor com origem e forma de medir | `test_tabela_*`, `test_integra_velocidade_vezes_tempo_em_pulsos`, `test_parar_congela_a_contagem_e_re_diminui` |
 | Correção da posição pelo ToF frontal quando houver parede à frente e pelas aberturas laterais na fronteira de célula | `CorretorDeslocamentoTof`: parede da frente até 300 mm e quinas laterais com histerese, só no eixo de avanço, com limite de 70 mm por correção | `test_correcao_pela_frente_*`, `test_quina_lateral_corrige_na_fronteira_da_celula`, `test_histerese_impede_quina_inventada_pelo_ruido`, `test_com_tof_o_erro_fica_pequeno_ate_a_parede_da_frente` |
-| Troca para o encoder real sem alterar `Odometria` nem `ControleMovimento` | `EncoderEstimado` implementa `IEncoder` e `MotoresComEstimativa` implementa `IMotores`; a troca é `ENCODERS_INSTALADOS` no `main.cpp`. Nenhum arquivo de `lib/navegacao` nem de `lib/atuacao` mudou. O `ControleMovimento` não depende de `IEncoder` (só de `ILidar` e `IMotores`) | `test_odometria_avanca_uma_celula_com_encoders_estimados`, `test_odometria_gira_90_graus_com_rodas_opostas`; `git diff` sem `lib/navegacao` e `lib/atuacao` |
+| Troca para o encoder real sem alterar `Odometria` nem `ControleMovimento` | `EncoderEstimado` implementa `IEncoder` e `MotoresComEstimativa` implementa `IMotores`; a troca é `ENCODERS_INSTALADOS` no `main.cpp`. Nenhum arquivo de `lib/navegacao` nem de `lib/atuacao` mudou. O `ControleMovimento` não depende de `IEncoder` (só de `ISensorDistancia` e `IMotores`) | `test_odometria_avanca_uma_celula_com_encoders_estimados`, `test_odometria_gira_90_graus_com_rodas_opostas`; `git diff` sem `lib/navegacao` e `lib/atuacao` |
 | Limites desse modo documentados no README: mais deriva e sem velocidade medida | Seção "Deslocamento sem encoder" do README do firmware, com "Limites deste modo" e "Valores provisórios" | Revisão da documentação |
 | A telemetria continua informando `pose_valida` coerente com o modo estimado | `pose_valida = posicaoValida() && poseConfiavel()`: fica `false` depois de 360 mm sem correção; campos novos `deslocamento` e `sem_correcao_mm` | `test_sem_tof_a_deriva_cresce_e_a_pose_deixa_de_ser_confiavel`, `test_reiniciar_volta_a_pose_conhecida_e_confiavel` |
 
@@ -2822,9 +2822,12 @@ pio run -e esp32c3
 
 O menu `scripts/bancada_deslocamento.py` foi executado contra uma placa simulada (porta serial virtual que responde ao mesmo protocolo do `bancada_deslocamento.cpp`, com o robô "real" 10% mais lento que a tabela), para conferir todos os caminhos antes da bancada: as seis etapas, o log ao vivo com as correções, os CSVs de cada movimento, a tabela sugerida e o relatório. Essa execução não substitui o teste com o robô montado.
 
-#### Pendências desta etapa
+#### Próximos passos
 
-- **Calibrar na bancada**, com `./scripts/bancada_deslocamento.py`, os valores de `ConfiguracaoDeslocamento.h`: a `TABELA_VELOCIDADE` (potência → mm/s, depois da #341 definir a tensão e o duty máximo) e a posição dos sensores frontal e laterais.
-- **Acionar as rodas por `motoresTracao`:** quando o `ControleMovimento` entrar na tarefa de navegação ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)), ele precisa usar `motoresTracao`, para o estimador saber a potência. Até lá, ninguém comanda os motores e a estimativa fica parada.
-- **Limiares laterais:** trocar `LIMIAR_PAREDE_LATERAL_MM` pelo limiar da [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) quando ela for concluída.
-- **Erro na bancada:** percorrer 3 células e registrar o erro da célula estimada, junto com a [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188).
+- **Calibrar na bancada** os valores de `ConfiguracaoDeslocamento.h` com `./scripts/bancada_deslocamento.py` (etapas 1 a 6):
+  - a `TABELA_VELOCIDADE` (potência → mm/s). A [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) já definiu o limite de duty (`LIMITE_DUTY_MOTORES_MILESIMOS`, provisório em 70%): a tabela precisa ser medida com ele valendo e medida de novo se ele mudar;
+  - a posição dos sensores frontal e laterais.
+- **Conferir o limiar lateral das quinas** com o VL53L0X montado. A [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) já entrou e adotou 140 mm para classificar parede e livre na percepção. As quinas do deslocamento usam 120 mm (parede) e 160 mm (livre, com a histerese), na mesma faixa entre a parede imediata (~54 mm pela face) e uma abertura (234 mm ou mais). Se a bancada mostrar quinas perdidas ou inventadas, ajustar esses dois valores.
+- **Erro na bancada:** percorrer 3 células e registrar o erro da célula estimada, junto com a etapa 10 da bancada da [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188).
+
+Desde este registro, o ciclo da navegação da [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184) passou a acionar as rodas por `motoresTracao`, então a estimativa já acompanha os comandos no robô.

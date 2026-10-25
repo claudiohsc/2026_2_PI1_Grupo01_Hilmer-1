@@ -992,43 +992,55 @@ Os ganhos, as potências e as distâncias de desaceleração estão em `Configur
 
 ## Navegação: deslocamento sem encoder
 
-Na Rev 2.0 os encoders ainda não estão disponíveis, mas a `Odometria` precisa de contagens de roda. Enquanto eles não chegam, o deslocamento é **estimado pela potência comandada aos motores vezes o tempo** e **corrigido pelos ToF** sempre que uma parede dá uma referência de posição ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380), [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)). As peças ficam em `lib/deslocamento`, sem Arduino, e implementam as mesmas interfaces de `hal`: a `Odometria` e o `ControleMovimento` não mudaram, e a troca para o encoder real é uma constante.
+A `Odometria` precisa de contagens de roda. Enquanto os encoders não estiverem montados no robô (`ENCODERS_INSTALADOS = false` em `ConfiguracaoDeslocamento.h`), as contagens vêm de uma estimativa ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380), [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)):
+
+* o deslocamento é **estimado pela potência comandada aos motores vezes o tempo**;
+* a estimativa é **corrigida pelos ToF** sempre que uma parede dá uma referência de posição.
+
+As peças ficam em `lib/deslocamento`, sem Arduino, e implementam as mesmas interfaces de `hal`. Por isso a `Odometria` e o `ControleMovimento` não mudaram, e a troca para o encoder real é uma constante.
 
 ```mermaid
 flowchart LR
-    quem["Quem aciona as rodas<br/>(ControleMovimento, #184)"] --> mce["MotoresComEstimativa<br/>IMotores"]
+    quem["Quem aciona as rodas<br/>(CicloNavegacao, #184)"] --> mce["MotoresComEstimativa<br/>IMotores"]
     mce --> drv["MotoresDrv8833"]
     mce -- "potência" --> est["EstimadorDeslocamento<br/>tabela de velocidade × tempo"]
     est --> enc["EncoderEstimado<br/>IEncoder, um por roda"]
     enc --> odo["Odometria<br/>(sem mudança)"]
-    tof["ILidar<br/>leitura nova"] --> cor["CorretorDeslocamentoTof<br/>frente e quinas laterais"]
+    tof["ISensorDistancia<br/>leitura nova"] --> cor["CorretorDeslocamentoTof<br/>frente e quinas laterais"]
     odo --> cor
     cor -- "corrigirAvanco(Δ)" --> est
 ```
 
-**Figura 16.** Deslocamento sem encoder: os comandos dos motores passam pelo estimador, que gera as contagens lidas pela `Odometria`; as leituras do ToF corrigem a posição, somando pulsos iguais às duas rodas.
+**Figura 16.** Deslocamento sem encoder: os comandos dos motores passam pelo estimador, que gera as contagens lidas pela `Odometria`. As leituras dos sensores de distância (`ISensorDistancia`) corrigem a posição, somando pulsos iguais às duas rodas.
 
 ### Regras de Negócio e Algoritmo
 
-* **Velocidade por potência:** uma tabela de calibração dá a velocidade de cada roda, em mm/s, para a potência comandada. Abaixo do primeiro ponto, a roda fica parada (zona morta); entre pontos, a velocidade é interpolada; acima do último, vale a do último; a ré usa a mesma tabela com o sinal trocado.
+* **Velocidade por potência:** uma tabela de calibração dá a velocidade de cada roda, em mm/s, para a potência comandada.
+  * Abaixo do primeiro ponto, a roda fica parada (zona morta).
+  * Entre dois pontos, a velocidade é interpolada.
+  * Acima do último ponto, vale a velocidade do último.
+  * A ré usa a mesma tabela, com o sinal trocado.
 * **Integração:** a cada ciclo de 10 ms, cada roda avança a velocidade vezes o tempo. O acumulado sai em pulsos, na unidade da `ConfiguracaoOdometria` (251 µm). A roda para no instante do comando, sem inércia.
-* **Rodas e giro:** rodas em sentidos opostos geram diferença de pulsos, que a `Odometria` converte em giro (o rumo pelo giroscópio é a [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)).
+* **Rodas e giro:** rodas em sentidos opostos geram diferença de pulsos, que a `Odometria` converte em giro. O rumo pelo giroscópio é da [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190).
 * **Correção pela frente:** com o sensor frontal a até 300 mm de uma parede, a face da parede fica meia espessura (6 mm) antes de uma fronteira de célula. A fronteira mais próxima do que a leitura indica dá a posição real do centro do robô.
-* **Correção pelas quinas laterais:** quando um lado passa de parede para livre (ou o contrário) com o robô avançando, o sensor lateral está na quina de uma parede: 6 mm depois da fronteira de célula ao sair da parede, 6 mm antes ao entrar. Uma histerese (parede até 120 mm, livre a partir de 160 mm) evita quinas inventadas pelo ruído.
-* **Só o eixo de avanço:** as correções mudam quanto o robô andou, nunca o desvio lateral nem o rumo (esses são da [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188) e da [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)). A correção entra como pulsos iguais nas duas rodas, então a `Odometria` avança ou recua sem girar.
-* **Proteções:** correção acima de 70 mm é descartada (leitura errada); durante um giro no lugar, as leituras não servem de referência e o estado das laterais é esquecido.
-* **Confiança da pose:** se o robô andar mais de 360 mm (duas células) sem nenhuma correção, a pose deixa de ser confiável, e a telemetria passa a informar `pose_valida: false` até a próxima correção.
+* **Correção pelas quinas laterais:** quando um lado passa de parede para livre (ou o contrário) com o robô avançando, o sensor lateral está na quina de uma parede. A quina fica 6 mm depois da fronteira de célula ao sair da parede, e 6 mm antes ao entrar. Uma histerese (parede até 120 mm, livre a partir de 160 mm) evita quinas inventadas pelo ruído.
+* **Só o eixo de avanço:** as correções mudam quanto o robô andou, nunca o desvio lateral nem o rumo, que são da [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188) e da [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190). A correção entra como pulsos iguais nas duas rodas, então a `Odometria` avança ou recua sem girar.
+* **Proteções:**
+  * uma correção acima de 70 mm é descartada como leitura errada;
+  * durante um giro no lugar, as leituras não servem de referência, e o estado das laterais é esquecido.
+* **Confiança da pose:** se o robô andar mais de 360 mm (duas células) sem nenhuma correção, a pose deixa de ser confiável. A telemetria passa a informar `pose_valida: false` até a próxima correção.
 
-**Parâmetros:** todos provisórios, num único arquivo, `lib/deslocamento/src/ConfiguracaoDeslocamento.h`, em que cada valor diz o que faz, de onde veio e como medir na bancada.
+**Parâmetros:** todos provisórios, num único arquivo, `lib/deslocamento/src/ConfiguracaoDeslocamento.h`. Cada valor diz o que faz, de onde veio e como medir na bancada.
 
 | Parâmetro | Valor | Origem |
 |---|---|---|
-| `ENCODERS_INSTALADOS` | `false` | Rev 2.0 sem encoders; `true` volta aos `EncoderEsp32` (GPIO4 a 7) |
-| `TABELA_VELOCIDADE` | 150 → 45, 400 → 120, 700 → 210, 1000 → 300 (potência → mm/s) | Modelo da simulação da [#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191) (0,3 mm/s por unidade) e zona morta de 150; o N20 e a tensão do VM ainda não foram informados ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) |
+| `ENCODERS_INSTALADOS` | `false` | Sem encoders montados. Com `true`, a odometria volta aos `EncoderEsp32` (GPIO4 a 7) |
+| `TABELA_VELOCIDADE` | 150 → 45, 400 → 120, 700 → 210, 1000 → 300 (potência → mm/s) | Modelo da simulação da [#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191) (0,3 mm/s por unidade) e zona morta de 150. A medida na bancada precisa ter o limite de duty da [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) valendo (`LIMITE_DUTY_MOTORES_MILESIMOS`, provisório em 70%) |
 | `DISTANCIA_SENSOR_FRONTAL_AO_CENTRO_MM` | 50 | Meio comprimento do chassi |
 | `AVANCO_SENSORES_LATERAIS_MM` | 0 | Sensores laterais supostos alinhados ao centro |
+| `DISTANCIA_SENSOR_LATERAL_AO_CENTRO_MM` | 30 | Recuo lateral da percepção (`ConfiguracaoPercepcao.h`: 84 − 30 = 54 mm lidos com parede), usado no controle do avanço ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) e na correção lateral ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)) |
 | `DISTANCIA_FRONTAL_MAXIMA_PARA_CORRIGIR_MM` | 300 | Uma célula e meia |
-| `LIMIAR_PAREDE_LATERAL_MM` e `HISTERESE_PAREDE_LATERAL_MM` | 120 e 40 | Entre a parede (~24 mm de um sensor na borda) e uma abertura (≥ 1 célula); usar o limiar da [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) quando ela sair |
+| `LIMIAR_PAREDE_LATERAL_MM` e `HISTERESE_PAREDE_LATERAL_MM` | 120 e 40 | Entre a parede imediata (cerca de 54 mm pela face) e uma abertura (234 mm ou mais) |
 | `CORRECAO_MAXIMA_MM` | 70 | Maior que a deriva esperada entre referências e menor que meia célula |
 | `DISTANCIA_MAXIMA_SEM_CORRECAO_MM` | 360 | Duas células, com erro de tabela de até ~20% |
 
@@ -1039,15 +1051,27 @@ flowchart LR
 * **`reiniciar(Odometria&, Pose)`**, **`poseConfiavel()`** e **`distanciaSemCorrecaoMm()`:** pose conhecida, confiança e distância desde a última correção.
 * **`ultimaCorrecao()`:** resultado e tamanho (`deltaUm`) da correção do último ciclo com leitura, para o log.
 * **`EstimadorDeslocamento`:** `velocidadeMmPorS(potencia)`, `comandar`, `parar`, `atualizar(dtMs)`, `corrigirAvanco(deltaUm)`, `contagem(roda)` e `girando()`.
-* **`CorretorDeslocamentoTof::avaliar(odometria, leitura, estimador)`:** calcula a correção sem aplicar; `posicaoAoLongoDoAvancoUm(odometria)` dá a posição no eixo para onde o robô está virado.
+* **`CorretorDeslocamentoTof::avaliar(odometria, leitura, estimador)`:** calcula a correção sem aplicar. `posicaoAoLongoDoAvancoUm(odometria)` dá a posição no eixo para onde o robô está virado.
 
-**No `main.cpp`.** A tarefa de navegação lê o ToF, considera a leitura nova quando o instante da amostra mais antiga muda (`idadeUltimaLeituraMs`, da [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) e chama `ciclo` a cada 10 ms. A telemetria informa `pose_valida` como `posicaoValida() && poseConfiavel()` e acrescenta `deslocamento` (`"estimado"` ou `"encoder"`) e `sem_correcao_mm`. O comando `Z` da bancada, no modo estimado, reposiciona o robô no centro da célula atual e devolve a confiança. Com `ENCODERS_INSTALADOS = true`, tudo volta ao caminho dos encoders reais.
+**No `main.cpp`.** A tarefa de navegação:
 
-**Limites deste modo:** mais deriva que com encoder (patinagem, bateria fraca e erro da tabela viram erro de posição até a próxima referência), nenhuma velocidade medida (a velocidade é a que a tabela supõe, então motor travado ou roda patinando não aparecem na estimativa), parada instantânea sem inércia, giro estimado grosseiro e, enquanto a [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) não tratar "fora de alcance" como livre, nenhuma correção nas leituras com um lado aberto para mais de 1,2 m (corredores longos do 8×4 e do 12×4).
+* lê o ToF e considera a leitura nova quando o instante da amostra mais antiga muda (`idadeUltimaLeituraMs`, da [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344));
+* chama `ciclo` a cada 10 ms.
+
+A telemetria informa `pose_valida` como `posicaoValida() && poseConfiavel()` e acrescenta `deslocamento` (`"estimado"` ou `"encoder"`) e `sem_correcao_mm`. No modo estimado, o comando `Z` da bancada reposiciona o robô no centro da célula atual e devolve a confiança. Com `ENCODERS_INSTALADOS = true`, tudo volta ao caminho dos encoders reais.
+
+**Limites deste modo:**
+
+* **Mais deriva que com encoder:** patinagem, bateria fraca e erro da tabela viram erro de posição até a próxima referência.
+* **Nenhuma velocidade medida:** a velocidade é a que a tabela supõe, então motor travado ou roda patinando não aparecem na estimativa.
+* **Movimento simplificado:** a parada é instantânea, sem inércia, e o giro estimado é grosseiro.
 
 ### Bancada do deslocamento sem encoder
 
-Para conferir a estimativa no robô montado, há um firmware de bancada (`src/bancada/bancada_deslocamento.cpp`, ambiente `bancada_deslocamento`) e um menu no computador (`scripts/bancada_deslocamento.py`). O firmware aciona os motores por um tempo, roda o mesmo `DeslocamentoEstimado` do robô e manda o log pela serial a cada 50 ms (potência, pulsos, posição, pose, confiança e ToF), com uma linha à parte a cada correção. Qualquer byte recebido durante o movimento freia os motores, e cada movimento dura no máximo 10 s. O menu mostra o log ao vivo, salva cada movimento em CSV, compara a estimativa com a régua e gera um relatório.
+Para conferir a estimativa no robô montado, há um firmware de bancada (`src/bancada/bancada_deslocamento.cpp`, ambiente `bancada_deslocamento`) e um menu no computador (`scripts/bancada_deslocamento.py`).
+
+* **O firmware** aciona os motores por um tempo e roda o mesmo `DeslocamentoEstimado` do robô. A cada 50 ms, manda o log pela serial (potência, pulsos, posição, pose, confiança e ToF), com uma linha à parte a cada correção. Qualquer byte recebido durante o movimento freia os motores, e cada movimento dura no máximo 10 s.
+* **O menu** mostra o log ao vivo, salva cada movimento em CSV, compara a estimativa com a régua e gera um relatório.
 
 | Etapa | O que verifica | Critério provisório |
 |---|---|---|
@@ -1059,6 +1083,19 @@ Para conferir a estimativa no robô montado, há um firmware de bancada (`src/ba
 | 6. Giro de 90° | Giro no lugar pelo tempo que a tabela e a bitola supõem | Direção estimada Leste e giro real de 90 ± 20° |
 
 O passo a passo está no [README do firmware](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/blob/main/src/firmware/README.md#bancada-do-deslocamento-sem-encoder).
+
+**Rastreabilidade:** atendem à tarefa [#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380), da [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05):
+
+* `lib/deslocamento` (`EstimadorDeslocamento`, `EncoderEstimado`, `MotoresComEstimativa`, `CorretorDeslocamentoTof`, `DeslocamentoEstimado`, `ConfiguracaoDeslocamento.h`);
+* a ligação no `main.cpp`;
+* o firmware e o menu de bancada do deslocamento.
+
+**Próximos passos:**
+
+* **Calibrar na bancada** os valores de `ConfiguracaoDeslocamento.h`, com as etapas 1 a 6 do menu:
+  * a `TABELA_VELOCIDADE`, medida com o limite de duty da [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) valendo (70%, provisório; se o limite mudar, medir de novo);
+  * a posição dos sensores frontal e laterais.
+* **Conferir o limiar lateral das quinas** com o VL53L0X montado. A percepção da [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) adotou 140 mm para classificar parede e livre, e as quinas usam 120 mm (parede) e 160 mm (livre, com a histerese), na mesma faixa entre a parede imediata (~54 mm) e uma abertura (234 mm ou mais). Se a bancada mostrar quinas perdidas ou inventadas, ajustar esses dois valores.
 
 ## Testes
 
@@ -1284,7 +1321,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 
 - **Simulador de labirinto** ([#224](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/224)), concluído: a atualização do mapa ([#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)) já pode ser validada num labirinto simulado inteiro (veja [Labirinto simulado](#labirinto-simulado-labirintosimulado)).
 - **CI do firmware** ([#223](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/223)), concluído no PR [#295](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/295): todo PR para a `main` roda os testes nativos com cobertura mínima de 80% e o build do ESP32-C3. Os checks são obrigatórios na proteção da `main`. Com o PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391), o build também compila o `bancada_tof`, e o job "Scripts de bancada" roda os testes dos scripts de `scripts/`.
-- **Rev 2.0 do hardware:** pinagem concluída ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377)); em revisão, o driver dos 3 VL53L0X (PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391)), a IMU (PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403)) e a detecção de motor travado (PR [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396)); abertos, os limiares para os VL53L0X ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) e o deslocamento sem encoder ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)). A remoção do código do LiDAR (`lib/lidar`) e a troca do nome `ISensorDistancia` para um nome de sensor de distância ficam para um PR de código.
+- **Rev 2.0 do hardware:** pinagem concluída ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377)); em revisão, o driver dos 3 VL53L0X (PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391)), a IMU (PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403)) e a detecção de motor travado (PR [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396)); concluídos, os limiares para os VL53L0X ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)) e o deslocamento sem encoder ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)). A remoção do código do LiDAR (`lib/lidar`) e a troca do nome `ISensorDistancia` para um nome de sensor de distância ficam para um PR de código.
 - **Validar com o hardware:** a bancada da Rev 2.0 ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)): I²C com os 3 VL53L0X e o MPU6050, motores N20 e o tranco no boot pelos GPIO20/21 (veja [Pinagem](#pinagem)).
 - **Formato JSON do mapa** ([#178](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/178)): o formato foi validado com as outras equipes. O dashboard ([#239](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239)) aceitou o JSON e vai tratar `null` como área não explorada, e a tabela `mapa_celulas` passou a aceitar `null` nas colunas `parede_*` ([#228](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/228), PR [#328](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/328)). Falta o envio de fato da lista de células ao banco, que entra com a telemetria (Épico 03).
 - **Mapa final serializado** ([#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180), PR [#330](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/330)), concluído: o mapa é congelado e serializado ao alcançar o objetivo e testado no labirinto simulado. Falta a navegação chamar `congelarMapa()` quando detectar o objetivo (Épico 02) e o envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), no Épico 03.
@@ -1292,7 +1329,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 - **Detecção do objetivo** ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189), PR [#351](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/351)), concluídos: o robô detecta a chegada à célula objetivo (canto diametralmente oposto à partida), freia os motores imediatamente via DRV8833, congela o mapa explorado através de `congelarMapa()` e emite o evento `objetivo_alcancado` na telemetria JSON periódica. Falta o envio do JSON do mapa final ao servidor, vinculado à corrida criada pela Edge Function `corridas` ([#233](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/233)), no Épico 03.
 - **Odometria** ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)): a lógica, os testes no computador e a ligação no `main.cpp` estão prontos. Falta a bancada: medir os pulsos de diferença entre as rodas num giro de 90° (hoje 625, provisório), testar giros de 90° e 180° e um percurso de 3 células, e registrar o erro.
 - **Sensores VL53L0X** ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): o driver, a regra de validade (com fora da faixa limitado à faixa), o teste de integração com o mapa e a ligação no `main.cpp` estão prontos, e o build da placa compila. Falta rodar o roteiro da [bancada](#bancada-dos-vl53l0x) com o hardware montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)) e trocar os valores provisórios de `ConfiguracaoTof.h` pelos medidos. Dependem desta tarefa a percepção para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), a calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), o boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e a recuperação de falhas do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
-- **Deslocamento sem encoder** ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)): a estimativa, as correções pelo ToF, os testes no computador e a ligação no `main.cpp` estão prontos. Falta calibrar a `TABELA_VELOCIDADE` e as posições dos sensores na bancada (tudo em `ConfiguracaoDeslocamento.h`), com o roteiro da [bancada do deslocamento](#bancada-do-deslocamento-sem-encoder), e o `ControleMovimento` passar a acionar as rodas por `motoresTracao` quando entrar na tarefa de navegação ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)); até lá, ninguém comanda os motores e a estimativa fica parada.
+- **Deslocamento sem encoder** ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)): a estimativa, as correções pelo ToF, os testes no computador e a ligação no `main.cpp` estão prontos, e o ciclo da navegação ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) já aciona as rodas por `motoresTracao`, então a estimativa acompanha os comandos. Falta calibrar na bancada a `TABELA_VELOCIDADE` (com o limite de duty da [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) e as posições dos sensores, tudo em `ConfiguracaoDeslocamento.h`, com o roteiro da [bancada do deslocamento](#bancada-do-deslocamento-sem-encoder).
 - **Boot do sistema** ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): o autoteste do I²C, a trava dos motores e o relatório estão prontos e testados no computador com dispositivos simulados. Falta a bancada: medir o tempo desde o ligar (o `boot_ms` não conta a ROM nem o bootloader), conferir o `WHO_AM_I` do módulo montado e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (0x68).
 
 ## Histórico de versões
