@@ -2,9 +2,10 @@
 //
 // O robô (ou o dashboard, quando houver login de operador) chama:
 //   POST /functions/v1/corridas                 { "labirinto": "4x4" | "8x4" | "12x4" }
-//   POST /functions/v1/corridas/{id}/encerrar   { "status": "concluida" | "nao_concluida", ...métricas }
-// com o cabeçalho `x-device-token`. A regra de negócio fica nas funções SQL `criar_corrida` e
-// `encerrar_corrida`; a chave `anon` não tem permissão de escrita direta nas tabelas.
+//   POST /functions/v1/corridas/{id}/encerrar   { "status"?: "concluida" | "nao_concluida", ...métricas }
+//   POST /functions/v1/corridas/{id}/mapa       { "celulas": [...] }   (o MapaJson do firmware)
+// com o cabeçalho `x-device-token`. A regra de negócio fica nas funções SQL `criar_corrida`,
+// `encerrar_corrida` e `registrar_mapa`; a chave `anon` não tem permissão de escrita direta nas tabelas.
 //
 // Segredos: DEVICE_TOKEN (definido com `supabase secrets set`). SUPABASE_URL e
 // SUPABASE_SERVICE_ROLE_KEY já são fornecidos pelo Supabase às Edge Functions.
@@ -14,7 +15,14 @@ import { CORPO_INVALIDO, ErroDeNegocio, tratarRequisicao } from "./roteador.ts";
 import type { CodigoErro, Repositorio } from "./roteador.ts";
 import type { Corrida, DadosEncerramento, TipoLabirinto } from "./logica.ts";
 
-const CODIGOS: CodigoErro[] = ["labirinto_inexistente", "corrida_inexistente", "corrida_ja_encerrada", "status_invalido"];
+const CODIGOS: CodigoErro[] = [
+  "labirinto_inexistente",
+  "corrida_inexistente",
+  "corrida_ja_encerrada",
+  "status_invalido",
+  "celulas_invalidas",
+  "mapa_grande_demais",
+];
 
 /** Converte a mensagem de erro do banco em erro de negócio, quando for um dos conhecidos. */
 function converterErro(mensagem: string): Error {
@@ -40,7 +48,7 @@ const repositorio: Repositorio = {
   async encerrarCorrida(id: number, dados: DadosEncerramento): Promise<Corrida> {
     const { data, error } = await obterCliente().rpc("encerrar_corrida", {
       p_id: id,
-      p_status: dados.status,
+      p_status: dados.status ?? null,
       p_tempo_final: dados.tempo_final ?? null,
       p_velocidade_media: dados.velocidade_media ?? null,
       p_velocidade_pico: dados.velocidade_pico ?? null,
@@ -48,6 +56,11 @@ const repositorio: Repositorio = {
     });
     if (error) throw converterErro(error.message);
     return data as Corrida;
+  },
+  async registrarMapa(id: number, celulas: unknown[]): Promise<{ novas: number; atualizadas: number }> {
+    const { data, error } = await obterCliente().rpc("registrar_mapa", { p_corrida_id: id, p_celulas: celulas });
+    if (error) throw converterErro(error.message);
+    return data as { novas: number; atualizadas: number };
   },
 };
 

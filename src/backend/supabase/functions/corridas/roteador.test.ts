@@ -24,7 +24,7 @@ function corrida(parcial: Partial<Corrida> = {}): Corrida {
 
 /** Repositório falso que registra as chamadas e devolve o que o teste configurar. */
 function repositorioFalso(config: { erro?: ErroDeNegocio | Error } = {}) {
-  const chamadas: Array<{ tipo: TipoLabirinto } | { id: number; dados: DadosEncerramento }> = [];
+  const chamadas: Array<{ tipo: TipoLabirinto } | { id: number; dados: DadosEncerramento } | { id: number; celulas: unknown[] }> = [];
   const repositorio: Repositorio = {
     async criarCorrida(tipo) {
       if (config.erro) throw config.erro;
@@ -34,7 +34,12 @@ function repositorioFalso(config: { erro?: ErroDeNegocio | Error } = {}) {
     async encerrarCorrida(id, dados) {
       if (config.erro) throw config.erro;
       chamadas.push({ id, dados });
-      return corrida({ id, status: dados.status, data_hora_fim: "2026-10-16T12:05:00Z" });
+      return corrida({ id, status: dados.status ?? "nao_concluida", data_hora_fim: "2026-10-16T12:05:00Z" });
+    },
+    async registrarMapa(id, celulas) {
+      if (config.erro) throw config.erro;
+      chamadas.push({ id, celulas });
+      return { novas: celulas.length, atualizadas: 0 };
     },
   };
   return { repositorio, chamadas };
@@ -108,7 +113,6 @@ test("encerramento com id inválido, status inválido ou corpo quebrado responde
     ["/corridas/abc/encerrar", { status: "concluida" }],
     ["/corridas/0/encerrar", { status: "concluida" }],
     ["/corridas/7/encerrar", { status: "em_andamento" }],
-    ["/corridas/7/encerrar", {}],
     ["/corridas/7/encerrar", CORPO_INVALIDO],
     ["/corridas/7/encerrar", { status: "concluida", tempo_final: -3 }],
   ];
@@ -167,4 +171,65 @@ test("a autenticação vem antes da validação da rota", async () => {
   const { repositorio } = repositorioFalso();
   const r = await tratarRequisicao(requisicao({ caminho: "/qualquer", tokenRecebido: null }), dependencias(repositorio));
   assert.equal(r.status, 401);
+});
+
+const CELULAS = [{ linha: 0, coluna: 0, parede_norte: false, parede_sul: true, parede_leste: false, parede_oeste: true }];
+
+test("encerrar sem status é aceito e deixa o banco decidir", async () => {
+  const { repositorio, chamadas } = repositorioFalso();
+  for (const corpo of [{}, undefined]) {
+    const r = await tratarRequisicao(requisicao({ caminho: "/functions/v1/corridas/7/encerrar", corpo }), dependencias(repositorio));
+    assert.equal(r.status, 200);
+  }
+  assert.deepEqual(chamadas, [{ id: 7, dados: {} }, { id: 7, dados: {} }]);
+});
+
+test("grava o mapa final e responde 200 com o que entrou", async () => {
+  const { repositorio, chamadas } = repositorioFalso();
+  const r = await tratarRequisicao(
+    requisicao({ caminho: "/functions/v1/corridas/7/mapa", corpo: { dimensao: "4x4", linhas: 4, colunas: 4, celulas: CELULAS } }),
+    dependencias(repositorio),
+  );
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.corpo, { novas: 1, atualizadas: 0 });
+  assert.deepEqual(chamadas, [{ id: 7, celulas: CELULAS }]);
+});
+
+test("mapa com id inválido, sem células ou com corpo quebrado responde 400 sem chamar o banco", async () => {
+  const { repositorio, chamadas } = repositorioFalso();
+  const casos: Array<[string, unknown]> = [
+    ["/corridas/abc/mapa", { celulas: CELULAS }],
+    ["/corridas/0/mapa", { celulas: CELULAS }],
+    ["/corridas/7/mapa", {}],
+    ["/corridas/7/mapa", { celulas: [] }],
+    ["/corridas/7/mapa", undefined],
+    ["/corridas/7/mapa", CORPO_INVALIDO],
+  ];
+  for (const [caminho, corpo] of casos) {
+    const r = await tratarRequisicao(requisicao({ caminho, corpo }), dependencias(repositorio));
+    assert.equal(r.status, 400, caminho + JSON.stringify(corpo));
+  }
+  assert.equal(chamadas.length, 0);
+});
+
+test("os erros do mapa vindos do banco viram 404, 400 e 413", async () => {
+  const esperados: Array<[ErroDeNegocio["codigo"], number]> = [
+    ["corrida_inexistente", 404],
+    ["celulas_invalidas", 400],
+    ["mapa_grande_demais", 413],
+  ];
+  for (const [codigo, status] of esperados) {
+    const { repositorio } = repositorioFalso({ erro: new ErroDeNegocio(codigo) });
+    const r = await tratarRequisicao(requisicao({ caminho: "/corridas/7/mapa", corpo: { celulas: CELULAS } }), dependencias(repositorio));
+    assert.equal(r.status, status, codigo);
+    assert.equal((r.corpo as { erro: string }).erro, codigo);
+  }
+});
+
+test("mapa só aceita POST", async () => {
+  const { repositorio } = repositorioFalso();
+  for (const metodo of ["GET", "PUT", "DELETE"]) {
+    const r = await tratarRequisicao(requisicao({ metodo, caminho: "/corridas/7/mapa" }), dependencias(repositorio));
+    assert.equal(r.status, 405, metodo);
+  }
 });

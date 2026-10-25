@@ -439,6 +439,72 @@ test("as linhas da telemetria chegam ao Realtime: a tabela está na publicação
   assert.ok(r.rows.some((l) => l.tablename === "telemetria"));
 });
 
+test("o encerramento da corrida chega ao Realtime: a tabela corridas está na publicação do dashboard", async () => {
+  const db = await criarBanco();
+  const r = await db.query<{ tablename: string }>(
+    "SELECT tablename FROM pg_publication_tables WHERE pubname = 'supabase_realtime' ORDER BY tablename",
+  );
+  assert.deepEqual(r.rows.map((l) => l.tablename), ["corridas", "mapa_celulas", "telemetria"]);
+});
+
+test("a migração do Realtime de corridas pode rodar de novo sem erro", async () => {
+  const db = await criarBanco();
+  const sql = readFileSync(fileURLToPath(new URL("../supabase/migrations/20261024120000_realtime_corridas.sql", import.meta.url)), "utf8");
+  await db.exec(sql);
+  const r = await db.query<{ n: number }>(
+    "SELECT COUNT(*)::int AS n FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'corridas'",
+  );
+  assert.equal(r.rows[0].n, 1);
+});
+
+// ---------------------------------------------------------------- Aguardando Largada (#242)
+
+test("amostras de antes da largada (aguardando) são gravadas e não entram na velocidade média", async () => {
+  const db = await criarBanco();
+  const id = await novaCorrida(db);
+  await registrar(db, id, [
+    amostra(1, { estado_corrida: "aguardando", velocidade: 0, tempo_decorrido: 0 }),
+    amostra(2, { estado_corrida: "aguardando", velocidade: 0, tempo_decorrido: 0 }),
+    amostra(3, { estado_corrida: "explorando", velocidade: 0.2, tempo_decorrido: 0 }),
+    amostra(4, { estado_corrida: "explorando", velocidade: 0.4, tempo_decorrido: 1 }),
+  ]);
+  assert.equal(await contar(db, "telemetria", id), 4);
+
+  const c = await encerrar(db, id);
+
+  assert.ok(Math.abs(c.velocidade_media - 0.3) < 1e-9, `média ${c.velocidade_media}`); // e não (0+0+0,2+0,4)/4
+  assert.equal(c.velocidade_pico, 0.4);
+  assert.equal(c.tempo_final, 1);
+  assert.equal(c.status, "nao_concluida");
+});
+
+test("corrida que só tem amostras de espera encerra sem velocidade média e como não concluída", async () => {
+  const db = await criarBanco();
+  const id = await novaCorrida(db);
+  await registrar(db, id, [amostra(1, { estado_corrida: "aguardando", velocidade: 0 })]);
+
+  const c = await encerrar(db, id);
+
+  assert.equal(c.velocidade_media, null);
+  assert.equal(c.velocidade_pico, null);
+  assert.equal(c.status, "nao_concluida");
+});
+
+test("o dashboard lê pelo papel anon as amostras de espera e vê a largada na primeira de corrida", async () => {
+  const db = await criarBanco();
+  const id = await novaCorrida(db);
+  await registrar(db, id, [
+    amostra(1, { estado_corrida: "aguardando", tempo_decorrido: 0 }),
+    amostra(2, { estado_corrida: "explorando", tempo_decorrido: 0 }),
+  ]);
+
+  const r = await como(db, "anon", () =>
+    db.query<{ estado_corrida: string }>("SELECT estado_corrida FROM telemetria WHERE corrida_id = $1 ORDER BY numero_sequencia", [id]),
+  );
+
+  assert.deepEqual(r.rows.map((l) => l.estado_corrida), ["aguardando", "explorando"]);
+});
+
 // ---------------------------------------------------------------- contrato e corrida completa
 
 test("o lote de exemplo do contrato com o firmware é aceito como está", async () => {
