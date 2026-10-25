@@ -8,7 +8,7 @@
 | 2.2 | Ensaio de velocidade de desarme (*Time-to-Trip*) do fusível rearmável PPTC (Bourns MF-R185) sob sobrecorrente simulada $> 3{,}5\text{ A}$ — [#207](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/207) | 17/10/2026 | 17/10/2026 | Paulo Melo | Sustentação contínua em $1{,}85\text{ A}$ ($I_{\text{hold}}$) e desarme térmico comprovado acima de $3{,}5\text{ A}$ | Estável sem desarme em $1{,}85\text{ A}$; desarme em $9{,}10\text{ s}$ (@ $3{,}60\text{ A}$), $8{,}70\text{ s}$ (@ $3{,}70\text{ A}$), $3{,}10\text{ s}$ (@ $5{,}00\text{ A}$) e $0{,}60\text{ s}$ (@ $9{,}25\text{ A}$), com $I_{\text{res}}=118\text{ mA}$ | S | — | Detalhado em [4.2.2 Ensaios de subtensão e PPTC](../04-projeto-conceitual/ensaios-protecoes.md) |
 | 2.3 | [Inspeção e Carga de Bateria LiPo 2S em Bancada](energia/teste-componentes/bateria/teste-bancada-bateria.md) | 21/10/2026 | 21/10/2026 | Equipe de Energia | Setup instrumental calibrado e bateria carregada a 8,4 V | Setup montado com iMAX B6 V3, fonte Yaxun e multímetro; bateria LiPo 2S inspecionada, balanceada e carregada a 8,40 V | S | S | Issue #201 concluída |
 | 2.4 | Ensaio de autonomia contínua da bateria LiPo 2S em bancada — [#209](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/209) | 24/10/2026 | 24/10/2026 | Paulo Melo | Autonomia $\ge 25\text{ min}$ com tensão $> 6{,}4\text{ V}$ sob corrente representativa ($\ge 0{,}466\text{ A}$) | Autonomia de $34\text{ min }49\text{ s}$ comprovada sob descarga de $0{,}90\text{ A}$, mantendo $7{,}43\text{ V}$ ($208\text{ mAh}$ consumidos) | S | — | Detalhado abaixo |
-| 2.5 | | | | | | | | | |
+| 2.5 | Ensaio em bancada dos reguladores Step-Down Buck (6,0 V, 5,0 V e 3,3 V) sob cargas estáticas e variação de tensão de entrada ($6{,}6\text{ V a }8{,}4\text{ V}$) | 25/10/2026 | 25/10/2026 | Elias e Paulo | Saídas estabilizadas em $6{,}0\text{ V} \pm 2\%$ (motores), $5{,}0\text{ V} \pm 2\%$ (ESP32) e $3{,}3\text{ V} \pm 2\%$ (sensores) sob cargas nominais e de pico em toda a faixa da LiPo 2S ($6{,}6\text{ V a }8{,}4\text{ V}$) | Tensões nominais mantidas dentro da tolerância ($\Delta V \le 2\%$) sob carga estática em 6,0 V (300 mA e 1,0 A), 5,0 V (150 mA e 350 mA) e 3,3 V (65 mA e 200 mA), com regulação estável de 6,6 V a 8,4 V | S | — | Detalhado abaixo (Procedimento 2.5) |
 | 2.6 | | | | | | | | | |
 | 2.7 | | | | | | | | | |
 | 2.8 | | | | | | | | | |
@@ -54,6 +54,57 @@ Validação experimental da autonomia da bateria LiPo 2S sob descarga contínua 
 
 ---
 
+## Procedimento de Teste 2.5: Ensaio dos Reguladores Step-Down (Buck) sob Cargas Estáticas
+
+### 1. Metodologia do Ensaio
+Como os testes de integração do sistema completo ainda não foram iniciados, a validação foi realizada com os módulos conversores Buck testados de forma **isolada em bancada**. Cada regulador foi alimentado individualmente por uma fonte DC ajustável de bancada (simulando a faixa de $6{,}60\text{ V a }8{,}40\text{ V}$ da bateria LiPo 2S), realizando-se a regulagem do trimpot multivoltas e a aferição da estabilidade da saída sob cargas estáticas resistivas.
+
+* **Buck Motores (`+6V0`):** Saída ajustada em $6{,}00\text{ V} \pm 2\%$ ($5{,}88\text{ V a }6{,}12\text{ V}$); avaliado sob $300\text{ mA}$ (nominal) e $1{,}00\text{ A}$ (pico).
+* **Buck MCU (`+5V0`):** Saída ajustada em $5{,}00\text{ V} \pm 2\%$ ($4{,}90\text{ V a }5{,}10\text{ V}$); avaliado sob $150\text{ mA}$ (nominal) e $350\text{ mA}$ (pico Wi-Fi).
+* **Buck Sensores (`+3V3`):** Saída ajustada em $3{,}30\text{ V} \pm 2\%$ ($3{,}23\text{ V a }3{,}37\text{ V}$); avaliado sob $65\text{ mA}$ (nominal) e $200\text{ mA}$ (estresse).
+
+---
+
+### 2. Resultados das Medições
+
+| Regulador | $V_{\text{in}}$ (Fonte DC) | Condição de Carga | $I_{\text{out}}$ | $V_{\text{out}}$ Medido | Variação ($\Delta V$) | Avaliação |
+| :--- | :---: | :--- | :---: | :---: | :---: | :---: |
+| **Buck 6,0 V** (Motores) | $8{,}40\text{ V}$ | Vazio / Nominal / Estresse | $0\text{ mA}$ / $300\text{ mA}$ / $1{,}00\text{ A}$ | $6{,}02\text{ V}$ / $5{,}99\text{ V}$ / $5{,}94\text{ V}$ | $+0{,}3\%$ / $-0{,}2\%$ / $-1{,}0\%$ | **Aprovado** |
+| | $7{,}40\text{ V}$ | Nominal / Estresse | $300\text{ mA}$ / $1{,}00\text{ A}$ | $5{,}98\text{ V}$ / $5{,}92\text{ V}$ | $-0{,}3\%$ / $-1{,}3\%$ | **Aprovado** |
+| | $6{,}60\text{ V}$ | Nominal / Estresse | $300\text{ mA}$ / $1{,}00\text{ A}$ | $5{,}96\text{ V}$ / $5{,}89\text{ V}$ | $-0{,}7\%$ / $-1{,}8\%$ | **Aprovado** |
+| **Buck 5,0 V** (ESP32-C3) | $8{,}40\text{ V}$ | Vazio / Nominal / Pico Wi-Fi | $0\text{ mA}$ / $150\text{ mA}$ / $350\text{ mA}$ | $5{,}03\text{ V}$ / $5{,}01\text{ V}$ / $4{,}98\text{ V}$ | $+0{,}6\%$ / $+0{,}2\%$ / $-0{,}4\%$ | **Aprovado** |
+| | $7{,}40\text{ V}$ | Nominal / Pico Wi-Fi | $150\text{ mA}$ / $350\text{ mA}$ | $5{,}00\text{ V}$ / $4{,}97\text{ V}$ | $0{,}0\%$ / $-0{,}6\%$ | **Aprovado** |
+| | $6{,}60\text{ V}$ | Nominal / Pico Wi-Fi | $150\text{ mA}$ / $350\text{ mA}$ | $4{,}98\text{ V}$ / $4{,}94\text{ V}$ | $-0{,}4\%$ / $-1{,}2\%$ | **Aprovado** |
+| **Buck 3,3 V** (Sensores) | $8{,}40\text{ V}$ | Vazio / Nominal / Estresse | $0\text{ mA}$ / $65\text{ mA}$ / $200\text{ mA}$ | $3{,}31\text{ V}$ / $3{,}30\text{ V}$ / $3{,}29\text{ V}$ | $+0{,}3\%$ / $0{,}0\%$ / $-0{,}3\%$ | **Aprovado** |
+| | $7{,}40\text{ V}$ | Nominal / Estresse | $65\text{ mA}$ / $200\text{ mA}$ | $3{,}30\text{ V}$ / $3{,}28\text{ V}$ | $0{,}0\%$ / $-0{,}6\%$ | **Aprovado** |
+| | $6{,}60\text{ V}$ | Nominal / Estresse | $65\text{ mA}$ / $200\text{ mA}$ | $3{,}29\text{ V}$ / $3{,}27\text{ V}$ | $-0{,}3\%$ / $-0{,}9\%$ | **Aprovado** |
+
+---
+
+### 3. Evidências em Bancada (Foto e Vídeo)
+
+<figure markdown>
+
+[Teste de bancada Reguladores BUCKS](https://youtube.com/shorts/zp4ts6y_4YY?si=tYnye_1uJfONE6zS)
+
+<figcaption>
+
+**Figura 2.** Ensaio isolado do módulo conversor Buck alimentado por fonte DC de bancada e aferido sob carga estática com multímetro digital.
+
+</figcaption>
+
+</figure>
+
+* **Registro em Vídeo:**  
+  * `Vídeo — Demonstração da Regulagem e Estabilidade do Conversor Buck sob Carga`: Ensaio em bancada evidenciando a calibração via trimpot e estabilidade da tensão de saída frente à variação da fonte de bancada ($8{,}4\text{ V} \to 6{,}6\text{ V}$) e à inserção de carga estática *(arquivo disponível na pasta de mídias da equipe)*.
+
+---
+
+### 4. Conclusão
+Os ensaios individuais comprovaram que os três reguladores Buck operam com desvios inferiores a $\pm 2\%$ em toda a faixa de tensão simulada na fonte de bancada ($6{,}60\text{ V a }8{,}40\text{ V}$), garantindo regulação adequada e ausência de *brownout* antes da integração física do robô.
+
+---
+
 ## Histórico de Versão
 
 | Versão | Data | Descrição | Autor(es) | Revisor(es) |
@@ -61,4 +112,6 @@ Validação experimental da autonomia da bateria LiPo 2S sob descarga contínua 
 | 1.0 | 17/10/2026 | Estruturação inicial da matriz de testes de energia e registro dos ensaios de subtensão e PPTC (#207) | Paulo Melo | Equipe de Energia |
 | 1.1 | 21/10/2026 | Registro do ensaio de inspeção e carga da bateria LiPo 2S em bancada (#201) | Elias Oliveira | Equipe de Energia |
 | 1.2 | 24/10/2026 | Registro do ensaio de autonomia contínua em bancada com iMAX B6 V3 (#209) | Paulo Melo | Equipe de Energia |
+| 1.3 | 25/10/2026 | Registro dos ensaios em bancada dos reguladores Buck de 6,0 V, 5,0 V e 3,3 V sob cargas estáticas | Equipe de Energia | — |
+
 
