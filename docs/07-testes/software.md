@@ -2564,3 +2564,110 @@ Para conferir se os testes detectam erros, e não só passam, 13 alterações pr
 
 - Comparação visual com os Frames `04_History_View_M1` a `M3`: capturas da tela com cada filtro anexadas ao PR de código.
 - Índice em `corridas.labirinto_id` no banco (sugestão para o backend; sem efeito com poucas corridas).
+
+### Sprint 5 · Mapa e percurso do robô no dashboard
+
+!!! warning "Testes em simulação"
+    Os testes automatizados deste registro rodaram **no computador**, utilizando o Supabase simulado em memória (`src/test/supabaseSimulado.ts`, originado na tarefa [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) em substituição ao banco real. As linhas de `corridas`, `telemetria` e `mapa_celulas` foram **geradas pelos testes com o esquema real das tabelas**, simulando eventos de inserção e canais Realtime WebSocket.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#239 Mapa e percurso do robô no dashboard](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239) |
+| História de usuário | HU-06 · Visualizar o percurso do robô sobre o mapa ([#9](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/9)), RF06 |
+| Código testado | `src/frontend` (branch `feat/239-mapa-percurso-dashboard`, commit `d5f2b39`) |
+| Data da execução | 24/10/2026 |
+| Executado por | Rafael Lima |
+| Tipo de teste | Unitário e de integração, no computador, com dados simulados e canais Realtime |
+| Documentação do código | [Software: mapa, percurso e paredes do robô no dashboard em tempo real](../04-projeto-conceitual/software.md#mapa-percurso-e-paredes-do-robo-no-dashboard-em-tempo-real-hu-06) |
+
+**Ambiente de execução:** Linux (x86_64), Node.js 20+, Vitest 5.0.5, Testing Library (`@testing-library/react`), jsdom, Vite 6 e TypeScript 5.
+
+#### Critérios da issue e testes
+
+| Critério da #239 | Testes associados | Situação |
+|---|---|:-:|
+| Malha com as dimensões do labirinto da corrida, partida em verde e chegada em vermelho | Unitário em `GradeLabirinto.test.tsx` (viewBox proporcional para 4×4, 8×4 e 12×4; partida em verde suave em `(0, 0)`; chegada em vermelho suave no canto oposto). Integração em `TelaAoVivo.test.tsx` validando renderização conforme labirinto da corrida | Aprovado |
+| Marcador `Robot` e traçado `Robot Path` atualizados em tempo real | Unitário em `GradeLabirinto.test.tsx` (posicionamento do marcador e rotações cardeais N/L/S/O; polilinha `Robot Path` conectando as coordenadas). Integração em `TelaAoVivo.test.tsx` e `useTelemetriaAoVivo.test.ts` com recepção reativa de telemetria e paredes em `mapa_celulas` | Aprovado |
+| Traçado completo mantido ao final da corrida | Unitário em `GradeLabirinto.test.tsx` (todos os pontos da trajetória mantidos no término). Integração em `TelaAoVivo.test.tsx` e `painelAoVivo.test.ts` conferindo que ao concluir (`objetivo_alcancado`) o traçado e paredes não são resetados | Aprovado |
+
+#### Testes unitários e de integração
+
+```bash
+cd src/frontend
+npx vitest run src/componentes/GradeLabirinto.test.tsx src/lib/painelAoVivo.test.ts src/hooks/useTelemetriaAoVivo.test.ts src/paginas/TelaAoVivo.test.tsx
+```
+
+| Arquivo | Casos novos | Nível | O que verificam |
+|---|:-:|---|---|
+| `componentes/GradeLabirinto.test.tsx` | 10 | Unitário | Proporções e viewBox para 4×4, 8×4 e 12×4; posicionamento de partida `(0,0)` e chegada `(linhas-1, colunas-1)`; marcador `Robot` com translação e rotação em 0°, 90°, 180° e 270°; geração do traçado `Robot Path`; projeção de paredes conhecidas (`true`) e descarte de `null`/`false`; retenção do traçado completo |
+| `lib/painelAoVivo.test.ts` | 5 | Unitário (regras puras) | Adição de células descobertas ao estado do painel (`aplicarMapaCelula`); atualização idempotente de células pré-existentes sem duplicatas; descarte de células pertencentes a outra corrida; recepção de mapa final pós-término de corrida; aplicação de lote completo (`aplicarMapa`) |
+| `hooks/useTelemetriaAoVivo.test.ts` | 3 | Integração (hook) | Assinatura simultânea de três canais Realtime isolados (`telemetria`, `corridas` e `mapa`); carga inicial assíncrona de células existentes em `mapa_celulas`; recepção de eventos de inserção/atualização de paredes em tempo real |
+| `paginas/TelaAoVivo.test.tsx` | 2 | Integração (página) | Renderização integrada da malha com partida e chegada; atualização em tempo real do marcador e do traçado a cada leitura de telemetria; desenho de paredes mapeadas recebidas por Realtime; manutenção integral do percurso após encerramento da corrida |
+
+**Resultado:** 20 novos casos de teste implementados e aprovados, elevando a suíte do frontend de 99 para 119 testes:
+
+```text
+✓ src/componentes/GradeLabirinto.test.tsx (10 tests)
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 4x4
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 8x4
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 12x4
+  ✓ Malha com as dimensões do labirinto da corrida > posiciona a partida em (0, 0) no canto inferior esquerdo e a chegada em (linhas-1, colunas-1) no canto oposto
+  ✓ Marcador Robot > renderiza o marcador do robô na posição e orientação iniciais (0, 0, N)
+  ✓ Marcador Robot > atualiza a translação e a rotação conforme o robô se desloca e gira
+  ✓ Traçado Robot Path > não desenha traçado quando o percurso tem apenas a largada (1 ponto)
+  ✓ Traçado Robot Path > desenha e atualiza o traçado em tempo real conforme as posições avançam
+  ✓ Traçado Robot Path > mantém o traçado completo ao final da corrida
+  ✓ Paredes mapeadas > desenha linhas para paredes com valor true e ignora paredes false ou null
+✓ src/lib/painelAoVivo.test.ts (25 tests)
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > acrescenta células novas ao mapa do painel
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > atualiza célula já existente sem duplicar
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > ignora células de outra corrida
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > aceita células do mapa final após encerramento da corrida (HU-04)
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > aplicarMapa aplica um lote inteiro de células
+✓ src/hooks/useTelemetriaAoVivo.test.ts (18 tests)
+  ✓ assina telemetria, corridas e mapa em canais separados e aguarda quando não há corrida em andamento
+  ✓ ao abrir no meio da corrida, carrega também as células do mapa já mapeadas (#239)
+  ✓ recebe atualizações de células do mapa em tempo real via Realtime (#239)
+✓ src/paginas/TelaAoVivo.test.tsx (7 tests)
+  ✓ desenha a malha com largada verde e chegada vermelha, atualizando robô, percurso e paredes em tempo real (#239)
+  ✓ mantém o traçado completo e o mapa ao final da corrida (#239)
+```
+
+#### Cobertura, suíte completa e build
+
+```bash
+npm run test:cobertura
+npm run build
+```
+
+| Arquivo | Linhas | Desvios (*Branches*) | Funções |
+|---|:-:|:-:|:-:|
+| `componentes/GradeLabirinto.tsx` | 100% | 100% | 100% |
+| `paginas/TelaAoVivo.tsx` | 100% | 100% | 100% |
+| `lib/painelAoVivo.ts` | 100% | 93,5% | 100% |
+| `hooks/useTelemetriaAoVivo.ts` | 97,1% | 78,3% | 100% |
+
+Suíte completa do frontend: **119 de 119 testes aprovados** em 12 arquivos de teste (cobertura global de 94,1% de linhas e 88,0% de *branches*). Compilação estática (`tsc --noEmit`) e *bundle* do Vite (`npm run build`) concluídos com sucesso.
+
+#### Prova de mutação
+
+Para atestar que a suíte é sensível a defeitos e não apenas confirmatória, foram introduzidas 10 mutações manuais deliberadas no código da malha e do painel, uma por vez:
+
+| Mutação introduzida | Efeito esperado | Resultado |
+|---|---|:-:|
+| Inverter o cálculo do eixo $y$ no SVG (`MARGEM + linha * LADO`) | Origem $(0, 0)$ ficaria no canto superior esquerdo | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Não rotacionar o marcador do robô pelo ângulo da orientação | Ângulo de rotação permaneceria fixo em 0° | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Remover a checagem `if (c.parede_*)` ao montar os segmentos | Paredes `false` ou `null` desenhariam linhas pretas | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Resetar o traçado (`leituras: []`) na transição para `concluido` | O traçado desapareceria no encerramento da corrida | **Detectada** (`TelaAoVivo.test.tsx`) |
+| Não passar `aoVivo.mapa` para o painel em `App.tsx` | O mapa ao vivo permaneceria vazio no dashboard | **Detectada** (`TelaAoVivo.test.tsx`) |
+| Assinar `mapa_celulas` no mesmo canal Realtime de `telemetria` | Conflito de isolamento de canais | **Detectada** (`useTelemetriaAoVivo.test.ts`) |
+| Descartar células recebidas após a corrida estar encerrada | Mapa final (HU-04) seria ignorado | **Detectada** (`painelAoVivo.test.ts`) |
+| Não atualizar paredes de células já conhecidas | Atualizações de exploração seriam perdidas | **Detectada** (`painelAoVivo.test.ts`) |
+| Não aplicar o `offset` de margem de 3 px na partida e chegada | Posição dos retângulos ficaria colada na borda externa | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Renderizar `Robot Path` com apenas 1 ponto | SVG desenharia polilinha com ponto singular | **Detectada** (`GradeLabirinto.test.tsx`) |
+
+**Taxa de detecção da prova de mutação:** 10 de 10 mutações detectadas (100%).
+
+#### Pendências desta etapa
+
+- Validação em bancada integrada com o robô físico navegando no labirinto de testes (depende da conclusão da montagem mecânica e dos testes em pista).
