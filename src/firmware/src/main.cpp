@@ -42,6 +42,7 @@
 #include "GatilhoLargada.h"
 #include "ImuMpu6050.h"
 #include "MedidorDeslocamento.h"
+#include "MotoresComProtecao.h"
 #include "MotoresComTrava.h"
 #include "MotoresDrv8833.h"
 #include "Odometria.h"
@@ -88,8 +89,13 @@ static micromouse::DeslocamentoEstimado deslocamento(motores);
 static micromouse::IMotores& motoresEstimativa =
     micromouse::ENCODERS_INSTALADOS ? static_cast<micromouse::IMotores&>(motores) : deslocamento.motores();
 
+/// Proteção contra motor travado (#341): vê todo comando de potência e, com potência alta por 500 ms
+/// sem o robô se mexer, freia e segura o freio até `liberar()`. Quem fecha o ciclo é a tarefa de
+/// navegação, que chama `atualizarProtecao()` com o ToF frontal e o giroscópio.
+static micromouse::MotoresComProtecao motoresProtegidos(motoresEstimativa);
+
 /// Trava dos motores (#50): começa travada e só é liberada com o autoteste do boot aprovado.
-static micromouse::MotoresComTrava motoresComTrava(motoresEstimativa);
+static micromouse::MotoresComTrava motoresComTrava(motoresProtegidos);
 
 /// Guarda a última potência comandada, para a detecção de colisão (#192) saber se o robô foi mandado
 /// andar. É a camada de fora de todas e só a tarefa de navegação a usa.
@@ -184,7 +190,7 @@ static AceleracaoPlano ultimaAceleracao;
 
 /// Cópia da última leitura do giroscópio: taxa e ângulo de giro (para os giros de 90° e 180°, #190,
 /// e para a proteção dos motores, #341), com a validade e os contadores.
-[[maybe_unused]] static micromouse::LeituraGiro lerGiro() {
+static micromouse::LeituraGiro lerGiro() {
   portENTER_CRITICAL(&travaGiro);
   const micromouse::LeituraGiro copia = leituraGiro;
   portEXIT_CRITICAL(&travaGiro);
@@ -254,11 +260,25 @@ static void tarefaImu(void*) {
   }
 }
 
+/// Medidas que dizem se o robô se mexeu, para a proteção dos motores: o ToF frontal e a taxa do
+/// giroscópio (sem o viés). O giroscópio é obrigatório: sem ele, um giro no lugar (ToF frontal
+/// parado) seria lido como motor travado. Por isso, sem ToF ou sem giroscópio válidos a leitura vai
+/// como inválida e a proteção não conclui nada: ela **não freia por engano**, mas também não protege.
+/// Uma frente além do alcance do ToF (leitura no máximo, 1200 mm) também vai como inválida: ela não muda
+/// andando por um corredor longo e seria lida como robô parado (#192).
+static micromouse::MedidasProtecao medidasDaProtecao(const LeituraTofTelemetria& leituraTof) {
+  const micromouse::LeituraGiro giro = lerGiro();
+  const bool sensoresValidos = leituraTof.valida && giro.valida &&
+                               leituraTof.distancias.frenteMm < micromouse::DISTANCIA_MAXIMA_VALIDA_TOF_MM;
+  return micromouse::MedidasProtecao{sensoresValidos, leituraTof.distancias.frenteMm, giro.taxaDecimosDps};
+}
+
 /// Tarefa de navegação: ciclo percepção → decisão → atuação, a cada 10 ms.
 ///
 /// Prioridade 2 (maior que a da telemetria), para que o envio de dados nunca
 /// atrase o controle do robô.
 static void tarefaNavegacao(void*) {
+  constexpr uint32_t PERIODO_NAVEGACAO_MS = 10;
   // Instante da amostra mais antiga da última leitura usada: se não mudou, a leitura é a mesma.
   uint32_t instanteUltimaLeituraUsada = 0;
   // Comando `L` recebido antes de o robô estar pronto: vale quando ele ficar pronto.
@@ -277,6 +297,14 @@ static void tarefaNavegacao(void*) {
     portENTER_CRITICAL(&travaTof);
     ultimaLeituraTof = leituraTof;
     portEXIT_CRITICAL(&travaTof);
+
+    // Proteção dos motores (#341): com potência alta por 500 ms sem o robô se mexer, freia e segura o
+    // freio até a navegação liberar (`motoresProtegidos.liberar()`).
+    const uint32_t cortesAntes = motoresProtegidos.cortes();
+    motoresProtegidos.atualizarProtecao(medidasDaProtecao(leituraTof), PERIODO_NAVEGACAO_MS);
+    if (motoresProtegidos.cortes() != cortesAntes) {
+      Serial.println("{\"status\":\"motor_travado\"}");
+    }
 
     const uint32_t instanteLeitura = millis() - leituraTof.idadeMs;
     const bool leituraNova = leituraTof.valida && instanteLeitura != instanteUltimaLeituraUsada;
@@ -309,7 +337,7 @@ static void tarefaNavegacao(void*) {
       if (movimento == micromouse::MovimentoRobo::Manobrando) {
         deslocamento.esquecerLaterais();
       }
-      deslocamento.ciclo(10, odometria, referencia ? &leituraTof.distancias : nullptr);
+      deslocamento.ciclo(PERIODO_NAVEGACAO_MS, odometria, referencia ? &leituraTof.distancias : nullptr);
     }
     // Pelas paredes: a posição lateral sempre e, com os encoders, também ao longo do avanço (#188).
     if (leituraNova) {
@@ -341,7 +369,7 @@ static void tarefaNavegacao(void*) {
     }
 
     if (alcancou) {
-      vTaskDelay(pdMS_TO_TICKS(10));
+      vTaskDelay(pdMS_TO_TICKS(PERIODO_NAVEGACAO_MS));
       continue;
     }
 
@@ -358,7 +386,7 @@ static void tarefaNavegacao(void*) {
         largadaPendente = false;
         gatilhoLargada.dispararManual();
       }
-      if (gatilhoLargada.atualizar(tofNovo, 10) && !jaLiberado) {
+      if (gatilhoLargada.atualizar(tofNovo, PERIODO_NAVEGACAO_MS) && !jaLiberado) {
         Serial.println("{\"status\":\"largada_liberada\"}");
       }
     }
@@ -370,7 +398,7 @@ static void tarefaNavegacao(void*) {
     entrada.posicaoAvancoUm = posicaoAvancoUm;
     entrada.leituraNova = tofNovo;
     entrada.giro = giro;
-    entrada.dtMs = 10;
+    entrada.dtMs = PERIODO_NAVEGACAO_MS;
 
     // Colisão (#192): só com o robô sendo conduzido. Parado, em recuperação ou antes da largada, a
     // detecção fica desligada.
@@ -382,7 +410,7 @@ static void tarefaNavegacao(void*) {
     deteccao.ayMg = aceleracao.ayMg;
     deteccao.potencia = registradorPotencia.ultimaPotencia();
     deteccao.medidas = micromouse::MedidasProtecao{leituraTof.valida, leituraTof.distancias.frenteMm, giro.taxaDecimosDps};
-    deteccao.dtMs = 10;
+    deteccao.dtMs = PERIODO_NAVEGACAO_MS;
     entrada.colisao = detectorColisao.atualizar(deteccao);
 
     const uint32_t colisoesAntes = cicloNavegacao.colisoes();
@@ -396,6 +424,9 @@ static void tarefaNavegacao(void*) {
       portENTER_CRITICAL(&travaOdometria);
       ++colisoesPendentes;
       portEXIT_CRITICAL(&travaOdometria);
+      // Se a proteção do motor travado (#341) freou o robô, ela segura o freio até aqui: o recuo precisa
+      // de ré. O ciclo já parou os motores e só manda potência nos ciclos seguintes.
+      motoresProtegidos.liberar();
     }
     if (depois != antes) {
       Serial.printf("{\"status\":\"navegacao\",\"estado\":\"%s\",\"falha\":\"%s\",\"celulas\":%lu}\n",
@@ -403,7 +434,7 @@ static void tarefaNavegacao(void*) {
                     micromouse::nomeDaFalhaExecucao(cicloNavegacao.falhaExecucao()),
                     static_cast<unsigned long>(cicloNavegacao.celulasAvancadas()));
     }
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(PERIODO_NAVEGACAO_MS));
   }
 }
 
@@ -511,7 +542,7 @@ static void tarefaTelemetria(void*) {
 /// informando o que falhou.
 void setup() {
   // Primeira linha: freia os motores antes de qualquer outra coisa, porque o GPIO20/21 (IN3/IN4)
-  // recebe um tranco da ROM durante o reset.
+  // recebe um tranco da ROM durante o reset (ver README, "Tranco no boot").
   motores.iniciar();
   Serial.begin(115200);
   // Sem um computador conectado, a escrita na USB CDC esperaria o tempo limite a cada chamada e
