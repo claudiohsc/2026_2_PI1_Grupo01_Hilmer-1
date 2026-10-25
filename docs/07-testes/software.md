@@ -2676,12 +2676,13 @@ Para atestar que a suíte é sensível a defeitos e não apenas confirmatória, 
 ### Sprint 5 · Falha do I²C durante a corrida (testes com falhas simuladas)
 
 !!! warning "Testes em simulação"
-    Todos os testes deste registro rodaram **no computador**, sem o barramento real: os 3 VL53L0X foram simulados sobre o `CombinadorTof` real (medindo a cada 30 ms, sem resposta ou parados), a IMU pelo `ImuSimulado` e os motores pelo `MotoresSimulados`. As falhas e os tempos foram **definidos pelos testes**. O reinício pelo XSHUT e a supervisão no `main.cpp` dependem do hardware e ficam para a bancada.
+    Todos os testes deste registro rodaram **no computador**, sem o barramento real: os 3 VL53L0X foram simulados sobre o `CombinadorTof` real (medindo a cada 30 ms, sem resposta ou parados), a IMU pelo `ImuSimulado` e os motores pelo `MotoresSimulados`. Na corrida inteira, o robô é o `RoboSimulado` andando no labirinto 4×4 de exemplo, com o `CicloNavegacao` da [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184). As falhas e os tempos foram **definidos pelos testes**. O reinício pelo XSHUT e a supervisão no `main.cpp` dependem do hardware e ficam para a bancada.
 
 | Item | Valor |
 |---|---|
 | Tarefa | [#241 Detecção de falha de I²C e nova tentativa](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241) |
-| Código testado | `src/firmware` (branch `feat/241-falha-i2c`, sobre a `main` do merge do PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398); commit `c3c7f84`) |
+| História de usuário | HU-13 · Calibração de Hardware ([#51](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51)) |
+| Código testado | `src/firmware` (branch `feat/241-falha-i2c`, com a `main` de 25/10/2026, até o merge do PR [#451](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/451); commit `0570bb5`) |
 | Data da execução | 25/10/2026 |
 | Executado por | Eduardo Viana |
 | Tipo de teste | Unitário e de integração, no computador, com falhas simuladas |
@@ -2695,8 +2696,8 @@ Para atestar que a suíte é sensível a defeitos e não apenas confirmatória, 
 |---|---|---|:-:|
 | Falha de leitura detectada em cada um dos 4 dispositivos (3 ToF e IMU), com tentativas máximas configuráveis | `SupervisorI2c` conta as falhas seguidas de cada dispositivo; `VigiaTof` transforma as amostras de cada ToF em leitura (sem resposta, tempo esgotado ou parado de medir) e `leituraDaImu` faz o mesmo com a IMU. As tentativas, os reinícios e a espera ficam em `ConfiguracaoFalhasI2c.h` | `test_tentativas_esgotadas_param_os_motores_e_pedem_reinicio_em_cada_dispositivo`, `test_tentativas_vem_da_configuracao`, os 6 `test_vigia_*`, `test_leitura_da_imu_com_barramento_ocupado_nao_e_falha` | Aprovado |
 | Reinicialização do ToF por XSHUT após as tentativas | Esgotadas as 5 tentativas, o supervisor pede o reinício, e a navegação chama `TofVl53l0x::reiniciarSensor`; até 3 reinícios, a pelo menos 500 ms um do outro, e depois `inoperante` | `test_integracao_tof_frontal_sem_resposta_e_reiniciado_pelo_xshut`, `test_integracao_tof_que_nao_volta_fica_inoperante_e_os_motores_seguem_parados`, `test_integracao_tof_que_para_de_medir_e_reiniciado`, `test_reinicios_respeitam_a_espera` | Aprovado no computador; o XSHUT real fica para a bancada |
-| Motores parados enquanto houver falha, e o estado de erro informado | `TravaFalhaI2c` trava a `MotoresComTrava` do boot enquanto algum dispositivo estiver `em_falha` ou `inoperante`, antes do reinício, sem soltar a trava do boot reprovado. O log anuncia cada mudança, e a telemetria traz `i2c_falhas` e `i2c_reinicios` | `test_trava_para_os_motores_e_solta_quando_a_falha_acaba`, `test_trava_nao_solta_a_trava_do_boot`, `test_motores_so_seguem_com_todos_os_dispositivos_ok`, `test_descreve_os_dispositivos_em_falha`, `test_serializa_falhas_do_i2c` | Aprovado |
-| Testes no computador com falhas simuladas | Suíte `test_falhas_i2c` com 30 casos: 25 unitários e 5 de integração, que simulam a navegação e a tarefa da IMU na ordem do `main.cpp` | Suíte `test_falhas_i2c` | Aprovado |
+| Motores parados enquanto houver falha, e o estado de erro informado | `TravaFalhaI2c` trava a `MotoresComTrava` do boot enquanto algum dispositivo estiver `em_falha` ou `inoperante`, antes do reinício, sem soltar a trava do boot reprovado. A navegação também tira a permissão do `CicloNavegacao`, que espera e retoma a corrida quando a falha passa. O log anuncia cada mudança, e a telemetria traz `i2c_falhas` e `i2c_reinicios` | `test_trava_para_os_motores_e_solta_quando_a_falha_acaba`, `test_trava_nao_solta_a_trava_do_boot`, `test_motores_so_seguem_com_todos_os_dispositivos_ok`, `test_descreve_os_dispositivos_em_falha`, `test_serializa_falhas_do_i2c`, `test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida`, `test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida` | Aprovado |
+| Testes no computador com falhas simuladas | Suíte `test_falhas_i2c` com 30 casos (25 unitários e 5 de integração, que simulam a navegação e a tarefa da IMU na ordem do `main.cpp`) e suíte `test_integracao_falhas_i2c` com 4 casos (a corrida simulada inteira, com o ToF e a IMU caindo no meio de um avanço) | Suítes `test_falhas_i2c` e `test_integracao_falhas_i2c` | Aprovado |
 
 #### O que mudou no código
 
@@ -2707,21 +2708,23 @@ Para atestar que a suíte é sensível a defeitos e não apenas confirmatória, 
 | `lib/falhas/src/VigiaTof.h/.cpp` | Leitura de cada ToF a partir das amostras do `CombinadorTof` |
 | `lib/falhas/src/TravaFalhaI2c.h` | Trava dos motores durante a falha, sem soltar a trava do boot |
 | `lib/drivers_esp32/src/TofVl53l0x.h/.cpp` | `reiniciarSensor(lado)`: reinício de um sensor só pelo XSHUT |
-| `lib/comunicacao/src/TelemetriaJson.h/.cpp` | Campos `i2c_falhas` e `i2c_reinicios`; o pior caso do JSON passou a 658 bytes (era 571, e o comentário do código ainda dizia 516), dentro do buffer de 768 |
-| `src/main.cpp` | Supervisão dos ToF na navegação e da IMU na tarefa dela, trava antes do reinício, linhas de log e campos da telemetria |
-| `test/test_falhas_i2c/test_falhas_i2c.cpp`, `test/test_telemetria_json/test_telemetria_json.cpp` | Suíte nova com 30 casos e 1 caso novo de telemetria |
+| `lib/comunicacao/src/TelemetriaJson.h/.cpp` | Campos `i2c_falhas` e `i2c_reinicios`; o pior caso do JSON passou a 689 bytes (sem eles, 602; o comentário do código dizia 547), dentro do buffer de 768 |
+| `src/main.cpp` | Supervisão dos ToF na navegação e da IMU (giroscópio e acelerômetro) na tarefa dela, trava antes do reinício, permissão do ciclo de navegação retirada durante a falha, linhas de log e campos da telemetria |
+| `lib/execucao/src/CicloNavegacao.h` | Só o comentário: a falha do I²C pausa o ciclo, em vez de deixá-lo terminar em `Falha` |
+| `test/test_falhas_i2c/test_falhas_i2c.cpp`, `test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp`, `test/test_telemetria_json/test_telemetria_json.cpp` | Suítes novas com 30 e 4 casos e 1 caso novo de telemetria |
 | `README.md` do firmware | Seção "Falha do I²C durante a corrida" |
 
 #### Testes unitários e de integração
 
 ```bash
-pio test -e native -f test_falhas_i2c -f test_telemetria_json
+pio test -e native -f test_falhas_i2c -f test_integracao_falhas_i2c -f test_telemetria_json
 ```
 
 | Suíte | Casos | Resultado |
 | :--- | :--- | :--- |
 | `test_falhas_i2c` | 30 | **30 aprovados** |
-| `test_telemetria_json` | 9 | **9 aprovados** (1 novo) |
+| `test_integracao_falhas_i2c` | 4 | **4 aprovados** |
+| `test_telemetria_json` | 11 | **11 aprovados** (1 novo) |
 
 Os casos estão descritos na tabela de testes da [documentação do firmware](../04-projeto-conceitual/firmware.md#testes).
 
@@ -2757,6 +2760,14 @@ test/test_falhas_i2c/test_falhas_i2c.cpp:737:test_integracao_tof_que_para_de_med
 test/test_falhas_i2c/test_falhas_i2c.cpp:738:test_integracao_imu_sem_resposta_e_reiniciada:PASS
 test/test_falhas_i2c/test_falhas_i2c.cpp:739:test_integracao_barramento_ocupado_nao_derruba_a_imu:PASS
 30 Tests 0 Failures 0 Ignored
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_sem_falha_a_corrida_chega_ao_objetivo:INFO: sem falha: estado objetivo_alcancado em 35.2 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:336:test_sem_falha_a_corrida_chega_ao_objetivo:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida:INFO: ToF frontal sem resposta por 300 ms: estado objetivo_alcancado em 36.0 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:337:test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:338:test_tof_que_nao_volta_deixa_o_robo_parado:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida:INFO: IMU sem resposta por 200 ms: estado objetivo_alcancado em 35.6 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:339:test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida:PASS
+4 Tests 0 Failures 0 Ignored
 ```
 
 #### Cobertura e suíte completa
@@ -2768,9 +2779,9 @@ gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --
 
 | Verificação | Resultado |
 |---|---|
-| Suíte completa (as 27 suítes do `native`) | **468 aprovados, 0 falhas** (eram 437) |
-| Cobertura das linhas de `lib/`, somando todas as suítes | **98,3%** (1977 de 2012), acima da meta de 80% |
-| Cobertura de `SupervisorI2c.cpp`, `VigiaTof.cpp`, `TravaFalhaI2c.h` e `TelemetriaJson.cpp` | 100% (91, 24, 13 e 37 linhas) |
+| Suíte completa (as 42 suítes do `native`) | **797 aprovados, 0 falhas** (a `main` tem 762) |
+| Cobertura das linhas de `lib/`, somando todas as suítes | **98,0%** (3824 de 3901), acima da meta de 80% |
+| Cobertura de `SupervisorI2c.cpp`, `VigiaTof.cpp`, `TravaFalhaI2c.h` e `TelemetriaJson.cpp` | 100% (91, 24, 13 e 38 linhas) |
 
 `TofVl53l0x` e `main.cpp` não compilam no `native`; por isso as regras ficam em `lib/falhas`, e os testes de integração repetem a ordem do `main.cpp` com os simulados. Para a placa, as chamadas do `main.cpp`, do `TofVl53l0x.cpp` e do `ImuMpu6050.cpp` foram conferidas contra cabeçalhos simplificados do Arduino-ESP32 2.x e 3.x e a biblioteca `pololu/VL53L0X` 1.3.1, sem erros nem avisos. A compilação completa (`pio run -e esp32c3`) é feita pelo CI do PR.
 
@@ -2783,14 +2794,14 @@ Para conferir se os testes pegam erros, e não só passam, foram feitas alteraç
 | Primeira rodada | 20 de 24 alterações detectadas. Duas eram lacunas: o texto de `i2c_falhas` no limite exato do buffer e a amostra do mesmo instante do reinício. As outras duas não mudavam o comportamento: guardas que repetiam o que a contagem já fazia |
 | Correção | Dois casos novos para as lacunas; a guarda redundante de configuração zerada saiu do código, e o atalho de `inoperante` ficou, por clareza, fora da lista |
 | Rodada final | **22 de 22 alterações detectadas** |
+| Corrida simulada | Tirar a pausa do ciclo (`liberado` sempre verdadeiro) ou a trava dos motores faz 3 dos 4 casos de `test_integracao_falhas_i2c` falharem: **2 de 2 alterações detectadas** |
 
-#### Integração com os PRs abertos
+#### Integração com a `main`
 
-Simulando o merge com os PRs abertos que mexem no `main.cpp`: com o [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396) ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)), o merge é limpo; com o [#442](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/442) ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)), há conflito só de texto no `main.cpp` (as duas partes acrescentam declarações no mesmo lugar). Mantendo as duas, o código confere para a placa e os testes continuam aprovados.
+A branch recebeu a `main` de 25/10/2026, com os PRs [#442](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/442) ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)), [#444](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/444) ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)), [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396) ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)), [#424](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/424) ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), [#438](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/438) ([#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242)) e [#451](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/451) ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)). Os conflitos foram só de texto (no `main.cpp`, no README e nos campos da telemetria) e ficaram as duas partes. Com o ciclo de navegação na `main`, a falha do I²C passou a tirar a permissão do ciclo, e a leitura do acelerômetro passou a contar como leitura do MPU6050.
 
 #### Pendências desta etapa
 
 - **Bancada:** com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado; conferir a sequência do log ([Figura 17](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c)), o reinício pelo XSHUT e a volta dos motores. Combinar com a eletrônica como soltar o conector sem curto no barramento.
 - **Valores provisórios:** ajustar as tentativas, as leituras para recuperar, os reinícios e a espera com o que a bancada mostrar.
 - **Compilação para a placa:** anotar aqui a RAM e a Flash do `pio run -e esp32c3` do CI do PR.
-- **Ciclo de navegação ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)):** depois do PR [#442](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/442), uma falha no meio de um movimento termina o movimento por tempo esgotado; fazer o ciclo esperar a falha do I²C passar.

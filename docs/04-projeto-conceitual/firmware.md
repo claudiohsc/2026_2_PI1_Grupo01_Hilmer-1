@@ -1012,12 +1012,13 @@ flowchart LR
 ### Regras de Negócio e Algoritmo
 
 * **Falha de um ToF (`VigiaTof`):** a cada ciclo da navegação (10 ms), a última amostra de cada sensor no `CombinadorTof` vira uma leitura. Amostra nova em `Falha` (o sensor não respondeu ou o tempo do I²C esgotou) é falha. Amostra nova válida, fora de alcance ou abaixo do mínimo é leitura boa, porque o sensor respondeu. Sem amostra nova há mais de `IDADE_MAXIMA_LEITURA_TOF_MS` (100 ms), é falha (o sensor parou de medir), contada uma vez a cada 100 ms. Sem amostra nova dentro dos 100 ms, não há o que concluir: o sensor mede a cada 33 ms.
-* **Falha da IMU:** a leitura do giroscópio que falha (o `AcompanhadorGiro` a conta) é falha, a menos que o barramento estivesse com a navegação naquele ciclo (as `esperasEsgotadas()` do `BarramentoI2c` aumentaram). Nesse caso, a navegação está reiniciando um ToF, e a leitura perdida não é culpa da IMU.
+* **Falha da IMU:** a leitura do giroscópio (o `AcompanhadorGiro` a conta) ou do acelerômetro ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)) que falha é falha, porque os dois são o mesmo MPU6050, a menos que o barramento estivesse com a navegação naquele ciclo (as `esperasEsgotadas()` do `BarramentoI2c` aumentaram). Nesse caso, a navegação está reiniciando um ToF, e a leitura perdida não é culpa da IMU.
 * **Tentativas:** com 1 a 4 falhas seguidas, o dispositivo fica `tentando`: a leitura é repetida no ciclo seguinte, e os motores seguem. Uma leitura boa volta a `ok`.
 * **Falha declarada e reinício:** com 5 falhas seguidas, o dispositivo fica `em_falha`, os motores param e ele é reiniciado: o ToF pelo XSHUT (`TofVl53l0x::reiniciarSensor`), a IMU por `ImuMpu6050::iniciar()`. Depois de cada reinício, o dispositivo tem de novo as 5 tentativas, e dois reinícios do mesmo dispositivo ficam a pelo menos 500 ms um do outro, para o barramento não ficar ocupado só com reinícios.
 * **Inoperante:** depois de 3 reinícios seguidos sem o dispositivo voltar, ele não é mais reiniciado, e os motores continuam parados. Se o último reinício não conseguiu configurá-lo, o driver o deixa em reset e não o lê mais: ele só volta com o robô reiniciado.
 * **Recuperação:** em `em_falha` ou `inoperante`, 3 leituras boas seguidas devolvem o dispositivo a `ok` e zeram os reinícios. Uma falha no meio zera a contagem, para um mau contato que oscila não ficar ligando e desligando os motores.
 * **Motores (`TravaFalhaI2c`):** os motores param enquanto qualquer um dos 4 estiver `em_falha` ou `inoperante`, pela mesma `MotoresComTrava` do boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): travada, toda potência vira freio, e o estimador do deslocamento ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)) fica sabendo que o robô parou. A trava do I²C só solta a trava que ela mesma pôs, então um boot reprovado continua travado até o robô ser reiniciado.
+* **Ciclo de navegação ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)):** enquanto a falha durar, a navegação tira a permissão do `CicloNavegacao` (`EntradaCiclo::liberado`). O ciclo cancela o movimento, freia e espera em `aguardando_largada`; quando a falha passa, percebe de novo a célula a partir de onde parou e segue a corrida. Sem isso, o movimento travado acabaria por tempo esgotado, como `Falha` do ciclo, e o robô não voltaria sozinho.
 * **Estado informado:** cada mudança de situação, cada reinício e cada mudança da trava viram uma linha no log (Figura 17), e a telemetria repete em todo pacote `i2c_falhas` (os dispositivos em falha agora, separados por vírgula, ou `""`) e `i2c_reinicios` (os reinícios pedidos desde o boot).
 
 ```json
@@ -1025,11 +1026,13 @@ flowchart LR
 {"status":"i2c","dispositivo":"tof_frontal","situacao":"em_falha"}
 {"status":"motores_travados_i2c"}
 {"status":"reinicio_i2c","dispositivo":"tof_frontal","sucesso":true}
+{"status":"navegacao","estado":"aguardando_largada","falha":"nenhuma","celulas":2}
 {"status":"i2c","dispositivo":"tof_frontal","situacao":"ok"}
 {"status":"motores_liberados_i2c"}
+{"status":"navegacao","estado":"percebendo","falha":"nenhuma","celulas":2}
 ```
 
-**Figura 17.** Log de uma falha do ToF frontal que volta com o primeiro reinício: os motores param antes do reinício e voltam depois de 3 medidas boas.
+**Figura 17.** Log de uma falha do ToF frontal no meio de um avanço, que volta com o primeiro reinício: os motores param antes do reinício, o ciclo de navegação espera e, depois de 3 medidas boas, os motores voltam e o ciclo percebe a célula de novo.
 
 | Parâmetro (`ConfiguracaoFalhasI2c.h`) | Valor | Observação |
 |---|---|---|
@@ -1040,9 +1043,9 @@ flowchart LR
 
 ### Na placa: navegação, tarefa da IMU e telemetria
 
-* **Navegação (`supervisionarI2c()` no `main.cpp`):** logo depois da leitura dos ToF, registra os 3 sensores no supervisor, aplica a trava dos motores (que também vale para a falha da IMU) e só então reinicia o ToF que o supervisor pediu, segurando o barramento (`BarramentoI2c::Uso`). A trava vem antes porque o reinício segura a navegação por algumas dezenas de ms, e o robô não pode seguir andando nesse tempo.
+* **Navegação (`supervisionarI2c()` no `main.cpp`):** logo depois da leitura dos ToF, registra os 3 sensores no supervisor, aplica a trava dos motores (que também vale para a falha da IMU) e só então reinicia o ToF que o supervisor pediu, segurando o barramento (`BarramentoI2c::Uso`). A trava vem antes porque o reinício segura a navegação por algumas dezenas de ms, e o robô não pode seguir andando nesse tempo. A função devolve se há falha, e a navegação usa isso para tirar a permissão do ciclo.
 * **Reinício de um ToF (`TofVl53l0x::reiniciarSensor(lado)`):** põe o XSHUT do sensor em nível baixo, espera a partida, solta, atribui de novo o endereço e liga o modo contínuo. Só o sensor que falhou é reiniciado; os outros dois seguem medindo, porque estão nos endereços novos e não respondem no de fábrica (0x29).
-* **Tarefa da IMU:** depois de cada leitura, registra o MPU6050 no supervisor. Se ele pedir o reinício, a tarefa chama `imu.iniciar()` (que espera 100 ms) e recomeça a contagem do período, para esses 100 ms não virarem uma rajada de leituras.
+* **Tarefa da IMU:** depois de cada ciclo (giroscópio e acelerômetro), registra o MPU6050 no supervisor. Se ele pedir o reinício, a tarefa chama `imu.iniciar()` (que espera 100 ms) e recomeça a contagem do período, para esses 100 ms não virarem uma rajada de leituras.
 * **Concorrência:** o supervisor é usado pelas três tarefas, então todo acesso a ele fica na seção crítica `travaFalhasI2c`, curta; os reinícios e a trava ficam fora dela, porque esperam. A trava fica na `travaOdometria`, porque freia pelo estimador do deslocamento, que a telemetria também lê, como no `detectorObjetivo.processarChegada`.
 * **Telemetria:** com `i2c_falhas` e `i2c_reinicios`, o pior caso do JSON de telemetria chegou a 658 bytes, dentro do buffer de 768 (`TAMANHO_MAX_JSON_TELEMETRIA`).
 
@@ -1058,9 +1061,10 @@ flowchart LR
 
 * Durante o reinício de um VL53L0X (2 × 10 ms de partida mais a calibração do `init()` da biblioteca), a IMU perde leituras, que não contam como falha dela, e o ângulo de giro não soma. Os motores já estão parados.
 * Os ToF são reiniciados um por vez. Se dois caírem juntos para o endereço de fábrica (0x29), por exemplo numa queda de tensão, um reinício pode não bastar: eles ficam `inoperante`, com os motores parados, e o robô precisa ser reiniciado.
-* Com o ciclo de navegação da [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184) (PR [#442](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/442), em revisão), uma falha no meio de um movimento trava as rodas, e o movimento termina por tempo esgotado, como `Falha` do ciclo. Fazer o ciclo esperar a falha do I²C passar fica para a integração das duas tarefas na `main`.
+* Nas tentativas da IMU (até 50 ms), o giro não soma ao ângulo, como já acontecia antes ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)). Se a falha pegar o robô girando, o rumo pode ficar alguns graus errado.
+* Ao retomar depois de uma falha no meio de um avanço, o ciclo percebe de novo a partir da célula da navegação, com o robô parado onde a falha o pegou; é o mesmo caminho de quando a permissão sai no meio de um movimento ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)).
 
-**Rastreabilidade:** `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`, `ConfiguracaoFalhasI2c.h`), `TofVl53l0x::reiniciarSensor`, os campos `i2c_falhas` e `i2c_reinicios` do `TelemetriaJson` e a supervisão no `main.cpp` atendem à tarefa [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241).
+**Rastreabilidade:** `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`, `ConfiguracaoFalhasI2c.h`), `TofVl53l0x::reiniciarSensor`, os campos `i2c_falhas` e `i2c_reinicios` do `TelemetriaJson` e a supervisão no `main.cpp` atendem à tarefa [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), da [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) (Calibração de Hardware).
 
 **Pendências:** a bancada com o hardware: com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado, conferir a sequência da Figura 17 e ajustar os valores provisórios. A forma de soltar o conector sem curto no barramento precisa ser combinada com a eletrônica.
 
@@ -1227,6 +1231,10 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | | `test_integracao_tof_que_para_de_medir_e_reiniciado` | ToF que responde mas não mede mais é reiniciado em cerca de 0,55 s |
 | | `test_integracao_imu_sem_resposta_e_reiniciada` | IMU sem resposta com o robô girando: o ângulo para de somar, os motores param, a IMU é reiniciada e o ângulo volta a somar |
 | | `test_integracao_barramento_ocupado_nao_derruba_a_imu` | Leituras perdidas com o barramento ocupado não reiniciam a IMU nem param os motores |
+| `test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp` | `test_sem_falha_a_corrida_chega_ao_objetivo` | Na corrida simulada do 4×4, com o supervisor ligado como no `main.cpp`, nenhum reinício e nenhuma trava sem falha |
+| | `test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida` | O ToF frontal cai por 300 ms no meio de um avanço: em até 60 ms os motores travam e o ciclo espera; o robô fica parado, o 1º reinício falha, o 2º o traz de volta, e a corrida chega ao objetivo sem encostar nas paredes e com o mapa certo |
+| | `test_tof_que_nao_volta_deixa_o_robo_parado` | ToF que não volta: 3 reinícios, inoperante, e o robô parado, sem bater |
+| | `test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida` | A IMU cai por 200 ms no meio de um avanço: os motores travam, o ciclo espera, a IMU volta e a corrida chega ao objetivo |
 
 Para rodar, dentro de `src/firmware`:
 
@@ -1275,7 +1283,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/navegacao` (`Navegacao`: validação da pose, `cancelarPasso`, `Bloqueado`) | [#357](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/357) Robustez da navegação | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
 | `lib/tof` (`CombinadorTof`), `TofVl53l0x`, `ISensorDistancia::idadeUltimaLeituraMs`, endereços em `Pinos.h`, firmware e menu de bancada | [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344) Driver dos 3 sensores VL53L0X | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
 | `lib/inicializacao` (`AutotesteBoot`, `RelatorioBoot`), `IBarramentoI2c`, `BarramentoI2cEsp32`, `MotoresComTrava` | [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) |
-| `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`), `TofVl53l0x::reiniciarSensor`, `i2c_falhas` e `i2c_reinicios` na telemetria | [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241) Detecção de falha de I²C e nova tentativa | — |
+| `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`), `TofVl53l0x::reiniciarSensor`, `i2c_falhas` e `i2c_reinicios` na telemetria | [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241) Detecção de falha de I²C e nova tentativa | [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) |
 | `lib/hal` (`IImu`), `lib/simulacao` (`ImuSimulado`), `lib/imu` (`IntegradorGiro`, `ConversorGiro`, `AcompanhadorGiro`), `ImuMpu6050`, `BarramentoI2c`, tarefa da IMU no `main.cpp` | [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) Driver do MPU6050 e ângulo de giro | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
 
 ## Próximos passos
@@ -1291,7 +1299,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 - **Odometria** ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)): a lógica, os testes no computador e a ligação no `main.cpp` estão prontos. Falta a bancada: medir os pulsos de diferença entre as rodas num giro de 90° (hoje 625, provisório), testar giros de 90° e 180° e um percurso de 3 células, e registrar o erro.
 - **Sensores VL53L0X** ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): o driver, a regra de validade (com fora da faixa limitado à faixa), o teste de integração com o mapa e a ligação no `main.cpp` estão prontos, e o build da placa compila. Falta rodar o roteiro da [bancada](#bancada-dos-vl53l0x) com o hardware montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)) e trocar os valores provisórios de `ConfiguracaoTof.h` pelos medidos. Dependem desta tarefa a percepção para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), a calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), o boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e a recuperação de falhas do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
 - **Boot do sistema** ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): o autoteste do I²C, a trava dos motores e o relatório estão prontos e testados no computador com dispositivos simulados. Falta a bancada: medir o tempo desde o ligar (o `boot_ms` não conta a ROM nem o bootloader), conferir o `WHO_AM_I` do módulo montado e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (0x68).
-- **Falha do I²C durante a corrida** ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)): a detecção nos 4 dispositivos, as tentativas, o reinício do ToF pelo XSHUT e da IMU, a trava dos motores e o estado no log e na telemetria estão prontos e testados no computador com falhas simuladas. Falta a bancada (veja [as pendências](#falha-do-i2c-durante-a-corrida-supervisori2c)) e, depois do PR [#442](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/442), fazer o ciclo de navegação esperar a falha passar.
+- **Falha do I²C durante a corrida** ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)): a detecção nos 4 dispositivos, as tentativas, o reinício do ToF pelo XSHUT e da IMU, a trava dos motores, a pausa do ciclo de navegação e o estado no log e na telemetria estão prontos e testados no computador com falhas simuladas, inclusive numa corrida inteira. Falta a bancada (veja [as pendências](#falha-do-i2c-durante-a-corrida-supervisori2c)).
 
 ## Histórico de versões
 
@@ -1307,4 +1315,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | 1.0 | 23/10/2026 | Atualização para a Rev 2.0 do hardware: seção nova, pinagem conferida com o esquemático, sensores de distância VL53L0X no lugar do LiDAR, pastas e próximos passos; criação deste histórico ([#382](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/382)) | Ana Carolina Fialho | — |
 | 1.1 | 24/10/2026 | Driver dos 3 VL53L0X: ligação, endereços, regra de validade com fora da faixa limitado, bancada e seus testes no CI, `TofSimulado` e integração com o mapa; interface renomeada para `ISensorDistancia` ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) | Marllon Fausto | — |
 | 1.2 | 24/10/2026 | Boot do sistema: autoteste do I²C, trava dos motores e relatório do boot; camadas dos motores com nome próprio e ordem combinada com as #341 e #380; integração do I²C com o #403 ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) | Marllon Fausto | — |
-| 1.3 | 25/10/2026 | Falha do I²C durante a corrida: detecção nos 4 dispositivos, tentativas configuráveis, reinício do ToF pelo XSHUT e da IMU, motores parados enquanto durar a falha e estado no log e na telemetria ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)) | Eduardo Viana | — |
+| 1.3 | 25/10/2026 | Falha do I²C durante a corrida: detecção nos 4 dispositivos, tentativas configuráveis, reinício do ToF pelo XSHUT e da IMU, motores parados e ciclo de navegação em pausa enquanto durar a falha, e estado no log e na telemetria ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)) | Eduardo Viana | — |
