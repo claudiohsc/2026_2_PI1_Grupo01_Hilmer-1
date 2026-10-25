@@ -1,9 +1,10 @@
 import { LIMITE_TEMPO_S } from './formatacao';
-import type { Corrida, EstadoPainel, Telemetria } from '../tipos';
+import type { Corrida, EstadoPainel, MapaCelula, Telemetria } from '../tipos';
 
 /**
- * Estado da tela ao vivo montado a partir das linhas que chegam do Supabase (HU-14, #231):
- * a corrida acompanhada (tabela `corridas`) e as leituras dela (tabela `telemetria`).
+ * Estado da tela ao vivo montado a partir das linhas que chegam do Supabase (HU-14, #231; HU-06, #239):
+ * a corrida acompanhada (tabela `corridas`), as leituras dela (tabela `telemetria`) e as células
+ * mapeadas do labirinto (tabela `mapa_celulas`).
  *
  * As funções deste arquivo são puras: recebem o painel atual e uma linha nova e devolvem o
  * painel seguinte, sem React e sem Supabase. O hook `useTelemetriaAoVivo` só repassa as linhas.
@@ -16,16 +17,39 @@ export interface PainelAoVivo {
   leituras: Telemetria[];
   /** Tempo da corrida, em segundos: o `tempo_decorrido` mais recente (congela ao terminar). */
   tempo: number;
+  /** Paredes conhecidas do labirinto descobertas pelo robô (`mapa_celulas`). */
+  mapa: MapaCelula[];
 }
 
-export const PAINEL_INICIAL: PainelAoVivo = { estado: 'aguardando', corrida: null, leituras: [], tempo: 0 };
+export const PAINEL_INICIAL: PainelAoVivo = {
+  estado: 'aguardando',
+  corrida: null,
+  leituras: [],
+  tempo: 0,
+  mapa: [],
+};
 
 const terminado = (estado: EstadoPainel) => estado === 'concluido' || estado === 'nao_concluido';
 
 /**
+ * Valor de `telemetria.estado_corrida` que o robô envia depois de calibrar e antes de largar
+ * (Aguardando Largada, #242). Essas leituras mostram o robô parado na célula de partida: não contam
+ * para a velocidade, o gráfico nem o cronômetro.
+ */
+export const ESTADO_AGUARDANDO_LARGADA = 'aguardando';
+
+/** `true` se a leitura foi enviada com o robô aguardando a largada. */
+export const ehLeituraDeLargada = (leitura: Telemetria) => leitura.estado_corrida === ESTADO_AGUARDANDO_LARGADA;
+
+/** As leituras da corrida em si, sem as de antes da largada. */
+export const leiturasDaCorrida = (leituras: Telemetria[]) => leituras.filter((l) => !ehLeituraDeLargada(l));
+
+/**
  * Aplica uma linha da tabela `corridas` (consulta inicial ou evento do Realtime).
  *
- * - Corrida `em_andamento` nova (outro `id`): começa a acompanhar, com leituras zeradas.
+ * - Corrida `em_andamento` nova (outro `id`): começa a acompanhar, com leituras e mapa zerados, em
+ *   `aguardando` (o robô criou a corrida depois de calibrar e ainda não largou). O painel só vai
+ *   para `em_execucao` quando chegar uma leitura de depois da largada.
  * - `concluida` ou `nao_concluida` da corrida acompanhada: encerra o painel; o tempo passa a
  *   ser o `tempo_final` gravado no banco, quando houver.
  * - Linhas de outras corridas já encerradas são ignoradas.
@@ -35,7 +59,7 @@ export function aplicarCorrida(painel: PainelAoVivo, corrida: Corrida): PainelAo
 
   if (corrida.status === 'em_andamento') {
     if (mesma) return { ...painel, corrida };
-    return { estado: 'em_execucao', corrida, leituras: [], tempo: 0 };
+    return { estado: 'aguardando', corrida, leituras: [], tempo: 0, mapa: [] };
   }
 
   if (!mesma) return painel;
@@ -48,11 +72,51 @@ export function aplicarCorrida(painel: PainelAoVivo, corrida: Corrida): PainelAo
 }
 
 /**
+ * Aplica uma célula da tabela `mapa_celulas` (#239).
+ *
+ * - Atualiza as paredes da célula (linha, coluna) ou adiciona se ainda não existir.
+ * - Célula de outra corrida é ignorada. Aceita células durante ou após a corrida (mapa final, HU-04).
+ */
+export function aplicarMapaCelula(
+  painel: PainelAoVivo,
+  celula: MapaCelula & { corrida_id?: number },
+): PainelAoVivo {
+  if (celula.corrida_id !== undefined && painel.corrida && celula.corrida_id !== painel.corrida.id) {
+    return painel;
+  }
+  const celulaLimpa: MapaCelula = {
+    linha: celula.linha,
+    coluna: celula.coluna,
+    parede_norte: celula.parede_norte ?? null,
+    parede_sul: celula.parede_sul ?? null,
+    parede_leste: celula.parede_leste ?? null,
+    parede_oeste: celula.parede_oeste ?? null,
+  };
+  const index = painel.mapa.findIndex((c) => c.linha === celula.linha && c.coluna === celula.coluna);
+  if (index >= 0) {
+    const novoMapa = [...painel.mapa];
+    novoMapa[index] = celulaLimpa;
+    return { ...painel, mapa: novoMapa };
+  }
+  return { ...painel, mapa: [...painel.mapa, celulaLimpa] };
+}
+
+/** Aplica uma lista de células do mapa ao painel (#239). */
+export function aplicarMapa(
+  painel: PainelAoVivo,
+  celulas: (MapaCelula & { corrida_id?: number })[],
+): PainelAoVivo {
+  return celulas.reduce(aplicarMapaCelula, painel);
+}
+
+/**
  * Aplica uma linha da tabela `telemetria`.
  *
  * - Só entram leituras da corrida acompanhada e enquanto ela está em execução.
  * - Leitura repetida (mesmo `numero_sequencia`, como num reenvio do buffer do robô, RF16) é
  *   ignorada; leitura atrasada entra na posição certa.
+ * - Leitura com `estado_corrida = 'aguardando'` (#242) entra no painel, mas não tira o painel de
+ *   `aguardando` nem avança o cronômetro. A primeira leitura de depois da largada o põe em `em_execucao`.
  * - O evento `objetivo_alcancado` conclui o painel (HU-07); passar de 10:00 sem chegar ao
  *   objetivo o encerra como não concluído (RNF-03).
  */
@@ -65,7 +129,13 @@ export function aplicarTelemetria(painel: PainelAoVivo, leitura: Telemetria): Pa
   }
 
   const leituras = [...painel.leituras, leitura].sort((a, b) => a.numero_sequencia - b.numero_sequencia);
+  if (ehLeituraDeLargada(leitura) && painel.estado === 'aguardando') {
+    return { ...painel, leituras };
+  }
+
   const tempo = Math.max(painel.tempo, leitura.tempo_decorrido);
+  // A primeira leitura de depois da largada é o que põe o painel em execução.
+  const estado: EstadoPainel = painel.estado === 'aguardando' ? 'em_execucao' : painel.estado;
 
   if (leitura.evento === 'objetivo_alcancado') {
     return { ...painel, leituras, estado: 'concluido', tempo: leitura.tempo_decorrido };
@@ -73,7 +143,7 @@ export function aplicarTelemetria(painel: PainelAoVivo, leitura: Telemetria): Pa
   if (tempo >= LIMITE_TEMPO_S) {
     return { ...painel, leituras, estado: 'nao_concluido', tempo: LIMITE_TEMPO_S };
   }
-  return { ...painel, leituras, tempo };
+  return { ...painel, leituras, estado, tempo };
 }
 
 /** Valores dos cards da tela ao vivo, calculados a partir das leituras. */
@@ -89,13 +159,14 @@ export interface MetricasPainel {
 }
 
 export function calcularMetricas(leituras: Telemetria[]): MetricasPainel {
-  const ultima = leituras.at(-1);
-  const soma = leituras.reduce((total, l) => total + l.velocidade, 0);
+  const ultima = leituras.at(-1); // a bateria vale também na largada
+  const naCorrida = leiturasDaCorrida(leituras); // a velocidade, só depois da largada
+  const soma = naCorrida.reduce((total, l) => total + l.velocidade, 0);
   return {
     tensao: ultima ? ultima.tensao_bateria : null,
     correnteMa: Math.round((ultima?.corrente_bateria ?? 0) * 1000),
-    velocidadeMedia: leituras.length > 0 ? soma / leituras.length : 0,
-    velocidadePico: leituras.reduce((maximo, l) => Math.max(maximo, l.velocidade), 0),
+    velocidadeMedia: naCorrida.length > 0 ? soma / naCorrida.length : 0,
+    velocidadePico: naCorrida.reduce((maximo, l) => Math.max(maximo, l.velocidade), 0),
   };
 }
 

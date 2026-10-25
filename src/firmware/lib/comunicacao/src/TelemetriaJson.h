@@ -37,9 +37,9 @@
 namespace micromouse {
 
 /// Tamanho de buffer que comporta o pior caso do JSON de telemetria (todos os números no maior
-/// valor, com o evento `objetivo_alcancado`, todas as falhas do boot e os 4 dispositivos do I²C em
-/// falha), com folga. O pior caso tem 658 caracteres; com um buffer menor, `serializar` devolve `0`
-/// e a linha se perde. Ao acrescentar campos, confira o teste
+/// valor, com o evento `objetivo_alcancado`, todas as falhas do boot, os 4 dispositivos do I²C em
+/// falha e a fase mais longa), com folga. O pior caso tem 689 caracteres; com um buffer menor,
+/// `serializar` devolve `0` e a linha se perde. Ao acrescentar campos, confira o teste
 /// `test_pior_caso_cabe_em_tamanho_max_json_telemetria`.
 constexpr size_t TAMANHO_MAX_JSON_TELEMETRIA = 768;
 
@@ -75,6 +75,10 @@ struct PacoteTelemetria {
   bool bootOk = true;                  ///< Autoteste aprovado e motores liberados (`boot_ok`)
   const char* falhasBoot = nullptr;    ///< O que falhou, separado por vírgula; nullptr = "" (`boot_falhas`)
   uint32_t bootMs = 0;                 ///< Duração do boot, em ms (`boot_ms`)
+
+  /// Fase do robô na corrida (#242): `aguardando_calibracao`, `aguardando_largada`, `em_corrida` ou
+  /// `encerrada` (`fase`). nullptr = "" (a fase não foi informada).
+  const char* fase = nullptr;
 
   // Falhas do I²C durante a corrida (#241):
   const char* falhasI2c = nullptr;     ///< Dispositivos em falha, separados por vírgula; nullptr = "" (`i2c_falhas`)

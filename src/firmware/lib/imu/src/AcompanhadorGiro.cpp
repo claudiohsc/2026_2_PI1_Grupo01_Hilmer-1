@@ -23,6 +23,14 @@ void AcompanhadorGiro::iniciarCalibracao() {
   leitura_.valida = false;
 }
 
+void AcompanhadorGiro::definirVies(int16_t viesDecimosDps) {
+  integrador_.definirVies(viesDecimosDps);
+  falhasSeguidas_ = 0;
+  leitura_.calibracao = integrador_.estadoCalibracao();
+  leitura_.anguloMiligraus = 0;
+  leitura_.valida = true;
+}
+
 void AcompanhadorGiro::zerarAngulo() {
   integrador_.zerarAngulo();
   leitura_.anguloMiligraus = 0;

@@ -25,6 +25,19 @@ enum class FaixaGiro : uint8_t {
 /// ±250 °/s; ±500 °/s cobre o giro com folga e mantém boa resolução (0,015 °/s por LSB).
 constexpr FaixaGiro FAIXA_GIRO = FaixaGiro::Dps500;
 
+/// Faixa de medição do acelerômetro do MPU6050 (registrador ACCEL_CONFIG).
+enum class FaixaAcelerometro : uint8_t {
+  G2,   ///< ±2 g: 16384 LSB por g.
+  G4,   ///< ±4 g: 8192 LSB por g.
+  G8,   ///< ±8 g: 4096 LSB por g.
+  G16   ///< ±16 g: 2048 LSB por g.
+};
+
+/// Faixa usada pelo robô na detecção de colisão (#192). Uma batida contra a parede passa de 1 g
+/// com facilidade; ±4 g cobre o pico sem saturar e mantém boa resolução (0,12 mg por LSB).
+/// PROVISÓRIA: confirme na bancada, batendo o robô devagar contra a parede e vendo o pico lido.
+constexpr FaixaAcelerometro FAIXA_ACELEROMETRO = FaixaAcelerometro::G4;
+
 /// Intervalo entre leituras do giroscópio, em ms: o mesmo ciclo da tarefa de navegação.
 constexpr uint32_t PERIODO_LEITURA_IMU_MS = 10;
 

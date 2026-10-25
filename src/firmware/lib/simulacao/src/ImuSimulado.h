@@ -1,16 +1,17 @@
 #pragma once
 
 /// @file ImuSimulado.h
-/// @brief Implementação falsa de `IImu` para testes sem hardware.
+/// @brief Implementação falsa de `IImu` e `IAcelerometro` para testes sem hardware.
 
 #include <stdint.h>
 
+#include "IAcelerometro.h"
 #include "IImu.h"
 
 namespace micromouse {
 
 /// IMU falsa: devolve a taxa de giro que o teste definir, somada a um viés e a um ruído, sem
-/// hardware.
+/// hardware. A aceleração no plano é a que o teste definir (zero por padrão), sem viés nem ruído.
 ///
 /// A leitura é `taxa + viés + ruído`, limitada à faixa de `int16_t`. O ruído é alternado e
 /// determinístico (+amplitude, −amplitude, +amplitude, …), para os testes serem reproduzíveis.
@@ -22,7 +23,7 @@ namespace micromouse {
 /// imu.definirTaxa(900);       // o robô gira para a esquerda a 90 °/s
 /// IImu& sensor = imu;         // a lógica recebe só a interface
 /// @endcode
-class ImuSimulado : public IImu {
+class ImuSimulado : public IImu, public IAcelerometro {
  public:
   /// Taxa de giro "verdadeira" do robô, em décimos de °/s.
   void definirTaxa(int16_t taxaDecimosDps) { taxa_ = taxaDecimosDps; }
@@ -34,6 +35,12 @@ class ImuSimulado : public IImu {
   void definirRuidoAlternado(int16_t amplitudeDecimosDps) {
     amplitude_ = amplitudeDecimosDps;
     proximoPositivo_ = true;
+  }
+
+  /// Aceleração nos eixos X e Y que o acelerômetro lê, em mg.
+  void definirAceleracao(int16_t axMg, int16_t ayMg) {
+    ax_ = axMg;
+    ay_ = ayMg;
   }
 
   /// Liga ou desliga a simulação de sensor sem resposta.
@@ -62,7 +69,19 @@ class ImuSimulado : public IImu {
     return true;
   }
 
+  /// @copydoc IAcelerometro::lerAceleracaoPlano
+  bool lerAceleracaoPlano(int16_t& axMg, int16_t& ayMg) override {
+    if (falha_) {
+      return false;
+    }
+    axMg = ax_;
+    ayMg = ay_;
+    return true;
+  }
+
  private:
+  int16_t ax_ = 0;
+  int16_t ay_ = 0;
   int16_t taxa_ = 0;
   int16_t vies_ = 0;
   int16_t amplitude_ = 0;

@@ -12,7 +12,7 @@ import {
   percentualBateria,
 } from '../lib/formatacao';
 import { mapaConhecido } from '../lib/labirinto';
-import { calcularMetricas, fracaoDoLimite } from '../lib/painelAoVivo';
+import { calcularMetricas, fracaoDoLimite, leiturasDaCorrida } from '../lib/painelAoVivo';
 import type { EstadoPainel, Labirinto, MapaCelula, Orientacao, Posicao, Telemetria } from '../tipos';
 import './TelaAoVivo.css';
 
@@ -26,7 +26,7 @@ const GraficoVelocidade = lazy(() =>
 
 interface TelaAoVivoProps {
   labirinto: Labirinto;
-  /** Paredes conhecidas do labirinto (vazio enquanto o mapa da corrida real não chega, #239). */
+  /** Paredes conhecidas do labirinto (descobertas pelo robô em mapa_celulas ou simuladas, #239). */
   mapa: MapaCelula[];
   estado: EstadoPainel;
   /** Tempo da corrida, em segundos. */
@@ -71,12 +71,18 @@ export function TelaAoVivo({
   const tensao = metricas.tensao ?? TENSAO_CHEIA_V;
   const usoDoLimite = fracaoDoLimite(tempo);
 
+  // Antes da largada o robô já manda leituras (parado na célula de partida), mas o gráfico e os
+  // cards de velocidade e tempo só passam a contar depois dela (#242).
+  const leiturasNaCorrida = leiturasDaCorrida(leituras);
+
   const detalheTempo =
     estado === 'concluido'
       ? `Concluído na Tentativa ${tentativa} · Nota ${notaDaTentativa(tentativa)}`
       : estado === 'nao_concluido'
         ? `Tentativa ${tentativa} de ${MAXIMO_TENTATIVAS} · Tempo esgotado`
-        : `Tentativa ${tentativa} de ${MAXIMO_TENTATIVAS} · Limite: ${formatarMinutos(LIMITE_TEMPO_S)}`;
+        : estado === 'aguardando' && leituras.length > 0
+          ? `Pronto na largada · Tentativa ${tentativa} de ${MAXIMO_TENTATIVAS} · Limite: ${formatarMinutos(LIMITE_TEMPO_S)}`
+          : `Tentativa ${tentativa} de ${MAXIMO_TENTATIVAS} · Limite: ${formatarMinutos(LIMITE_TEMPO_S)}`;
 
   return (
     <div className="ao-vivo">
@@ -84,18 +90,18 @@ export function TelaAoVivo({
         <GradeLabirinto
           linhas={labirinto.linhas}
           colunas={labirinto.colunas}
-          mapa={mapaConhecido(mapa, percurso)}
+          mapa={aoVivo ? mapa : mapaConhecido(mapa, percurso)}
           percurso={percurso}
           robo={robo}
         />
 
         <div className="ao-vivo__grafico">
           <h2 className="ao-vivo__titulo">Velocidade (m/s) × tempo (s)</h2>
-          {leituras.length === 0 ? (
+          {leiturasNaCorrida.length === 0 ? (
             <p className="grafico-vazio">O gráfico aparece quando a corrida começar.</p>
           ) : (
             <Suspense fallback={<p className="grafico-vazio">Carregando o gráfico…</p>}>
-              <GraficoVelocidade leituras={leituras} />
+              <GraficoVelocidade leituras={leiturasNaCorrida} />
             </Suspense>
           )}
         </div>

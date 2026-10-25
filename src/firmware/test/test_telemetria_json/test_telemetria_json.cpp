@@ -94,6 +94,25 @@ void test_serializa_telemetria_com_evento_objetivo_alcancado() {
   TEST_ASSERT_EQUAL_STRING("objetivo_alcancado", doc["evento"].as<const char*>());
 }
 
+/// Critério 4 da colisão (#192): o evento `colisao` sai na telemetria, com a posição preservada.
+void test_serializa_telemetria_com_evento_colisao() {
+  PacoteTelemetria pacote;
+  pacote.numeroSequencia = 42;
+  pacote.pose = Pose{{1, 2}, Direcao::Leste};
+  pacote.poseValida = true;
+  pacote.evento = "colisao";
+
+  char buffer[CAPACIDADE];
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)));
+
+  JsonDocument doc;
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_EQUAL_STRING("colisao", doc["evento"].as<const char*>());
+  TEST_ASSERT_EQUAL_UINT8(1, doc["posicao_linha"].as<uint8_t>());
+  TEST_ASSERT_EQUAL_UINT8(2, doc["posicao_coluna"].as<uint8_t>());
+  TEST_ASSERT_EQUAL_STRING("L", doc["orientacao"].as<const char*>());
+}
+
 void test_serializa_campos_de_diagnostico_do_tof() {
   PacoteTelemetria pacote;
   pacote.tofFrenteMm = 250;
@@ -161,6 +180,21 @@ void test_serializa_resultado_do_boot() {
   TEST_ASSERT_EQUAL_UINT32(640, doc["boot_ms"].as<uint32_t>());
 }
 
+void test_serializa_a_fase_do_robo() {
+  PacoteTelemetria pacote;
+  char buffer[CAPACIDADE];
+  JsonDocument doc;
+
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)));
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_EQUAL_STRING("", doc["fase"].as<const char*>());  // não informada
+
+  pacote.fase = "aguardando_largada";
+  TEST_ASSERT_GREATER_THAN_UINT32(0, TelemetriaJson::serializar(pacote, buffer, sizeof(buffer)));
+  TEST_ASSERT_EQUAL(DeserializationError::Ok, deserializeJson(doc, buffer).code());
+  TEST_ASSERT_EQUAL_STRING("aguardando_largada", doc["fase"].as<const char*>());
+}
+
 void test_serializa_falhas_do_i2c() {
   PacoteTelemetria padrao;  // sem preencher: nenhuma falha, nenhum reinício
   char buffer[CAPACIDADE];
@@ -202,6 +236,7 @@ void test_pior_caso_cabe_em_tamanho_max_json_telemetria() {
   pacote.bootOk = false;
   pacote.falhasBoot = "tof_esquerdo,tof_frontal,tof_direito,mpu6050,tof_0x29";
   pacote.bootMs = UINT32_MAX;
+  pacote.fase = "aguardando_calibracao";
   pacote.falhasI2c = "tof_esquerdo,tof_frontal,tof_direito,mpu6050";
   pacote.reiniciosI2c = UINT32_MAX;
 
@@ -233,9 +268,11 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_serializa_telemetria_padrao_sem_evento);
   RUN_TEST(test_serializa_telemetria_com_evento_objetivo_alcancado);
+  RUN_TEST(test_serializa_telemetria_com_evento_colisao);
   RUN_TEST(test_serializa_campos_de_diagnostico_do_tof);
   RUN_TEST(test_serializa_campos_do_deslocamento_estimado);
   RUN_TEST(test_serializa_resultado_do_boot);
+  RUN_TEST(test_serializa_a_fase_do_robo);
   RUN_TEST(test_serializa_falhas_do_i2c);
   RUN_TEST(test_pior_caso_cabe_em_tamanho_max_json_telemetria);
   RUN_TEST(test_buffer_insuficiente_retorna_zero);
