@@ -91,8 +91,10 @@ struct EntradaCiclo {
 /// e o ToF frontal não mostra a frente livre (uma parede que a percepção não viu). Depois de
 /// `colisoesSeguidasMaximas` colisões sem concluir uma célula, pára em `Falha`.
 ///
-/// **Fora do escopo** (outras issues): motor travado (#341), falha no I²C (#241) e tempo limite da
-/// corrida (#242/#185). Nesses casos o ciclo só para em `Falha`, com os motores freados.
+/// **Fora do escopo** (outras issues): motor travado (#341) e tempo limite da corrida (#242/#185).
+/// Nesses casos o ciclo só para em `Falha`, com os motores freados. Na falha do I²C (#241), o
+/// `main.cpp` tira a permissão (`EntradaCiclo::liberado`) enquanto ela durar: o ciclo freia, cancela
+/// o movimento e espera; quando a falha passa, percebe de novo a partir de onde parou.
 ///
 /// Não depende do Arduino e não aloca memória: testado no ambiente `native`.
 class CicloNavegacao {

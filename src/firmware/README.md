@@ -550,14 +550,14 @@ Os parâmetros ficam em `lib/inicializacao/src/ConfiguracaoBoot.h`. O `WHO_AM_I`
 
 ## Falha do I²C durante a corrida
 
-Com o robô andando, um mau contato, um tranco ou uma queda de tensão podem tirar do barramento um dos 4 dispositivos (os 3 VL53L0X e o MPU6050). O firmware detecta a falha em cada um, repete a leitura, reinicia o dispositivo que falhou e para os motores enquanto a falha durar ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)). A lógica fica em `lib/falhas`, testada no computador (`test_falhas_i2c`); o `main.cpp` só liga as peças às tarefas.
+Com o robô andando, um mau contato, um tranco ou uma queda de tensão podem tirar do barramento um dos 4 dispositivos (os 3 VL53L0X e o MPU6050). O firmware detecta a falha em cada um, repete a leitura, reinicia o dispositivo que falhou e para os motores enquanto a falha durar ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)). A lógica fica em `lib/falhas`, testada no computador (`test_falhas_i2c`, e a corrida inteira com falhas no `test_integracao_falhas_i2c`); o `main.cpp` só liga as peças às tarefas.
 
 **O que conta como falha.**
 
 | Dispositivo | Falha | Não é falha | Quem avalia |
 |---|---|---|---|
 | VL53L0X | Não respondeu no I²C (amostra `Falha` no `CombinadorTof`) ou ficou mais de `IDADE_MAXIMA_LEITURA_TOF_MS` (100 ms) sem medida nova | Medida fora de alcance ou abaixo do mínimo (o sensor respondeu); ciclo sem medida nova dentro dos 100 ms (o sensor ainda está medindo) | `VigiaTof`, na navegação |
-| MPU6050 | Leitura do giroscópio não confirmada (`AcompanhadorGiro` conta a falha) | Leitura que falhou porque a navegação estava com o barramento, reiniciando um ToF | `leituraDaImu`, na tarefa da IMU |
+| MPU6050 | Leitura do giroscópio (o `AcompanhadorGiro` conta a falha) ou do acelerômetro não confirmada | Leitura que falhou porque a navegação estava com o barramento, reiniciando um ToF | `leituraDaImu`, na tarefa da IMU |
 
 **Situações de cada dispositivo** (`SupervisorI2c`), com os valores de `ConfiguracaoFalhasI2c.h`:
 
@@ -570,17 +570,19 @@ Com o robô andando, um mau contato, um tranco ou uma queda de tensão podem tir
 
 Em `em_falha` ou `inoperante`, 3 leituras boas seguidas devolvem o dispositivo a `ok`, e os motores voltam quando os 4 estiverem bem. Um dispositivo que ficou em reset no último reinício (o driver não conseguiu configurá-lo) não é mais lido, então só volta com o robô reiniciado.
 
-**Motores.** A `TravaFalhaI2c` usa a mesma `MotoresComTrava` do boot: travada, toda potência vira freio, e o estimador do deslocamento fica sabendo que o robô parou. Ela só solta a trava que ela mesma pôs, então um boot reprovado continua travando até reiniciar. A navegação aplica a trava a cada ciclo, inclusive pela falha da IMU, e antes de reiniciar um ToF, para o robô não seguir andando durante o reinício.
+**Motores.** A `TravaFalhaI2c` usa a mesma `MotoresComTrava` do boot: travada, toda potência vira freio, e o estimador do deslocamento fica sabendo que o robô parou. Ela só solta a trava que ela mesma pôs, então um boot reprovado continua travando até reiniciar. A navegação aplica a trava a cada ciclo, inclusive pela falha da IMU, e antes de reiniciar um ToF, para o robô não seguir andando durante o reinício. Ela também tira a permissão do `CicloNavegacao` (`EntradaCiclo::liberado`) enquanto a falha durar: o ciclo cancela o movimento e espera, e, quando a falha passa, percebe de novo a partir de onde parou e segue a corrida. Sem isso, o movimento travado acabaria por tempo esgotado, como `Falha` do ciclo.
 
-**Log e telemetria.** Cada mudança de situação, cada reinício e cada mudança da trava viram uma linha:
+**Log e telemetria.** Cada mudança de situação, cada reinício e cada mudança da trava viram uma linha. No exemplo, o ToF frontal falha no meio de um avanço e volta no primeiro reinício: o ciclo de navegação espera (`aguardando_largada`) e retoma percebendo a célula de novo:
 
 ```json
 {"status":"i2c","dispositivo":"tof_frontal","situacao":"tentando"}
 {"status":"i2c","dispositivo":"tof_frontal","situacao":"em_falha"}
 {"status":"motores_travados_i2c"}
 {"status":"reinicio_i2c","dispositivo":"tof_frontal","sucesso":true}
+{"status":"navegacao","estado":"aguardando_largada","falha":"nenhuma","celulas":2}
 {"status":"i2c","dispositivo":"tof_frontal","situacao":"ok"}
 {"status":"motores_liberados_i2c"}
+{"status":"navegacao","estado":"percebendo","falha":"nenhuma","celulas":2}
 ```
 
 A telemetria repete em todo pacote `i2c_falhas`, os dispositivos em falha agora separados por vírgula (`""` sem falha), e `i2c_reinicios`, os reinícios pedidos desde o boot.
@@ -590,6 +592,7 @@ A telemetria repete em todo pacote `i2c_falhas`, os dispositivos em falha agora 
 - O reinício de um VL53L0X segura a navegação e o barramento por algumas dezenas de ms (2 × 10 ms de partida mais a calibração do `init()`). Nesse tempo a IMU perde leituras, que não contam como falha, e o ângulo de giro não soma; os motores já estão parados.
 - Os ToF são reiniciados um por vez. Se dois caírem juntos para o endereço de fábrica (0x29), por exemplo numa queda de tensão, um reinício pode não bastar: eles ficam `inoperante`, com os motores parados, e o robô precisa ser reiniciado.
 - Um ToF sem resposta é declarado em falha em cerca de 50 ms; um ToF que responde mas parou de medir, em cerca de 0,55 s (uma falha a cada 110 ms sem medida nova).
+- Nas tentativas da IMU (até 50 ms), o giro não soma ao ângulo, como já acontecia antes (#378). Se a falha pegar o robô girando, o rumo pode ficar alguns graus errado.
 
 **Valores provisórios.** As 5 tentativas, as 3 leituras para recuperar, os 3 reinícios e os 500 ms entre reinícios ficam em `lib/falhas/src/ConfiguracaoFalhasI2c.h` e não foram medidos. Na bancada, com as rodas no ar e o monitor serial aberto, solte e recoloque o conector de um VL53L0X ou do MPU6050 com o robô ligado e confira, no log, a sequência acima e a volta dos motores. Combine com a eletrônica como soltar o conector sem curto no barramento.
 

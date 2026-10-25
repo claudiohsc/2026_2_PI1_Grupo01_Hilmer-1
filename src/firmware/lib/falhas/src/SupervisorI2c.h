@@ -46,10 +46,10 @@ struct DecisaoI2c {
 /// Nome da situação no log: `ok`, `tentando`, `em_falha` ou `inoperante`.
 const char* nomeSituacao(SituacaoI2c situacao);
 
-/// Leitura da IMU para o supervisor: `falhou` vem da contagem de falhas do `AcompanhadorGiro`, e
-/// `barramentoOcupado` da contagem de esperas esgotadas do `BarramentoI2c`. Se a leitura falhou só
-/// porque a outra tarefa estava com o barramento (por exemplo, reiniciando um ToF), não é falha da
-/// IMU.
+/// Leitura da IMU para o supervisor: `falhou` vem da contagem de falhas do `AcompanhadorGiro` (o
+/// giroscópio) e da leitura do acelerômetro (#192), que é o mesmo MPU6050, e `barramentoOcupado` da
+/// contagem de esperas esgotadas do `BarramentoI2c`. Se a leitura falhou só porque a outra tarefa
+/// estava com o barramento (por exemplo, reiniciando um ToF), não é falha da IMU.
 constexpr LeituraI2c leituraDaImu(bool falhou, bool barramentoOcupado) {
   return !falhou ? LeituraI2c::Ok : barramentoOcupado ? LeituraI2c::SemNovidade : LeituraI2c::Falha;
 }
