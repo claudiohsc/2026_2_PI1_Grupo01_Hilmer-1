@@ -42,6 +42,7 @@
 #include "CorretorDeslocamentoTof.h"
 #include "CredenciaisSupabase.h"
 #include "DeslocamentoEstimado.h"
+#include "DetectorColisao.h"
 #include "DetectorObjetivo.h"
 #include "EncoderEsp32.h"
 #include "EnvioHttpSupabase.h"
@@ -57,6 +58,7 @@
 #include "PoliticaReenvio.h"
 #include "ReconexaoWifi.h"
 #include "RedeWifiEsp32.h"
+#include "RegistradorPotencia.h"
 #include "RelatorioBoot.h"
 #include "RotinaCalibracao.h"
 #include "TelemetriaJson.h"
@@ -102,9 +104,9 @@ static micromouse::MotoresDrv8833 motores(micromouse::pinos::MOTOR_ESQ_IN1,
 /// próprio driver.
 ///
 /// A estimativa fica colada no driver, para ver só o que chega de fato às rodas. Os outros
-/// decoradores a envolvem, nesta ordem: `MotoresComTrava` (#50) → `MotoresComProtecao` (#341) →
-/// `MotoresComEstimativa` → `MotoresDrv8833`. Assim um comando recusado pela trava ou pela proteção
-/// chega ao estimador como freio.
+/// decoradores a envolvem, nesta ordem: `RegistradorPotencia` (#192) → `MotoresComTrava` (#50) →
+/// `MotoresComProtecao` (#341) → `MotoresComEstimativa` → `MotoresDrv8833`. Assim um comando recusado
+/// pela trava ou pela proteção chega ao estimador como freio.
 static micromouse::DeslocamentoEstimado deslocamento(motores);
 static micromouse::IMotores& motoresEstimativa =
     micromouse::ENCODERS_INSTALADOS ? static_cast<micromouse::IMotores&>(motores) : deslocamento.motores();
@@ -117,11 +119,15 @@ static micromouse::MotoresComProtecao motoresProtegidos(motoresEstimativa);
 /// Trava dos motores (#50): começa travada e só é liberada com o autoteste do boot aprovado.
 static micromouse::MotoresComTrava motoresComTrava(motoresProtegidos);
 
+/// Guarda a última potência comandada, para a detecção de colisão (#192) saber se o robô foi mandado
+/// andar. É a camada de fora de todas e só a tarefa de navegação a usa.
+static micromouse::RegistradorPotencia registradorPotencia(motoresComTrava);
+
 /// Motores que a navegação aciona: sempre a camada de fora, nunca o driver direto, para a trava
 /// valer. Cada camada tem o próprio nome e esta referência aponta para a de fora. Com a trava por
 /// fora, a proteção (#341) recebe freio enquanto o robô não foi liberado e não acusa um motor
 /// travado falso.
-static micromouse::IMotores& motoresTracao = motoresComTrava;
+static micromouse::IMotores& motoresTracao = registradorPotencia;
 
 /// Encoders usados pela odometria e pela telemetria: os reais, se instalados; senão, os estimados.
 /// A troca é só aqui: a `Odometria` e o `MedidorDeslocamento` não mudam.
@@ -195,11 +201,28 @@ static micromouse::AcompanhadorGiro acompanhadorGiro(imu);
 static micromouse::LeituraGiro leituraGiro;
 static portMUX_TYPE travaGiro = portMUX_INITIALIZER_UNLOCKED;
 
+/// Última aceleração do acelerômetro do mesmo MPU6050, no plano do chão, para a detecção de colisão
+/// (#192). A tarefa da IMU a escreve, e a navegação a copia, sempre sob `travaGiro`.
+struct AceleracaoPlano {
+  int16_t axMg = 0;
+  int16_t ayMg = 0;
+  bool valida = false;
+};
+static AceleracaoPlano ultimaAceleracao;
+
 /// Cópia da última leitura do giroscópio: taxa e ângulo de giro (para os giros de 90° e 180°, #190,
 /// e para a proteção dos motores, #341), com a validade e os contadores.
 static micromouse::LeituraGiro lerGiro() {
   portENTER_CRITICAL(&travaGiro);
   const micromouse::LeituraGiro copia = leituraGiro;
+  portEXIT_CRITICAL(&travaGiro);
+  return copia;
+}
+
+/// Cópia da última aceleração no plano (#192).
+static AceleracaoPlano lerAceleracao() {
+  portENTER_CRITICAL(&travaGiro);
+  const AceleracaoPlano copia = ultimaAceleracao;
   portEXIT_CRITICAL(&travaGiro);
   return copia;
 }
@@ -217,6 +240,12 @@ static micromouse::CorrecaoPelasParedes correcaoParedes;
 /// Gatilho da largada (#184): a mão na frente do ToF frontal, ou o comando serial `L`. Só a tarefa
 /// de navegação o usa.
 static micromouse::GatilhoLargada gatilhoLargada;
+
+/// Detecção de colisão (#192): o pico de aceleração da IMU e a frente parada pelo ToF. Só a tarefa de
+/// navegação a usa. `colisoesPendentes` são as colisões que a telemetria ainda não enviou como evento
+/// `colisao`, protegidas por `travaOdometria`.
+static micromouse::DetectorColisao detectorColisao;
+static uint32_t colisoesPendentes = 0;
 
 /// Pedidos da telemetria (comandos seriais) para a tarefa de navegação, protegidos por
 /// `travaOdometria`: `Z` recoloca o robô na largada e `L` libera a largada sem o gesto.
@@ -276,8 +305,12 @@ static void tarefaImu(void*) {
     // O `vTaskDelayUntil` acorda em múltiplos exatos do período, então o intervalo é o período.
     const micromouse::LeituraGiro leitura = acompanhadorGiro.ciclo(micromouse::PERIODO_LEITURA_IMU_MS);
 
+    AceleracaoPlano aceleracao;
+    aceleracao.valida = imu.lerAceleracaoPlano(aceleracao.axMg, aceleracao.ayMg);
+
     portENTER_CRITICAL(&travaGiro);
     leituraGiro = leitura;
+    ultimaAceleracao = aceleracao;
     portEXIT_CRITICAL(&travaGiro);
 
     if (!calibradoAnunciado && leitura.calibracao == micromouse::EstadoCalibracao::Calibrado) {
@@ -482,9 +515,12 @@ static void tarefaRede(void*) {
 /// giroscópio (sem o viés). O giroscópio é obrigatório: sem ele, um giro no lugar (ToF frontal
 /// parado) seria lido como motor travado. Por isso, sem ToF ou sem giroscópio válidos a leitura vai
 /// como inválida e a proteção não conclui nada: ela **não freia por engano**, mas também não protege.
+/// Uma frente além do alcance do ToF (leitura no máximo, 1200 mm) também vai como inválida: ela não muda
+/// andando por um corredor longo e seria lida como robô parado (#192).
 static micromouse::MedidasProtecao medidasDaProtecao(const LeituraTofTelemetria& leituraTof) {
   const micromouse::LeituraGiro giro = lerGiro();
-  const bool sensoresValidos = leituraTof.valida && giro.valida;
+  const bool sensoresValidos = leituraTof.valida && giro.valida &&
+                               leituraTof.distancias.frenteMm < micromouse::DISTANCIA_MAXIMA_VALIDA_TOF_MM;
   return micromouse::MedidasProtecao{sensoresValidos, leituraTof.distancias.frenteMm, giro.taxaDecimosDps};
 }
 
@@ -579,6 +615,7 @@ static void tarefaNavegacao(void*) {
 
     if (reiniciarNavegacao) {
       largadaPendente = false;
+      detectorColisao.reiniciar();
       portENTER_CRITICAL(&travaOdometria);
       correcaoParedes.reiniciar();
       portEXIT_CRITICAL(&travaOdometria);
@@ -621,8 +658,35 @@ static void tarefaNavegacao(void*) {
     entrada.leituraNova = tofNovo;
     entrada.giro = giro;
     entrada.dtMs = PERIODO_NAVEGACAO_MS;
+
+    // Colisão (#192): só com o robô sendo conduzido. Parado, em recuperação ou antes da largada, a
+    // detecção fica desligada.
+    const AceleracaoPlano aceleracao = lerAceleracao();
+    micromouse::EntradaDeteccao deteccao;
+    deteccao.ativo = entrada.liberado && cicloNavegacao.emMovimento();
+    deteccao.aceleracaoValida = aceleracao.valida;
+    deteccao.axMg = aceleracao.axMg;
+    deteccao.ayMg = aceleracao.ayMg;
+    deteccao.potencia = registradorPotencia.ultimaPotencia();
+    deteccao.medidas = micromouse::MedidasProtecao{leituraTof.valida, leituraTof.distancias.frenteMm, giro.taxaDecimosDps};
+    deteccao.dtMs = PERIODO_NAVEGACAO_MS;
+    entrada.colisao = detectorColisao.atualizar(deteccao);
+
+    const uint32_t colisoesAntes = cicloNavegacao.colisoes();
     const micromouse::EstadoCiclo antes = cicloNavegacao.estado();
     const micromouse::EstadoCiclo depois = cicloNavegacao.atualizar(entrada, motoresTracao);
+    if (cicloNavegacao.colisoes() != colisoesAntes) {
+      Serial.printf("{\"status\":\"colisao\",\"tipo\":\"%s\",\"desvio_mg\":%lu,\"celulas\":%lu}\n",
+                    micromouse::nomeDoTipoColisao(cicloNavegacao.ultimaColisao()),
+                    static_cast<unsigned long>(detectorColisao.desvioMg()),
+                    static_cast<unsigned long>(cicloNavegacao.celulasAvancadas()));
+      portENTER_CRITICAL(&travaOdometria);
+      ++colisoesPendentes;
+      portEXIT_CRITICAL(&travaOdometria);
+      // Se a proteção do motor travado (#341) freou o robô, ela segura o freio até aqui: o recuo precisa
+      // de ré. O ciclo já parou os motores e só manda potência nos ciclos seguintes.
+      motoresProtegidos.liberar();
+    }
     if (depois != antes) {
       Serial.printf("{\"status\":\"navegacao\",\"estado\":\"%s\",\"falha\":\"%s\",\"celulas\":%lu}\n",
                     micromouse::nomeDoEstadoCiclo(depois),
@@ -659,6 +723,11 @@ static void tarefaTelemetria(void*) {
     const bool poseValida = odometria.posicaoValida() && poseConfiavel;
     const uint32_t semCorrecaoMm = deslocamento.distanciaSemCorrecaoMm();
     const bool dispararEvento = detectorObjetivo.consumirEventoChegada();
+    // Um evento por amostra: a chegada vai primeiro, e cada colisão pendente espera a sua vez.
+    const bool dispararColisao = !dispararEvento && colisoesPendentes > 0;
+    if (dispararColisao) {
+      --colisoesPendentes;
+    }
     portEXIT_CRITICAL(&travaOdometria);
 
     portENTER_CRITICAL(&travaTof);
@@ -676,7 +745,7 @@ static void tarefaTelemetria(void*) {
     pacote.poseValida = poseValida;
     pacote.velocidade = 0.0f;     // Provisório até inclusão de cálculo de velocidade instantânea
     pacote.tensaoBateria = 0.0f;  // Provisório até integração de leitura analógica da bateria
-    pacote.evento = dispararEvento ? "objetivo_alcancado" : nullptr;
+    pacote.evento = dispararEvento ? "objetivo_alcancado" : (dispararColisao ? "colisao" : nullptr);
     pacote.tofFrenteMm = leituraTof.distancias.frenteMm;
     pacote.tofEsqMm = leituraTof.distancias.esquerdaMm;
     pacote.tofDirMm = leituraTof.distancias.direitaMm;

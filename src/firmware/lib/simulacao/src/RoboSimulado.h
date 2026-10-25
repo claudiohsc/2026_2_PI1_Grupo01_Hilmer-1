@@ -24,6 +24,12 @@ struct ParametrosRoboSimulado {
   double meiaLarguraMm = 60.0;       ///< Metade da largura do chassi (para a colisão).
   double meioComprimentoMm = 50.0;   ///< Metade do comprimento do chassi (para a colisão).
   double espessuraParedeMm = 12.0;   ///< Espessura das paredes e das colunas.
+  /// `true`: as paredes são sólidas. O chassi que encostaria numa parede fica onde estava (as rodas
+  /// patinam) e o encontrão gera um impacto no acelerômetro (#192). `false` (o padrão): o robô
+  /// atravessa as paredes e só registra o contato em `colidiu()`.
+  bool paredesSolidas = false;
+  /// Pico da aceleração do encontrão, em mg, no eixo do rumo (contra o movimento).
+  int16_t aceleracaoImpactoMg = 2500;
 };
 
 /// Robô "real" que anda de verdade (em ponto flutuante) no labirinto: recebe os comandos dos
@@ -82,6 +88,19 @@ class RoboSimulado : public IMotores {
   double distanciaRodaEsquerdaMm() const { return rodaEsquerdaMm_; }
   double distanciaRodaDireitaMm() const { return rodaDireitaMm_; }
 
+  /// Aceleração do último `avancar()` nos eixos do robô (X para a frente, Y para a esquerda), em mg:
+  /// o pico do encontrão, se houve um nesse intervalo, senão zero.
+  void aceleracaoPlanoMg(int16_t& axMg, int16_t& ayMg) const {
+    axMg = aceleracaoXMg_;
+    ayMg = 0;
+  }
+
+  /// `true` se o robô está parado contra uma parede sólida (empurrando sem andar).
+  bool preso() const { return preso_; }
+
+  /// Encontrões desde `posicionar` (só com `paredesSolidas`).
+  uint32_t encontroes() const { return encontroes_; }
+
   /// `true` se o chassi encostou numa parede em algum momento.
   bool colidiu() const { return colidiu_; }
 
@@ -101,6 +120,7 @@ class RoboSimulado : public IMotores {
  private:
   double raio(double ox, double oy, double ux, double uy) const;
   void conferirColisao();
+  bool emContato() const;
 
   const LabirintoSimulado& labirinto_;
   ParametrosRoboSimulado parametros_;
@@ -112,6 +132,9 @@ class RoboSimulado : public IMotores {
   double taxaRadPorS_ = 0.0;
   bool colidiu_ = false;
   uint32_t msEmContato_ = 0;
+  int16_t aceleracaoXMg_ = 0;
+  bool preso_ = false;
+  uint32_t encontroes_ = 0;
   double rodaEsquerdaMm_ = 0.0;
   double rodaDireitaMm_ = 0.0;
   double xColisao_ = 0.0;

@@ -1,5 +1,6 @@
 #include "ImuMpu6050.h"
 
+#include "ConversorAceleracao.h"
 #include "ConversorGiro.h"
 
 namespace micromouse {
@@ -11,6 +12,8 @@ namespace {
 constexpr uint8_t REG_SMPLRT_DIV = 0x19;    ///< Divisor da taxa de amostragem.
 constexpr uint8_t REG_CONFIG = 0x1A;        ///< Filtro passa-baixa (DLPF_CFG).
 constexpr uint8_t REG_GYRO_CONFIG = 0x1B;   ///< Faixa do giroscópio (FS_SEL).
+constexpr uint8_t REG_ACCEL_CONFIG = 0x1C;  ///< Faixa do acelerômetro (AFS_SEL).
+constexpr uint8_t REG_ACCEL_XOUT_H = 0x3B;  ///< Acelerômetro X (alto e baixo), depois Y (alto e baixo).
 constexpr uint8_t REG_GYRO_ZOUT_H = 0x47;   ///< Eixo Z do giroscópio, byte alto (o baixo vem em 0x48).
 constexpr uint8_t REG_PWR_MGMT_1 = 0x6B;    ///< Reinício, economia de energia e relógio.
 constexpr uint8_t REG_WHO_AM_I = 0x75;      ///< Identificação do chip.
@@ -47,7 +50,8 @@ bool ImuMpu6050::iniciar() {
   const bool configurado = escreverRegistrador(REG_PWR_MGMT_1, PWR_MGMT_1_RELOGIO_GIRO_X) &&
                            escreverRegistrador(REG_CONFIG, CONFIG_DLPF_42HZ) &&
                            escreverRegistrador(REG_SMPLRT_DIV, SMPLRT_DIV_100HZ) &&
-                           escreverRegistrador(REG_GYRO_CONFIG, valorGyroConfig(faixa_));
+                           escreverRegistrador(REG_GYRO_CONFIG, valorGyroConfig(faixa_)) &&
+                           escreverRegistrador(REG_ACCEL_CONFIG, valorAccelConfig(FAIXA_ACELEROMETRO));
   if (!configurado) {
     return false;
   }
@@ -55,6 +59,11 @@ bool ImuMpu6050::iniciar() {
   // Confere que a faixa ficou gravada: um erro aqui mudaria a escala de todas as leituras.
   uint8_t gyroConfig = 0;
   if (!lerRegistradores(REG_GYRO_CONFIG, &gyroConfig, 1) || (gyroConfig & 0x18) != valorGyroConfig(faixa_)) {
+    return false;
+  }
+  uint8_t accelConfig = 0;
+  if (!lerRegistradores(REG_ACCEL_CONFIG, &accelConfig, 1) ||
+      (accelConfig & 0x18) != valorAccelConfig(FAIXA_ACELEROMETRO)) {
     return false;
   }
   iniciado_ = true;
@@ -69,6 +78,17 @@ bool ImuMpu6050::lerTaxaGiroZ(int16_t& taxaDecimosDps) {
   }
   const int16_t bruto = juntarBytesGiro(bytes[0], bytes[1]);
   taxaDecimosDps = ajustarSinalGiro(converterBrutoParaDecimosDps(bruto, faixa_), inverterZ_);
+  return true;
+}
+
+bool ImuMpu6050::lerAceleracaoPlano(int16_t& axMg, int16_t& ayMg) {
+  uint8_t bytes[4] = {0, 0, 0, 0};
+  if (!iniciado_ || !lerRegistradores(REG_ACCEL_XOUT_H, bytes, 4)) {
+    ++falhasLeitura_;
+    return false;
+  }
+  axMg = converterBrutoParaMg(juntarBytesAceleracao(bytes[0], bytes[1]), FAIXA_ACELEROMETRO);
+  ayMg = converterBrutoParaMg(juntarBytesAceleracao(bytes[2], bytes[3]), FAIXA_ACELEROMETRO);
   return true;
 }
 

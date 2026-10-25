@@ -46,6 +46,9 @@ void RoboSimulado::posicionar(const Pose& pose, double desvioLateralMm, double d
   taxaRadPorS_ = 0.0;
   colidiu_ = false;
   msEmContato_ = 0;
+  aceleracaoXMg_ = 0;
+  preso_ = false;
+  encontroes_ = 0;
   rodaEsquerdaMm_ = 0.0;
   rodaDireitaMm_ = 0.0;
 }
@@ -59,15 +62,41 @@ void RoboSimulado::avancar(uint32_t dtMs) {
   const double vDir = tabela_.velocidadeMmPorS(potencia_.direita) * parametros_.fatorDireita;
   const double v = (vEsq + vDir) / 2.0;
   taxaRadPorS_ = (vDir - vEsq) / parametros_.bitolaMm;
+  aceleracaoXMg_ = 0;
   // Em passos de 1 ms, para o raio e a colisão não pularem a parede.
   for (uint32_t i = 0; i < dtMs; i++) {
     const double dt = 0.001;
+    const double xAntes = x_;
+    const double yAntes = y_;
+    const double rumoAntes = rumoRad_;
     const double meio = rumoRad_ + taxaRadPorS_ * dt / 2.0;
     x_ += -std::sin(meio) * v * dt;
     y_ += std::cos(meio) * v * dt;
     rodaEsquerdaMm_ += vEsq * dt;
     rodaDireitaMm_ += vDir * dt;
     rumoRad_ += taxaRadPorS_ * dt;
+    if (parametros_.paredesSolidas && emContato()) {
+      // O chassi não entra na parede: as rodas giram, o robô fica onde estava, e o encontrão (só o
+      // primeiro passo preso) é um pico contra o sentido do movimento.
+      x_ = xAntes;
+      y_ = yAntes;
+      rumoRad_ = rumoAntes;
+      if (!preso_) {
+        ++encontroes_;
+        const bool paraTras = v < 0.0;
+        aceleracaoXMg_ = paraTras ? parametros_.aceleracaoImpactoMg : static_cast<int16_t>(-parametros_.aceleracaoImpactoMg);
+      }
+      if (!colidiu_) {
+        xColisao_ = x_;
+        yColisao_ = y_;
+        rumoColisao_ = rumoGraus();
+      }
+      colidiu_ = true;
+      msEmContato_++;
+      preso_ = true;
+      continue;
+    }
+    preso_ = false;
     conferirColisao();
   }
 }
@@ -158,6 +187,22 @@ double RoboSimulado::erroLateralMm() const {
 double RoboSimulado::erroRumoGraus() const {
   const double graus = rumoGraus();
   return graus - 90.0 * std::floor(graus / 90.0 + 0.5);
+}
+
+bool RoboSimulado::emContato() const {
+  const double fx = -std::sin(rumoRad_);
+  const double fy = std::cos(rumoRad_);
+  const double dx = std::cos(rumoRad_);
+  const double dy = std::sin(rumoRad_);
+  const double c = parametros_.meioComprimentoMm;
+  const double l = parametros_.meiaLarguraMm;
+  const double pontos[8][2] = {{c, l}, {c, -l}, {-c, l}, {-c, -l}, {c, 0}, {-c, 0}, {0, l}, {0, -l}};
+  for (const auto& p : pontos) {
+    if (dentroDeParede(x_ + fx * p[0] + dx * p[1], y_ + fy * p[0] + dy * p[1])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void RoboSimulado::conferirColisao() {
