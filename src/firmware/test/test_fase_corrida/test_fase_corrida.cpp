@@ -245,6 +245,25 @@ void test_reiniciar_em_corrida_volta_a_aguardar_a_largada_e_avisa_de_novo() {
   verificarEstado(EstadoCorrida::Aguardando, d.estado);
 }
 
+void test_encerrada_so_depois_do_objetivo_ou_do_tempo_e_o_reinicio_nao_desfaz() {
+  FaseCorrida fase = calibrada();
+  TEST_ASSERT_FALSE(fase.encerrada());  // aguardando a largada
+  fase.decidir(60, 0, false);
+  TEST_ASSERT_FALSE(fase.encerrada());  // em corrida
+  fase.decidir(500, 40000, true);
+  TEST_ASSERT_TRUE(fase.encerrada());   // objetivo
+
+  fase.reiniciar();  // comando `Z`: não começa nova tentativa
+
+  TEST_ASSERT_TRUE(fase.encerrada());
+  TEST_ASSERT_FALSE(fase.decidir(0, 50000, false).registrar);  // e continua sem enviar nada
+}
+
+void test_sem_calibracao_a_fase_nao_esta_encerrada() {
+  FaseCorrida fase;
+  TEST_ASSERT_FALSE(fase.encerrada());
+}
+
 void test_reiniciar_nao_desencerra_nem_pula_a_calibracao() {
   FaseCorrida semCalibracao;
   semCalibracao.reiniciar();
@@ -397,6 +416,8 @@ int main(int, char**) {
   RUN_TEST(test_objetivo_no_mesmo_ciclo_da_largada_encerra_na_hora);
   RUN_TEST(test_reiniciar_em_corrida_volta_a_aguardar_a_largada_e_avisa_de_novo);
   RUN_TEST(test_reiniciar_nao_desencerra_nem_pula_a_calibracao);
+  RUN_TEST(test_encerrada_so_depois_do_objetivo_ou_do_tempo_e_o_reinicio_nao_desfaz);
+  RUN_TEST(test_sem_calibracao_a_fase_nao_esta_encerrada);
   RUN_TEST(test_integracao_o_servidor_recebe_primeiro_a_espera_e_depois_a_corrida);
   RUN_TEST(test_integracao_o_json_do_lote_leva_o_estado_aguardando_do_contrato);
   RUN_TEST(test_integracao_sem_rede_na_espera_nada_se_perde_e_o_estado_chega_depois);
