@@ -97,6 +97,7 @@ nav:
   - 4. Projeto conceitual:
       - 04-projeto-conceitual/README.md
       - 4.1 Estruturas: 04-projeto-conceitual/estruturas.md
+      - 4.1.1 Labirinto de testes: 04-projeto-conceitual/labirinto-testes.md
       - 4.2 Energia: 04-projeto-conceitual/energia.md
       - 4.2.1 Proteções de entrada: 04-projeto-conceitual/energia/protecoes-entrada.md
       - 4.2.2 Reguladores Step-Down (Buck): 04-projeto-conceitual/energia/reguladores-buck.md
