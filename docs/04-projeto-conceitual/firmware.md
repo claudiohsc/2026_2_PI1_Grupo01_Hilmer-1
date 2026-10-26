@@ -47,7 +47,7 @@ Em 21/10/2026, a eletrônica enviou o esquemático e a lista de componentes da *
 | Placa | ESP32-C3 DevKit | **ESP32-C3 Super Mini** | O log sai pela USB nativa (GPIO18/19), porque a UART0 (GPIO20/21) passou a acionar os motores ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377)) |
 | Sensores de distância | LiDAR 360° por UART | **3 VL53L0X** (esquerdo, frontal e direito) por I²C | A interface dos sensores de distância continua (renomeada de `ILidar` para `ISensorDistancia` no PR #391); muda o driver por trás dela ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344), PR [#391](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/391), em revisão) |
 | Orientação | Só encoders | **IMU MPU6050** no mesmo I²C | Ângulo de giro pelo giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378), PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
-| Motores | Motor TT | **N20** pelo DRV8833 | Pinos novos; detecção de motor travado ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) |
+| Motores | Motor TT | **N20** pelo DRV8833 | Pinos novos, freio no boot, duty máximo e detecção de motor travado sem encoder ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341); veja [Atuação: motores N20 e proteção sem encoder](#atuacao-motores-n20-e-protecao-sem-encoder)) |
 | Encoders | Encoder óptico | Encoders dos N20, em GPIO4 a 7 | A odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)) continua; os parâmetros precisam ser recalibrados para o N20 |
 
 Enquanto os encoders não eram integrados à Rev 2.0, o plano previa estimar o deslocamento pelo comando dos motores, corrigido pelos sensores de distância (modo sem encoder, [#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)). Com os encoders disponíveis, esse modo passa a ser o plano B.
@@ -1032,7 +1032,7 @@ flowchart LR
     controle --> lateral["ControladorCentralizacao<br/>correção lateral (PD)"]
     controle --> frontal["PerfilParadaFrontal<br/>potência base"]
     controle --> motores["IMotores<br/>potência de cada roda"]
-    motores -. implementa .-> drv["MotoresDrv8833<br/>PWM nos GPIO 4 a 7"]
+    motores -. implementa .-> drv["MotoresDrv8833<br/>PWM nos GPIO 10, 3, 20 e 21"]
     motores -. implementa .-> sim["MotoresSimulados<br/>testes"]
 ```
 
@@ -1073,6 +1073,56 @@ Os ganhos, as potências e as distâncias de desaceleração estão em `Configur
 
 **Pendências:** o critério 3 da HU-12 (teste de bancada no labirinto sem contato com as paredes) depende do chassi montado e da pista 4×4. O `ControleMovimento` ainda não está na tarefa de navegação: entra junto com os sensores de distância e a navegação ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)).
 
+## Atuação: motores N20 e proteção sem encoder
+
+Na Rev 2.0, os dois motores **N20** continuam no DRV8833, com pinos novos. O driver `MotoresDrv8833` foi ajustado para começar freado, limitar o duty em movimento e passar cada comando por uma proteção contra motor travado que não depende de encoder ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341), PR [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396)). É a base dos giros ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)) e do movimento da [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01).
+
+```mermaid
+flowchart LR
+    quem["ControleMovimento<br/>DetectorObjetivo"] -->|"definirPotencia / parar"| prot["MotoresComProtecao<br/>(ProtecaoMotorTravado)"]
+    nav["tarefaNavegacao, a cada 10 ms"] -->|"atualizarProtecao(ToF frontal, giro)"| prot
+    prot -->|"potência, ou freio se travado"| drv["MotoresDrv8833<br/>duty máximo de 70%"]
+    drv --> pinos(["IN1/IN2: GPIO10/3<br/>IN3/IN4: GPIO20/21"])
+```
+
+**Figura 18.** Caminho de um comando até as rodas: todo comando passa pela `MotoresComProtecao`, que a navegação alimenta com o ToF frontal e o giroscópio; o driver converte a potência em PWM, já limitado ao duty máximo.
+
+### Regras de Negócio e Algoritmo
+
+* **Pinos:** vêm de `Pinos.h` ([#377](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/377)): IN1/IN2 em GPIO10/GPIO3 (motor esquerdo) e IN3/IN4 em GPIO20/GPIO21 (motor direito, invertido no `main.cpp` pela montagem espelhada).
+* **Freio antes do PWM:** `motores.iniciar()` é a primeira linha do `setup()`. Ele põe os quatro pinos como saída em nível alto, que é o freio do DRV8833 (IN1 e IN2 altos), e só depois liga o PWM, já com duty total, que também é freio. A ordem importa: no Arduino-ESP32 3.x, um `digitalWrite` antes do `pinMode` é ignorado.
+* **Tranco no boot:** GPIO20 e GPIO21 são a UART0 do ESP32-C3. No reset, antes de o firmware rodar, a ROM escreve o log de boot no GPIO21, e o motor direito pode dar um tranco por cerca de 0,3 s. O firmware não alcança esse intervalo. As saídas, a decidir com a eletrônica: ligar o robô com as rodas fora do chão na bancada; resistores de *pull-down* em IN3/IN4; ou desligar o log da ROM pelo eFuse `UART_PRINT_CONTROL`, o que **não tem volta**.
+* **Duty máximo:** a potência máxima pedida pelo controle (1000) vira `DUTY_MAXIMO_MOTORES`, e não 100%; as potências menores ficam proporcionais (500 vira 358 de 1023, e não 511). O freio sempre usa o duty total. O limite (70%) é provisório: um N20 de 6 V numa bateria 2S carregada recebe 6 / 8,4 ≈ 71% da tensão. Uma verificação na compilação garante que frequência × 2^bits não passa dos 80 MHz do LEDC.
+* **Motor travado sem encoder (`ProtecaoMotorTravado`):** com `|potência|` de alguma roda a partir de 300, abre-se uma janela de 500 ms. Se, ao fim dela, o ToF frontal variou menos de 5 mm **e** o giroscópio nunca passou de 5 °/s, o robô está travado: andar em linha reta muda o ToF, girar no lugar muda o giroscópio, e só o robô preso não muda nenhum dos dois. Sem leitura frontal válida, nada é concluído e a contagem recomeça; potência baixa também zera a contagem. O estado `Travado` só sai com `reiniciar()`.
+* **Freio e recusa (`MotoresComProtecao`):** o decorador repassa os comandos ao driver e, a cada ciclo, roda a proteção com a última potência repassada. Travado, freia na hora e transforma todo `definirPotencia` seguinte em freio, até a navegação chamar `liberar()`; assim o controle não religa o motor preso no ciclo seguinte. `parar()` sempre passa. Ele conta os cortes e os comandos recusados.
+* **No `main.cpp`:** o resto do firmware comanda a camada de fora (`registradorPotencia` → `motoresComTrava` → `motoresProtegidos` → estimativa do deslocamento → driver), nunca o driver direto, e a navegação chama `atualizarProtecao(medidasDaProtecao(), 10)` a cada ciclo; um corte novo sai no log como `motor_travado`. `medidasDaProtecao()` usa o ToF frontal ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) e a taxa do giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378)), e uma leitura frontal no alcance máximo do sensor (1200 mm) não vale como medida: num corredor longo a distância não muda andando, e a proteção cortaria os motores por engano. **O giroscópio é obrigatório**: sem ele, um giro no lugar seria lido como motor travado. Ao tratar uma colisão ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)), o `main.cpp` chama `motoresProtegidos.liberar()`, porque a proteção segura o freio e o recuo precisa de ré.
+
+| Parâmetro | Arquivo | Valor | Como conferir na bancada |
+|---|---|---|---|
+| Frequência do PWM | `ConfiguracaoMotores.h` | 20 kHz | O motor não chia nem esquenta parado em duty baixo |
+| Resolução do PWM | `ConfiguracaoMotores.h` | 10 bits (0 a 1023) | — |
+| Duty máximo em movimento (`LIMITE_DUTY_MOTORES_MILESIMOS`) | `ConfiguracaoMotores.h` | 70% (716 de 1023) | Com VM de 5 V, pode subir para 100% |
+| Potência que conta como duty alto | `ConfiguracaoProtecaoMotor.h` | 300 de 1000 | Acima da zona morta do N20 |
+| Tempo até considerar travado | `ConfiguracaoProtecaoMotor.h` | 500 ms | Prender uma roda com a mão em potência de cruzeiro: o corte vem antes de o driver esquentar |
+| Variação mínima do ToF frontal | `ConfiguracaoProtecaoMotor.h` | 5 mm | Acima do ruído do VL53L0X |
+| Taxa de giro mínima | `ConfiguracaoProtecaoMotor.h` | 5 °/s | Acima do ruído do giroscópio parado |
+
+Todos são **provisórios**: a eletrônica ainda não informou a tensão do VM (bateria 2S ou 5 V) nem a tensão nominal, a redução e a corrente de travamento do N20.
+
+### Interface das Classes
+
+* **`ConfiguracaoMotores.h`** (`lib/atuacao`): `FREQUENCIA_PWM_MOTORES_HZ`, `RESOLUCAO_PWM_MOTORES_BITS`, `LIMITE_DUTY_MOTORES_MILESIMOS`, `dutyTotalPwm(bits)`, `dutyMaximoMotores(bits, limite)` e as constantes `DUTY_TOTAL_MOTORES` e `DUTY_MAXIMO_MOTORES`.
+* **`MotoresDrv8833`** (`lib/drivers_esp32`): `iniciar()` (freio e depois PWM), `definirPotencia(potencia)` (limitada a `DUTY_MAXIMO_MOTORES`) e `parar()` (freio com duty total).
+* **`ProtecaoMotorTravado`** (`lib/atuacao`): `atualizar(comandada, medidas, dtMs)`, `estado()` (`Normal`, `Monitorando` ou `Travado`), `travado()`, `tempoMonitoradoMs()` e `reiniciar()`. As medidas vêm em `MedidasProtecao` (`frenteValida`, `frenteMm`, `taxaGiroDecimosDps`).
+* **`MotoresComProtecao`** (`lib/atuacao`): `IMotores` com `atualizarProtecao(medidas, dtMs)`, `liberar()`, `travado()`, `estado()`, `ultimaPotencia()`, `cortes()` e `comandosRecusados()`.
+
+**Rastreabilidade:** `lib/atuacao` (`ConfiguracaoMotores`, `ProtecaoMotorTravado`, `ConfiguracaoProtecaoMotor`, `MotoresComProtecao`) e `lib/drivers_esp32/MotoresDrv8833` atendem à tarefa [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341), da [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01).
+
+**Pendências:**
+
+- A tabela de velocidade da [#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380) precisa ser medida com o duty máximo de 70% já valendo.
+- Bancada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)): o tranco no boot, o sentido das rodas com `definirPotencia({300, 300})`, o duty máximo com a tensão real do VM e o corte com uma roda presa.
+
 ## Atuação: controle de rumo pelo giroscópio e giros em malha fechada
 
 Na Rev 2.0 do hardware, os encoders físicos de roda ainda não estão disponíveis. O ângulo de guinada (*yaw*) medido e integrado a partir da IMU MPU6050 passa a ser a principal fonte de orientação do micromouse ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)). O sistema utiliza essa orientação em malha fechada para duas finalidades essenciais:
@@ -1102,7 +1152,7 @@ flowchart TD
     controleMov --> motores
 ```
 
-**Figura 18.** Controle de orientação em malha fechada: o ângulo de guinada (*yaw*) integrado da IMU orienta tanto os giros no próprio eixo (`ControleGiro`) quanto a manutenção da trajetória retilínea durante o avanço (`ControleMovimento`), compensando o deslizamento de rodas e irregularidades do piso (HU-11).
+**Figura 19.** Controle de orientação em malha fechada: o ângulo de guinada (*yaw*) integrado da IMU orienta tanto os giros no próprio eixo (`ControleGiro`) quanto a manutenção da trajetória retilínea durante o avanço (`ControleMovimento`), compensando o deslizamento de rodas e irregularidades do piso (HU-11).
 
 ### Giros de 90° e 180° em malha fechada (`ControleGiro`)
 
@@ -1166,7 +1216,7 @@ flowchart LR
     inop -- "3 leituras boas seguidas" --> ok
 ```
 
-**Figura 19.** Situações de cada dispositivo no `SupervisorI2c`, com os valores provisórios de `ConfiguracaoFalhasI2c.h`. Os motores só andam com os 4 dispositivos em `ok` ou `tentando`.
+**Figura 20.** Situações de cada dispositivo no `SupervisorI2c`, com os valores provisórios de `ConfiguracaoFalhasI2c.h`. Os motores só andam com os 4 dispositivos em `ok` ou `tentando`.
 
 ### Regras de Negócio e Algoritmo
 
@@ -1178,7 +1228,7 @@ flowchart LR
 * **Recuperação:** em `em_falha` ou `inoperante`, 3 leituras boas seguidas devolvem o dispositivo a `ok` e zeram os reinícios. Uma falha no meio zera a contagem, para um mau contato que oscila não ficar ligando e desligando os motores.
 * **Motores (`TravaFalhaI2c`):** os motores param enquanto qualquer um dos 4 estiver `em_falha` ou `inoperante`, pela mesma `MotoresComTrava` do boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): travada, toda potência vira freio, e o estimador do deslocamento ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)) fica sabendo que o robô parou. A trava do I²C só solta a trava que ela mesma pôs, então um boot reprovado continua travado até o robô ser reiniciado.
 * **Ciclo de navegação ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)):** enquanto a falha durar, a navegação tira a permissão do `CicloNavegacao` (`EntradaCiclo::liberado`). O ciclo cancela o movimento, freia e espera em `aguardando_largada`; quando a falha passa, percebe de novo a célula a partir de onde parou e segue a corrida. Sem isso, o movimento travado acabaria por tempo esgotado, como `Falha` do ciclo, e o robô não voltaria sozinho.
-* **Estado informado:** cada mudança de situação, cada reinício e cada mudança da trava viram uma linha no log (Figura 20), e a telemetria repete em todo pacote `i2c_falhas` (os dispositivos em falha agora, separados por vírgula, ou `""`) e `i2c_reinicios` (os reinícios pedidos desde o boot).
+* **Estado informado:** cada mudança de situação, cada reinício e cada mudança da trava viram uma linha no log (Figura 21), e a telemetria repete em todo pacote `i2c_falhas` (os dispositivos em falha agora, separados por vírgula, ou `""`) e `i2c_reinicios` (os reinícios pedidos desde o boot).
 
 ```json
 {"status":"i2c","dispositivo":"tof_frontal","situacao":"tentando"}
@@ -1191,7 +1241,7 @@ flowchart LR
 {"status":"navegacao","estado":"percebendo","falha":"nenhuma","celulas":2}
 ```
 
-**Figura 20.** Log de uma falha do ToF frontal no meio de um avanço, que volta com o primeiro reinício: os motores param antes do reinício, o ciclo de navegação espera e, depois de 3 medidas boas, os motores voltam e o ciclo percebe a célula de novo.
+**Figura 21.** Log de uma falha do ToF frontal no meio de um avanço, que volta com o primeiro reinício: os motores param antes do reinício, o ciclo de navegação espera e, depois de 3 medidas boas, os motores voltam e o ciclo percebe a célula de novo.
 
 | Parâmetro (`ConfiguracaoFalhasI2c.h`) | Valor | Observação |
 |---|---|---|
@@ -1225,7 +1275,7 @@ flowchart LR
 
 **Rastreabilidade:** `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`, `ConfiguracaoFalhasI2c.h`), `TofVl53l0x::reiniciarSensor`, os campos `i2c_falhas` e `i2c_reinicios` do `TelemetriaJson` e a supervisão no `main.cpp` atendem à tarefa [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), da [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) (Calibração de Hardware).
 
-**Pendências:** a bancada com o hardware: com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado, conferir a sequência da Figura 20 e ajustar os valores provisórios. A forma de soltar o conector sem curto no barramento precisa ser combinada com a eletrônica.
+**Pendências:** a bancada com o hardware: com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado, conferir a sequência da Figura 21 e ajustar os valores provisórios. A forma de soltar o conector sem curto no barramento precisa ser combinada com a eletrônica.
 
 ## Testes
 
@@ -1484,6 +1534,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`), `TofVl53l0x::reiniciarSensor`, `i2c_falhas` e `i2c_reinicios` na telemetria | [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241) Detecção de falha de I²C e nova tentativa | [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) |
 | `lib/hal` (`IImu`), `lib/simulacao` (`ImuSimulado`), `lib/imu` (`IntegradorGiro`, `ConversorGiro`, `AcompanhadorGiro`), `ImuMpu6050`, `BarramentoI2c`, tarefa da IMU no `main.cpp` | [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) Driver do MPU6050 e ângulo de giro | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
 | `lib/atuacao` (`ControleGiro`, `ControleMovimento`, `ConfiguracaoGiro`) | [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190) Controle de rumo pelo giroscópio: giros de 90° e retidão do avanço | [HU-11](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF11, RNF-02) |
+| `lib/atuacao` (`ConfiguracaoMotores`, `ProtecaoMotorTravado`, `MotoresComProtecao`), `lib/drivers_esp32` (`MotoresDrv8833`) | [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) Motores N20 pelo DRV8833: novos pinos, tensão e proteção sem encoder | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
 
 ## Próximos passos
 
@@ -1518,3 +1569,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | 1.3 | 25/10/2026 | Falha do I²C durante a corrida: detecção nos 4 dispositivos, tentativas configuráveis, reinício do ToF pelo XSHUT e da IMU, motores parados e ciclo de navegação em pausa enquanto durar a falha, e estado no log e na telemetria ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)) | Eduardo Viana | — |
 | 1.4 | 24/10/2026 | Controle de rumo pelo giroscópio e giros de 90° e 180° em malha fechada ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)) | Rafael Lima | — |
 | 1.5 | 24/10/2026 | Calibração de hardware: autocalibração dos VL53L0X e do giroscópio em até 1 s (RNF-08); CalibradorTof, CalibradorGiro e RotinaCalibracao (#240) | Rafael Lima | — |
+| 1.6 | 24/10/2026 | Motores N20: freio no boot, duty máximo, detecção de motor travado sem encoder e `MotoresComProtecao` ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) | Eduardo Viana, Cláudio Henrique | — |
