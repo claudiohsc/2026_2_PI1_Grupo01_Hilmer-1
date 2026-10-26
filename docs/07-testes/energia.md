@@ -10,6 +10,7 @@
 | 2.4 | Ensaio de autonomia contínua da bateria LiPo 2S em bancada — [#209](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/209) | 24/10/2026 | 24/10/2026 | Paulo Melo | Autonomia $\ge 25\text{ min}$ com tensão $> 6{,}4\text{ V}$ sob corrente representativa ($\ge 0{,}466\text{ A}$) | Autonomia de $34\text{ min }49\text{ s}$ comprovada sob descarga de $0{,}90\text{ A}$, mantendo $7{,}43\text{ V}$ ($208\text{ mAh}$ consumidos) | S | — | Detalhado abaixo |
 | 2.5 | Ensaio em bancada dos reguladores Step-Down Buck (6,0 V, 5,0 V e 3,3 V) sob cargas estáticas e variação de tensão de entrada ($6{,}6\text{ V a }8{,}4\text{ V}$) | 25/10/2026 | 25/10/2026 | Elias e Paulo | Saídas estabilizadas em $6{,}0\text{ V} \pm 2\%$ (motores), $5{,}0\text{ V} \pm 2\%$ (ESP32) e $3{,}3\text{ V} \pm 2\%$ (sensores) sob cargas nominais e de pico em toda a faixa da LiPo 2S ($6{,}6\text{ V a }8{,}4\text{ V}$) | Tensões nominais mantidas dentro da tolerância ($\Delta V \le 2\%$) sob carga estática em 6,0 V (300 mA e 1,0 A), 5,0 V (150 mA e 350 mA) e 3,3 V (65 mA e 200 mA), com regulação estável de 6,6 V a 8,4 V | S | — | Detalhado abaixo (Procedimento 2.5) |
 | 2.6 | Estimativa teórica da ondulação (*ripple*) de saída dos conversores Step-Down Buck (MP1584EN) sob pior caso ($V_{\text{in}} = 8{,}4\text{ V}$) — [#206](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/206) | 25/10/2026 | 25/10/2026 | Daniel Rodrigues | Ondulação de tensão $\Delta V_{\text{out}} < 50\text{ mV}_{\text{pp}}$ nos barramentos de +6,0 V, +5,0 V e +3,3 V calculada analiticamente pelas equações do datasheet do MP1584 ($1{,}0\text{ MHz}$, $C_{\text{out}} = 11\ \mu\text{F}$) | *Ripple* teórico de $6{,}0\text{ mV}_{\text{pp}}$ (+6V0), $4{,}9\text{ mV}_{\text{pp}}$ (+5V0) e $4{,}8\text{ mV}_{\text{pp}}$ (+3V3), atendendo ao critério com margem $\approx 8\times$ abaixo do limite | S | — | Detalhado na Seção 7 de [4.2.2 Reguladores Step-Down (Buck)](../04-projeto-conceitual/energia/reguladores-buck.md#7-estimativa-teorica-do-ripple-de-saida-e-da-temperatura-issue-206) |
+| 2.7 | Verificação em bancada de continuidade e isolamento da chave geral liga/desliga (SW1 — KCD1) e caminho de potência — [#204](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/204) | 25/10/2026 | 25/10/2026 | Daniel Rodrigues | Resistência de contato desprezível ($\le 0{,}2\ \Omega$ com pontas) na posição ON e circuito aberto pleno (sem fuga) na posição OFF | Aprovado: leitura de $002$ ($\approx 0{,}2\ \Omega$) na posição ON (contato fechado) e leitura $1$ (circuito aberto) na posição OFF | S | — | Detalhado abaixo (Procedimento 2.6) / Especificado em [4.2.7 Chaves e Conectores](../04-projeto-conceitual/energia/chaves-conectores.md) |
 | 2.7 | | | | | | | | | |
 | 2.8 | | | | | | | | | |
 | 2.9 | | | | | | | | | |
@@ -105,6 +106,58 @@ Os ensaios individuais comprovaram que os três reguladores Buck operam com desv
 
 ---
 
+## Procedimento de Teste 2.6: Ensaio de Continuidade e Isolamento da Chave Geral (SW1) e Conectores (Issue #204)
+
+### 1. Contextualização e Metodologia do Ensaio
+O ensaio valida a integridade funcional do caminho primário de potência entre a bateria LiPo 2S e o barramento `VBAT`, composto pela chave geral liga/desliga do tipo *Mini Rocker* **KCD1** (`SW1`), pelo conector polarizado **AMASS XT-30** (`BT1`) e pelo chicote de fios de $0{,}50\text{ mm}^2$ (≈ 20 AWG).
+
+Toda a corrente do robô ($0{,}42\text{ A a }0{,}60\text{ A}$ em cruzeiro, picos dinâmicos de até $1{,}75\text{ A}$ e limite de interrupção pelo PPTC de $\approx 3{,}5\text{ A}$) transita por esse caminho, exigindo resistência de contato desprezível para não degradar a tensão útil entregue aos reguladores Buck e isolamento seguro na posição desligada.
+
+* **Instrumento Empregado:** Multímetro digital **Hikari HM-1002B**, operando na escala de resistência ($200\ \Omega$) e teste de continuidade.
+* **Procedimento:** Conexão das pontas de prova nos dois terminais da chave `SW1`, registrando as leituras com a chave nas posições **Ligada (ON)** e **Desligada (OFF)**.
+
+---
+
+### 2. Resultados das Medições
+
+| Posição da Chave | Leitura no Multímetro | Interpretação Física | Avaliação |
+| :--- | :---: | :--- | :---: |
+| **Ligada (ON)** | `002` ($\approx 0{,}2\ \Omega$) | Contato fechado pleno; valor medido inclui a resistência das pontas de prova ($R_{\text{contato,real}} \le 50\text{ m}\Omega$) | **Aprovado** |
+| **Desligada (OFF)** | `1` (*overflow*) | Circuito aberto com impedância infinita; ausência de fuga de corrente entre terminais | **Aprovado** |
+
+#### Estimativa de Queda de Tensão e Dissipação Ôhmica:
+Considerando a resistência intrínseca de contato típica da chave KCD1 ($R_{\text{contato}} \le 50\text{ m}\Omega$):
+* **Queda de Tensão em Cruzeiro ($0{,}60\text{ A}$):**
+  $$\Delta V_{SW1} = I \cdot R_{\text{contato}} = 0{,}60\text{ A} \cdot 0{,}05\ \Omega = \mathbf{0{,}03\text{ V}} \ (\mathbf{30\text{ mV}})$$
+* **Dissipação Térmica no Limite de Condução do PPTC ($I_{\text{hold}} = 1{,}85\text{ A}$):**
+  $$P_{SW1} = I^2 \cdot R_{\text{contato}} = (1{,}85\text{ A})^2 \cdot 0{,}05\ \Omega \approx \mathbf{0{,}17\text{ W}}$$
+
+A queda de $30\text{ mV}$ é desprezível frente à margem dos reguladores Buck MP1584EN, e a dissipação é insuficiente para causar aquecimento no corpo plástico da chave.
+
+---
+
+### 3. Evidências em Bancada
+
+<figure markdown>
+
+<div style="display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;" markdown>
+
+![Chave ligada: multímetro indica continuidade](../figs/chave-sw1-continuidade-ligada.jpg){ width="360" }
+
+![Chave desligada: multímetro indica circuito aberto](../figs/chave-sw1-continuidade-desligada.jpg){ width="360" }
+
+</div>
+
+<figcaption>
+
+**Figura 3.** Teste de continuidade e isolamento da chave geral `SW1`. À esquerda, chave ligada na posição ON (leitura `002`, contato fechado de baixa resistência); à direita, chave na posição OFF (leitura `1`, circuito aberto sem condução).
+
+</figcaption>
+
+</figure>
+
+---
+
 ## Histórico de Versão
 
 | Versão | Data | Descrição | Autor(es) | Revisor(es) |
@@ -114,5 +167,6 @@ Os ensaios individuais comprovaram que os três reguladores Buck operam com desv
 | 1.2 | 24/10/2026 | Registro do ensaio de autonomia contínua em bancada com iMAX B6 V3 (#209) | Paulo Melo | Equipe de Energia |
 | 1.3 | 25/10/2026 | Registro dos ensaios em bancada dos reguladores Buck de 6,0 V, 5,0 V e 3,3 V sob cargas estáticas | Equipe de Energia | — |
 | 1.4 | 26/10/2026 | Registro da estimativa teórica do ripple de saída dos reguladores Buck pelo datasheet (#206) | Daniel Rodrigues | Equipe de Energia |
+| 1.5 | 26/10/2026 | Inclusão do ensaio em bancada de continuidade e isolamento da chave geral SW1 e caminho de potência (Procedimento 2.6 — Issue #204) | Daniel Rodrigues e Paulo Melo | Equipe de Energia |
 
 
