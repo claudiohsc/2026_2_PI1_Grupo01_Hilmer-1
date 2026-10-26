@@ -12,6 +12,7 @@ docs_dir: docs
 # README interno da pasta de figuras não vai para a navegação.
 not_in_nav: |
   /figs/README.md
+  /scripts/README.md
 
 theme:
   name: material
@@ -79,7 +80,7 @@ markdown_extensions:
       generic: true
 
 extra_javascript:
-  - javascripts/mathjax.js
+  - scripts/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
@@ -96,12 +97,14 @@ nav:
   - 4. Projeto conceitual:
       - 04-projeto-conceitual/README.md
       - 4.1 Estruturas: 04-projeto-conceitual/estruturas.md
+      - 4.1.1 Labirinto de testes: 04-projeto-conceitual/labirinto-testes.md
       - 4.2 Energia: 04-projeto-conceitual/energia.md
       - 4.2.1 Proteções de entrada: 04-projeto-conceitual/energia/protecoes-entrada.md
       - 4.2.2 Reguladores Step-Down (Buck): 04-projeto-conceitual/energia/reguladores-buck.md
       - 4.2.3 Curva de Descarga e SoC LiPo: 04-projeto-conceitual/energia/curva-descarga-lipo.md
       - 4.2.4 Monitoramento de Tensão (ADC): 04-projeto-conceitual/energia/monitoramento-tensao.md
       - 4.2.5 Ensaios de subtensão e PPTC: 04-projeto-conceitual/energia/ensaios-protecoes.md
+      - 4.2.6 POP de recarga balanceada: 04-projeto-conceitual/energia/pop-recarga-bateria.md
       - 4.3 Hardware: 04-projeto-conceitual/hardware.md
       - 4.3.1 Diagramas de hardware: 04-projeto-conceitual/hardware-diagramas.md
       - 4.3.2 Justificativa dos componentes: 04-projeto-conceitual/justificativa-componentes.md
