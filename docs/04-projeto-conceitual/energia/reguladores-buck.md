@@ -262,10 +262,6 @@ Para validação em bancada após o recebimento dos componentes e placas:
      * Linha `+5V0` (`U2`): $V_{\text{ripple}} < 50\text{ mV}_{\text{pp}}$.  
      * Linha `+3V3` (`U5`): $V_{\text{ripple}} < 25\text{ mV}_{\text{pp}}$.
 
-### 8.3 Ensaio Térmico de Estresse sob Stall
-1. Submeter o regulador `U4` ($6{,}0\text{ V}$) a pulso de carga de $2{,}5\text{ A}$ a $3{,}0\text{ A}$ por $500\text{ ms}$ com termopar monitorando o encapsulamento `SOIC-8E` do CI `MP1584EN`.
-2. Confirmar que a elevação térmica transitória não ultrapassa $60\text{ °C}$ e que a tensão não sofre colapso.
-
 ---
 
 ## 9. Referências Bibliográficas
