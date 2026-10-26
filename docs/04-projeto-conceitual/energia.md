@@ -152,7 +152,7 @@ Para garantir modularidade e rastreabilidade com os ensaios de bancada futuros, 
 | Módulo / Subdocumento | Escopo Técnico Principal | Issue de Origem | Status de Validação |
 | :--- | :--- | :---: | :---: |
 | **[4.2.1 Proteções de Entrada](energia/protecoes-entrada.md)** | Fusível rearmável PPTC (`F1` MF-R185) e subesquemático P-MOSFET High-Side contra polaridade reversa (`Q1` AO3407A) | #200 | Teórico consolidado / Bancada pendente |
-| **[4.2.2 Reguladores Step-Down (Buck)](energia/reguladores-buck.md)** | Dimensionamento analítico dos três conversores `MP1584EN` (`+6V0 U4`, `+5V0 U2`, `+3V3 U5`), térmico e margem de *dropout* | #199 | Teórico consolidado / Bancada pendente |
+| **[4.2.2 Reguladores Step-Down (Buck)](energia/reguladores-buck.md)** | Dimensionamento analítico dos três conversores `MP1584EN` (`+6V0 U4`, `+5V0 U2`, `+3V3 U5`), térmico, margem de *dropout* e *ripple* de saída estimado pelo datasheet | #199, #206 | Teórico consolidado / Regulação validada em bancada (2.5) / Osciloscópio pendente |
 | **[4.2.3 Curva de Descarga e SoC da LiPo](energia/curva-descarga-lipo.md)** | Modelo de Shepherd modificado, curva teórica em Python (426 mA), tabela SoC vs. Tensão e integração com o firmware | #139 | Teórico consolidado / Bancada pendente |
 | **[4.2.4 Monitoramento de Tensão (ADC)](energia/monitoramento-tensao.md)** | Divisor resistivo 100k/33k, filtro anti-aliasing RC (`C5 = 100 nF`, $f_c \approx 64\text{ Hz}$), nó `BAT_ADC_TEST` e UVLO | #203 | Teórico consolidado / Bancada pendente |
 

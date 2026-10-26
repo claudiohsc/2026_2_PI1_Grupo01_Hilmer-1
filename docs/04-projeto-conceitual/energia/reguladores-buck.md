@@ -172,17 +172,89 @@ flowchart TD
 
 ---
 
-## 7. Protocolo de Ensaio de Bancada e Validação Experimental (Planejado)
+## 7. Estimativa Teórica do *Ripple* de Saída e da Temperatura (Issue #206)
+
+A medição do *ripple* no osciloscópio (seção 8.2) não pôde ser realizada por falta de equipamento disponível. Como alternativa, o *ripple* de saída dos três conversores foi estimado pelas equações de projeto do **datasheet do MP1584** (seção *Application Information*), que o fabricante usa para garantir a ondulação de saída a partir do indutor e do capacitor de saída.
+
+> **Por que o *ripple* importa:** a ondulação é a parcela alternada que fica "por cima" da tensão contínua de saída. Se ela for alta, os sensores `VL53L0X` e a IMU `MPU6050` leem com ruído e a ESP32-C3 pode reiniciar (*brownout*). O critério da issue é **$< 50\text{ mV}_{\text{pp}}$** em todos os barramentos.
+
+### 7.1 Equações do Datasheet
+
+A ondulação de corrente no indutor é:
+
+$$\Delta I_L = \frac{V_{\text{out}}}{f_{\text{sw}} \cdot L} \cdot \left(1 - \frac{V_{\text{out}}}{V_{\text{in}}}\right)$$
+
+Com capacitores cerâmicos (MLCC) na saída, o datasheet expressa o *ripple* de tensão como a soma da parcela capacitiva com a parcela da resistência série (ESR):
+
+$$\Delta V_{\text{out}} = \Delta I_L \cdot \left(R_{\text{ESR}} + \frac{1}{8 \cdot f_{\text{sw}} \cdot C_{\text{out}}}\right)$$
+
+**Premissas de pior caso adotadas:**
+
+* $V_{\text{in}} = 8{,}4\text{ V}$ (bateria em plena carga): é a condição de **maior** ondulação, porque o termo $(1 - V_{\text{out}}/V_{\text{in}})$ é máximo.
+* $f_{\text{sw}} = 1{,}0\text{ MHz}$ e o **menor** indutor da faixa de projeto de cada linha (seções 2.3, 3.2 e 4.2).
+* $C_{\text{out}} = 22\ \mu\text{F}$ MLCC do módulo, **reduzido a $11\ \mu\text{F}$** para considerar a perda de capacitância dos cerâmicos com tensão DC aplicada (*DC bias*, até ~50%).
+* $R_{\text{ESR}} = 5\text{ m}\Omega$ (valor típico de MLCC em 1 MHz).
+* Os capacitores externos da PCB (`C4`, `C2` e `C7`) **não foram contados**. Eles só reduzem o *ripple*; desconsiderá-los deixa a estimativa conservadora. Os eletrolíticos de $100\ \mu\text{F}$ (`C4`, `C2`) têm ESR alta ($\sim 0{,}1\text{ a }0{,}3\ \Omega$), e em 1 MHz a corrente de ondulação circula pelo MLCC, cuja impedância é bem menor ($\approx 7\text{ m}\Omega$).
+
+### 7.2 Cálculo por Barramento
+
+**Linha `+6V0` (`U4`, $L = 4{,}7\ \mu\text{H}$):**
+
+$$\Delta I_L = \frac{6{,}0}{10^6 \cdot 4{,}7 \times 10^{-6}} \cdot \left(1 - \frac{6{,}0}{8{,}4}\right) \approx 0{,}365\text{ A}$$
+
+$$\Delta V_{\text{out}} = 0{,}365 \cdot \left(0{,}005 + \frac{1}{8 \cdot 10^6 \cdot 11 \times 10^{-6}}\right) \approx 0{,}365 \cdot (0{,}005 + 0{,}0114) \approx \mathbf{6{,}0\text{ mV}_{\text{pp}}}$$
+
+**Linha `+5V0` (`U2`, $L = 6{,}8\ \mu\text{H}$):**
+
+$$\Delta I_L = \frac{5{,}0}{10^6 \cdot 6{,}8 \times 10^{-6}} \cdot \left(1 - \frac{5{,}0}{8{,}4}\right) \approx 0{,}298\text{ A} \implies \Delta V_{\text{out}} \approx 0{,}298 \cdot 0{,}0164 \approx \mathbf{4{,}9\text{ mV}_{\text{pp}}}$$
+
+**Linha `+3V3` (`U5`, $L = 6{,}8\ \mu\text{H}$):**
+
+$$\Delta I_L = \frac{3{,}3}{10^6 \cdot 6{,}8 \times 10^{-6}} \cdot \left(1 - \frac{3{,}3}{8{,}4}\right) \approx 0{,}295\text{ A} \implies \Delta V_{\text{out}} \approx 0{,}295 \cdot 0{,}0164 \approx \mathbf{4{,}8\text{ mV}_{\text{pp}}}$$
+
+### 7.3 Resultado Consolidado
+
+| Barramento | $\Delta I_L$ (pior caso) | *Ripple* estimado | Critério da issue | Critério por linha (seção 8.2) | Resultado |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `+6V0` (`U4` — motores) | $0{,}365\text{ A}$ | $\approx 6{,}0\text{ mV}_{\text{pp}}$ | $< 50\text{ mV}_{\text{pp}}$ | $< 100\text{ mV}_{\text{pp}}$ | ✅ Atende |
+| `+5V0` (`U2` — ESP32-C3) | $0{,}298\text{ A}$ | $\approx 4{,}9\text{ mV}_{\text{pp}}$ | $< 50\text{ mV}_{\text{pp}}$ | $< 50\text{ mV}_{\text{pp}}$ | ✅ Atende |
+| `+3V3` (`U5` — sensores I²C) | $0{,}295\text{ A}$ | $\approx 4{,}8\text{ mV}_{\text{pp}}$ | $< 50\text{ mV}_{\text{pp}}$ | $< 25\text{ mV}_{\text{pp}}$ | ✅ Atende |
+
+Mesmo no pior caso, o *ripple* teórico fica **cerca de 8 vezes abaixo** do limite de $50\text{ mV}_{\text{pp}}$.
+
+**Limitações da estimativa:**
+
+* As equações cobrem só a ondulação na frequência de chaveamento. Os **picos de comutação** (*spikes* de alta frequência nas transições do MOSFET) dependem do layout e da forma de medir, e só aparecem no osciloscópio.
+* Em carga leve (caso típico de `U5`, com $65\text{ mA}$), o MP1584 pode operar em modo de **salto de pulsos** (*pulse skipping*) para economizar energia, o que muda a forma de onda e pode aumentar um pouco o *ripple*. A margem de ~8× cobre esse efeito.
+
+### 7.4 Temperatura em Regime Contínuo
+
+O critério térmico da issue (**$< 55\text{ °C}$ em operação contínua**) é verificado com as estimativas das seções 2.4, 3.2 e 4.2, que usam $P_d = P_{\text{out}} \cdot (1/\eta - 1)$, resistência térmica junção-ambiente $R_{\theta JA} \approx 50\text{ °C/W}$ (encapsulamento SOIC-8E do datasheet) e ambiente a $25\text{ °C}$:
+
+| Regulador | Carga nominal | $P_d$ | $T_j$ estimada | Critério | Resultado |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `U4` (`+6V0`) | $0{,}300\text{ A}$ | $0{,}32\text{ W}$ | $41{,}0\text{ °C}$ | $< 55\text{ °C}$ | ✅ Atende |
+| `U2` (`+5V0`) | $0{,}130\text{ A}$ | $0{,}106\text{ W}$ | $30{,}3\text{ °C}$ | $< 55\text{ °C}$ | ✅ Atende |
+| `U5` (`+3V3`) | $0{,}065\text{ A}$ | $0{,}029\text{ W}$ | $26{,}5\text{ °C}$ | $< 55\text{ °C}$ | ✅ Atende |
+
+> **Atenção:** a temperatura de `U4` só fica abaixo de $55\text{ °C}$ em regime nominal. Acima de $\approx 0{,}55\text{ A}$ contínuos ($P_d \approx 0{,}6\text{ W}$) a estimativa passa do limite, por isso o *stall* é tratado apenas como transitório (diretriz de firmware da seção 2.4).
+
+---
+
+## 8. Protocolo de Ensaio de Bancada e Validação Experimental (Planejado)
 
 Para validação em bancada após o recebimento dos componentes e placas:
 
-### 7.1 Regulação de Carga e Linha (*Line & Load Regulation*)
+### 8.1 Regulação de Carga e Linha (*Line & Load Regulation*)
 1. Conectar fonte DC regulável na entrada simulando a faixa de bateria ($6{,}6\text{ V a }8{,}4\text{ V}$).
 2. Aplicar degraus de corrente de carga através de carga eletrônica ativa ($0\text{ mA}$, $65\text{ mA}$, $130\text{ mA}$, $300\text{ mA}$ e $1{,}0\text{ A}$).
 3. Registrar a variação de tensão em cada linha (`U4` $+6{,}0\text{ V}$, `U2` $+5{,}0\text{ V}$ e `U5` $+3{,}3\text{ V}$) com multímetro digital.  
    * **Critério de Aceitação:** Regulação de carga $\le \pm 2\%$ da tensão nominal especificada.
 
-### 7.2 Medição de Ondulação (*Ripple*) com Osciloscópio
+### 8.2 Medição de Ondulação (*Ripple*) com Osciloscópio
+
+> **Status:** não realizada por falta de osciloscópio disponível. O *ripple* foi estimado teoricamente pelo datasheet na seção 7. Esta medição continua recomendada quando houver equipamento, principalmente para observar os picos de comutação.
+
 1. Conectar ponta de prova atenuada 1X acoplada em AC com mola de aterramento curta diretamente sobre os terminais dos capacitores de saída (`C4`, `C2` e `C7`).
 2. Medir a tensão pico a pico ($V_{\text{pp}}$) do chaveamento na frequência fundamental dos conversores `MP1584EN` ($\approx 1{,}0\text{ MHz}$).  
    * **Critério de Aceitação:**  
@@ -190,9 +262,16 @@ Para validação em bancada após o recebimento dos componentes e placas:
      * Linha `+5V0` (`U2`): $V_{\text{ripple}} < 50\text{ mV}_{\text{pp}}$.  
      * Linha `+3V3` (`U5`): $V_{\text{ripple}} < 25\text{ mV}_{\text{pp}}$.
 
-### 7.3 Ensaio Térmico de Estresse sob Stall
+### 8.3 Ensaio Térmico de Estresse sob Stall
 1. Submeter o regulador `U4` ($6{,}0\text{ V}$) a pulso de carga de $2{,}5\text{ A}$ a $3{,}0\text{ A}$ por $500\text{ ms}$ com termopar monitorando o encapsulamento `SOIC-8E` do CI `MP1584EN`.
 2. Confirmar que a elevação térmica transitória não ultrapassa $60\text{ °C}$ e que a tensão não sofre colapso.
+
+---
+
+## 9. Referências Bibliográficas
+
+1. **MONOLITHIC POWER SYSTEMS (MPS).** *MP1584: 3A, 1.5MHz, 28V Step-Down Converter*. Datasheet Rev. 1.0, 2011. Disponível em: <https://www.monolithicpower.com/en/mp1584.html>.
+2. **MOHAN, Ned; UNDELAND, Tore M.; ROBBINS, William P.** *Power Electronics: Converters, Applications, and Design*. 3. ed. Nova York: John Wiley & Sons, 2003.
 
 ---
 
@@ -204,3 +283,4 @@ Para validação em bancada após o recebimento dos componentes e placas:
 | 1.1 | 18/10/2026 | Inclusão do regulador dedicado de 6 V para os motores com suporte a stall de até 3 A | Elias Oliveira | Bruno Duarte |
 | 1.2 | 20/10/2026 | Modularização no diretório `energia/` e adição do protocolo de ensaios de bancada | Elias Oliveira | Equipe de Energia |
 | 2.0 | 23/10/2026 | Alinhamento com a Revisão 2.0 de Hardware: padronização dos três conversores Step-Down para o CI MP1584EN (`U4` +6V0, `U2` +5V0, `U5` +3V3), realocação de cargas (`ESP32-C3 Super Mini` em 5 V e `3× VL53L0X + MPU6050` em 3,3 V) e sincronização dos capacitores (`C2–C8`) com o esquemático oficial | Paulo Melo | Equipe de Energia e Hardware |
+| 2.1 | 25/10/2026 | Estimativa teórica do *ripple* de saída e da temperatura dos três MP1584EN pelo datasheet, substituindo a medição no osciloscópio (#206) | Daniel Rogrigues Nascimento| Equipe de Energia |
