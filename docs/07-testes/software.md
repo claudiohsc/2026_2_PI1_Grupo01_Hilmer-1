@@ -3219,6 +3219,166 @@ Para atestar que a suíte é sensível a defeitos e não apenas confirmatória, 
 
 - Validação em bancada integrada com o robô físico navegando no labirinto de testes (depende da conclusão da montagem mecânica e dos testes em pista).
 
+---
+
+### Sprint 5 · Deslocamento sem encoder
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#380 Deslocamento sem encoder: estimador por comando dos motores e correção pelos ToF](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380) |
+| História de usuário | HU-05 · Localização do robô ([#41](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)), RF05 |
+| Código testado | `src/firmware` (branch `feat/380-deslocamento-estimado`, sobre a `feat/344-driver-vl53l0x`; commits `6fd34cc` e `438f07f`) |
+| Data da execução | 22/10/2026 |
+| Executado por | m4rllon |
+| Documentação do código | [Firmware: deslocamento sem encoder](../04-projeto-conceitual/firmware.md#navegacao-deslocamento-sem-encoder) |
+
+Esta etapa registra a estimativa, as correções pelo ToF e a ligação no `main.cpp`, testadas no computador. A calibração da tabela de velocidade depende do robô montado e está nas pendências.
+
+**Ambiente de execução**
+
+| Componente | Versão |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 24.04.4 LTS, kernel 7.0) |
+| PlatformIO | Core 6.2.0 |
+| Compilador (`native`) | g++ 13.3.0 (C++17) |
+| Framework de testes | Unity 2.6.1 |
+| Cobertura | gcov 13.3.0 e gcovr 8.6 |
+
+#### Critérios de pronto da #380
+
+| Critério | Como foi atendido | Verificação |
+| :--- | :--- | :--- |
+| Estimador testado no computador, com velocidade por duty em tabela de calibração (valores provisórios documentados) | `EstimadorDeslocamento` com a `TABELA_VELOCIDADE` (zona morta, interpolação, saturação e ré) em `ConfiguracaoDeslocamento.h`, cada valor com origem e forma de medir | `test_tabela_*`, `test_integra_velocidade_vezes_tempo_em_pulsos`, `test_parar_congela_a_contagem_e_re_diminui` |
+| Correção da posição pelo ToF frontal quando houver parede à frente e pelas aberturas laterais na fronteira de célula | `CorretorDeslocamentoTof`: parede da frente até 300 mm e quinas laterais com histerese, só no eixo de avanço, com limite de 70 mm por correção | `test_correcao_pela_frente_*`, `test_quina_lateral_corrige_na_fronteira_da_celula`, `test_histerese_impede_quina_inventada_pelo_ruido`, `test_com_tof_o_erro_fica_pequeno_ate_a_parede_da_frente` |
+| Troca para o encoder real sem alterar `Odometria` nem `ControleMovimento` | `EncoderEstimado` implementa `IEncoder` e `MotoresComEstimativa` implementa `IMotores`; a troca é `ENCODERS_INSTALADOS` no `main.cpp`. Nenhum arquivo de `lib/navegacao` nem de `lib/atuacao` mudou. O `ControleMovimento` não depende de `IEncoder` (só de `ISensorDistancia` e `IMotores`) | `test_odometria_avanca_uma_celula_com_encoders_estimados`, `test_odometria_gira_90_graus_com_rodas_opostas`; `git diff` sem `lib/navegacao` e `lib/atuacao` |
+| Limites desse modo documentados no README: mais deriva e sem velocidade medida | Seção "Deslocamento sem encoder" do README do firmware, com "Limites deste modo" e "Valores provisórios" | Revisão da documentação |
+| A telemetria continua informando `pose_valida` coerente com o modo estimado | `pose_valida = posicaoValida() && poseConfiavel()`: fica `false` depois de 360 mm sem correção; campos novos `deslocamento` e `sem_correcao_mm` | `test_sem_tof_a_deriva_cresce_e_a_pose_deixa_de_ser_confiavel`, `test_reiniciar_volta_a_pose_conhecida_e_confiavel` |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/deslocamento/src/ConfiguracaoDeslocamento.h` | Todos os valores ajustáveis do modo: `ENCODERS_INSTALADOS`, tabela de velocidade, posição dos sensores, limites das correções e da confiança |
+| `lib/deslocamento/src/EstimadorDeslocamento.h/.cpp` | Velocidade por potência, integração no tempo em pulsos, correção do avanço e confiança da pose |
+| `lib/deslocamento/src/EncoderEstimado.h` | `IEncoder` provisório, um por roda |
+| `lib/deslocamento/src/MotoresComEstimativa.h` | `IMotores` que repassa ao driver e informa o estimador |
+| `lib/deslocamento/src/CorretorDeslocamentoTof.h/.cpp` | Correção pela parede da frente e pelas quinas laterais |
+| `lib/deslocamento/src/DeslocamentoEstimado.h/.cpp` | Junta as peças num ciclo de 10 ms |
+| `src/main.cpp` | Odometria e telemetria pelos encoders estimados, leitura nova do ToF pela idade da amostra, `pose_valida` coerente, campos `deslocamento` e `sem_correcao_mm`, comando `Z` no modo estimado |
+| `test/test_deslocamento/test_deslocamento.cpp` | Suíte nova com 22 casos |
+| `src/bancada/bancada_deslocamento.cpp`, `scripts/bancada_deslocamento.py`, `platformio.ini` | Firmware (ambiente `bancada_deslocamento`) e menu de bancada; `ultimaCorrecao()` no `DeslocamentoEstimado` para o log |
+
+#### Testes unitários e de integração (ambiente native)
+
+```bash
+pio test -e native -f test_deslocamento
+```
+
+As correções são testadas num corredor do `LABIRINTO_4X4` (coluna 0, virado para o Norte): um robô "real" anda a 80% da velocidade que a tabela supõe, e as leituras do ToF vêm da posição real dele. É o erro que o modo estimado comete na prática quando a tabela não está calibrada.
+
+| Caso de teste | O que verifica | Critério | Resultado |
+| :--- | :--- | :--- | :--- |
+| `test_tabela_zona_morta_pontos_e_interpolacao` | Tabela padrão: 149 → 0, 150 → 45, 400 → 120, 550 → 165 e 1000 → 300 mm/s | 1 | Aprovado |
+| `test_tabela_re_e_saturacao` | −500 → −500 mm/s, zona morta na ré e potência limitada a ±1000 | 1 | Aprovado |
+| `test_tabela_vazia_nao_move` | Sem pontos na tabela, a velocidade é zero | 1 | Aprovado |
+| `test_tabela_acima_do_ultimo_ponto_satura_e_re_arredonda_para_baixo` | Acima do último ponto vale o último; 0,1 mm de ré já conta −1 pulso | 1 | Aprovado |
+| `test_integra_velocidade_vezes_tempo_em_pulsos` | 1 s a 500 e 250 mm/s: 2000 e 1000 pulsos de 250 µm | 1 | Aprovado |
+| `test_parar_congela_a_contagem_e_re_diminui` | Parado, a contagem fica em 800; 100 mm de ré voltam a 400 | 1 | Aprovado |
+| `test_encoders_estimados_seguem_o_iencoder` | `lerContagem` e `zerar` pela interface; zerar uma roda não muda a outra | 3 | Aprovado |
+| `test_motores_com_estimativa_repassam_ao_driver_real` | O comando chega ao driver e ao estimador; `parar` freia os dois | 3 | Aprovado |
+| `test_odometria_avanca_uma_celula_com_encoders_estimados` | 0,5 s a 360 mm/s: a `Odometria` sem mudança vai para (1, 0) | 3 | Aprovado |
+| `test_odometria_gira_90_graus_com_rodas_opostas` | Rodas opostas por 50 mm cada: Leste, na mesma célula | 3 | Aprovado |
+| `test_correcao_pela_frente_alinha_a_posicao_real` | Real em 500 mm e estimativa em 450 mm: a parede da frente zera o erro e a confiança | 2 | Aprovado |
+| `test_parede_longe_nao_serve_de_referencia` | Frente a 500 mm e lados livres: `SemReferencia` | 2 | Aprovado |
+| `test_correcao_grande_demais_e_descartada` | 30 mm aceitos com limite de 70 mm; descartados com limite de 20 mm, sem mexer na posição | 2 | Aprovado |
+| `test_girando_nao_corrige_e_esquece_as_laterais` | Com as rodas em sentidos opostos, o resultado é `Girando` | 2 | Aprovado |
+| `test_quina_lateral_corrige_na_fronteira_da_celula` | Real a 80%: a saída da parede direita da linha 0 corrige para 96 mm (fronteira + 6 mm), com erro de até 3 mm | 2 | Aprovado |
+| `test_histerese_impede_quina_inventada_pelo_ruido` | Leituras de 30 a 159 mm (dentro da histerese) não geram quina | 2 | Aprovado |
+| `test_sem_estado_anterior_nao_corrige_pela_lateral` | Primeira leitura e transição com o robô parado não corrigem | 2 | Aprovado |
+| `test_sem_tof_a_deriva_cresce_e_a_pose_deixa_de_ser_confiavel` | Sem ToF: 450 mm estimados contra 360 reais (90 mm de erro) e pose não confiável | 2, 5 | Aprovado |
+| `test_com_tof_o_erro_fica_pequeno_ate_a_parede_da_frente` | Mesmo erro de 20%, com ToF: pelo menos 3 correções, erro final de até 10 mm, linha 3 e pose confiável | 2, 5 | Aprovado |
+| `test_reiniciar_volta_a_pose_conhecida_e_confiavel` | Depois de 500 mm sem correção, `reiniciar` em (2, 1) Leste zera as contagens e devolve a confiança | 5 | Aprovado |
+| `test_posicao_ao_longo_do_avanco_nas_quatro_direcoes` | Posição no eixo de avanço com o sinal certo em Norte, Sul, Leste e Oeste | 2 | Aprovado |
+| `test_correcao_pela_frente_virado_para_o_sul` | Virado para o Sul, a leitura 10 mm menor leva o robô 10 mm ao Sul | 2 | Aprovado |
+
+A coluna "Critério" segue a ordem da tabela de critérios de pronto acima.
+
+#### Saída da execução
+
+```text
+test/test_deslocamento/test_deslocamento.cpp:445:test_tabela_zona_morta_pontos_e_interpolacao:PASS
+test/test_deslocamento/test_deslocamento.cpp:446:test_tabela_re_e_saturacao:PASS
+test/test_deslocamento/test_deslocamento.cpp:447:test_tabela_vazia_nao_move:PASS
+test/test_deslocamento/test_deslocamento.cpp:448:test_tabela_acima_do_ultimo_ponto_satura_e_re_arredonda_para_baixo:PASS
+test/test_deslocamento/test_deslocamento.cpp:449:test_integra_velocidade_vezes_tempo_em_pulsos:PASS
+test/test_deslocamento/test_deslocamento.cpp:450:test_parar_congela_a_contagem_e_re_diminui:PASS
+test/test_deslocamento/test_deslocamento.cpp:451:test_encoders_estimados_seguem_o_iencoder:PASS
+test/test_deslocamento/test_deslocamento.cpp:452:test_motores_com_estimativa_repassam_ao_driver_real:PASS
+test/test_deslocamento/test_deslocamento.cpp:453:test_odometria_avanca_uma_celula_com_encoders_estimados:PASS
+test/test_deslocamento/test_deslocamento.cpp:454:test_odometria_gira_90_graus_com_rodas_opostas:PASS
+test/test_deslocamento/test_deslocamento.cpp:455:test_correcao_pela_frente_alinha_a_posicao_real:PASS
+test/test_deslocamento/test_deslocamento.cpp:456:test_parede_longe_nao_serve_de_referencia:PASS
+test/test_deslocamento/test_deslocamento.cpp:457:test_correcao_grande_demais_e_descartada:PASS
+test/test_deslocamento/test_deslocamento.cpp:458:test_girando_nao_corrige_e_esquece_as_laterais:PASS
+test/test_deslocamento/test_deslocamento.cpp:459:test_quina_lateral_corrige_na_fronteira_da_celula:PASS
+test/test_deslocamento/test_deslocamento.cpp:460:test_histerese_impede_quina_inventada_pelo_ruido:PASS
+test/test_deslocamento/test_deslocamento.cpp:461:test_sem_estado_anterior_nao_corrige_pela_lateral:PASS
+test/test_deslocamento/test_deslocamento.cpp:462:test_sem_tof_a_deriva_cresce_e_a_pose_deixa_de_ser_confiavel:PASS
+test/test_deslocamento/test_deslocamento.cpp:463:test_com_tof_o_erro_fica_pequeno_ate_a_parede_da_frente:PASS
+test/test_deslocamento/test_deslocamento.cpp:464:test_reiniciar_volta_a_pose_conhecida_e_confiavel:PASS
+test/test_deslocamento/test_deslocamento.cpp:465:test_posicao_ao_longo_do_avanco_nas_quatro_direcoes:PASS
+test/test_deslocamento/test_deslocamento.cpp:466:test_correcao_pela_frente_virado_para_o_sul:PASS
+22 Tests 0 Failures 0 Ignored
+```
+
+#### Verificação de detecção de falhas (teste negativo)
+
+A suíte foi compilada contra três cópias defeituosas do `CorretorDeslocamentoTof` (sem alterar o repositório):
+
+| Defeito plantado | Casos que falharam |
+| :--- | :--- |
+| Quina lateral do lado errado da coluna (fronteira − 6 mm ao sair da parede) | 1: `test_quina_lateral_corrige_na_fronteira_da_celula` (`Expected 96 Was 84`) |
+| Correção pela frente desligada | 3: `test_correcao_pela_frente_alinha_a_posicao_real`, `test_correcao_grande_demais_e_descartada` e `test_correcao_pela_frente_virado_para_o_sul` |
+| Sinal da correção pela frente invertido | 4, entre eles `test_com_tof_o_erro_fica_pequeno_ate_a_parede_da_frente` (`Expected 0 Was 95`) |
+
+#### Suíte completa com cobertura (o mesmo comando do CI)
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa | **285 aprovados, 0 falhas** (eram 263) |
+| Cobertura das linhas de `lib/` | **97%** (1.143 de 1.177), acima da meta de 80% |
+| Cobertura de `lib/deslocamento` | **99%** (177 de 178); a linha restante é o retorno depois do `switch` das quatro direções, inalcançável |
+
+#### Compilação para a placa
+
+```bash
+pio run -e esp32c3
+```
+
+| Ambiente | Compilação | RAM | Flash |
+|---|---|---|---|
+| `esp32c3` (robô) | **Sucesso**, sem avisos | 4,7% (15.276 de 327.680 bytes) | 21,5% (281.912 de 1.310.720 bytes) |
+| `bancada_deslocamento` | **Sucesso** | 4,5% (14.588 de 327.680 bytes) | 21,6% (282.794 de 1.310.720 bytes) |
+
+#### Ferramenta de bancada
+
+O menu `scripts/bancada_deslocamento.py` foi executado contra uma placa simulada (porta serial virtual que responde ao mesmo protocolo do `bancada_deslocamento.cpp`, com o robô "real" 10% mais lento que a tabela), para conferir todos os caminhos antes da bancada: as seis etapas, o log ao vivo com as correções, os CSVs de cada movimento, a tabela sugerida e o relatório. Essa execução não substitui o teste com o robô montado.
+
+#### Próximos passos
+
+- **Calibrar na bancada** os valores de `ConfiguracaoDeslocamento.h` com `./scripts/bancada_deslocamento.py` (etapas 1 a 6):
+  - a `TABELA_VELOCIDADE` (potência → mm/s). A [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) já definiu o limite de duty (`LIMITE_DUTY_MOTORES_MILESIMOS`, provisório em 70%): a tabela precisa ser medida com ele valendo e medida de novo se ele mudar;
+  - a posição dos sensores frontal e laterais.
+- **Conferir o limiar lateral das quinas** com o VL53L0X montado. A [#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379) já entrou e adotou 140 mm para classificar parede e livre na percepção. As quinas do deslocamento usam 120 mm (parede) e 160 mm (livre, com a histerese), na mesma faixa entre a parede imediata (~54 mm pela face) e uma abertura (234 mm ou mais). Se a bancada mostrar quinas perdidas ou inventadas, ajustar esses dois valores.
+- **Erro na bancada:** percorrer 3 células e registrar o erro da célula estimada, junto com a etapa 10 da bancada da [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188).
+
+Desde este registro, o ciclo da navegação da [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184) passou a acionar as rodas por `motoresTracao`, então a estimativa já acompanha os comandos no robô.
+
 
 ### Sprint 5 · Falha do I²C durante a corrida (testes com falhas simuladas)
 
@@ -3349,6 +3509,6 @@ A branch recebeu a `main` de 25/10/2026, com os PRs [#442](https://github.com/fc
 
 #### Pendências desta etapa
 
-- **Bancada:** com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado; conferir a sequência do log ([Figura 23](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c)), o reinício pelo XSHUT e a volta dos motores. Combinar com a eletrônica como soltar o conector sem curto no barramento.
+- **Bancada:** com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado; conferir a sequência do log ([Figura 24](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c)), o reinício pelo XSHUT e a volta dos motores. Combinar com a eletrônica como soltar o conector sem curto no barramento.
 - **Valores provisórios:** ajustar as tentativas, as leituras para recuperar, os reinícios e a espera com o que a bancada mostrar.
 - **Compilação para a placa:** anotar aqui a RAM e a Flash do `pio run -e esp32c3` do CI do PR.
