@@ -2465,6 +2465,90 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 - [#239 Exibição de mapa e percurso](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239): utilizará os testes de parsing e células de `labirinto.ts` integrados à grade visual.
 - [#242 Estado "Aguardando Largada"](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242): utilizará o hook `useReproducaoCorrida` e os estados do painel.
 
+### Sprint 5 · Controle de rumo pelo giroscópio e giros em malha fechada
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, com o giroscópio simulado `ImuSimulado` e um modelo dinâmico diferencial de rotação e avanço no lugar do hardware real. Os efeitos de deslizamento severo das rodas, viés inercial e ruído foram modelados e validados por software. O acionamento dos motores físicos e a resposta do sensor real no labirinto serão validados na bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#190 Controle de rumo pelo giroscópio: giros de 90° e retidão do avanço](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190) |
+| História de usuário | [HU-11 Compensar irregularidades do solo](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF-11 / RNF-02) |
+| Código testado | `src/firmware/lib/atuacao` (`ControleGiro`, `ConfiguracaoGiro`, `ControleMovimento`, `ConfiguracaoControle`), branch `feat/190-controle-giroscopio` (commit `eebd8ee`) |
+| Autoria do código | Rafael Lima |
+| Data da execução | 24/10/2026 |
+| Executado por | Rafael Lima |
+| Tipo de teste | Unitário e de integração, no computador, com dinâmica diferencial e IMU simulada |
+| Documentação do código | [Atuação: controle de rumo pelo giroscópio e giros em malha fechada](../04-projeto-conceitual/firmware.md#atuacao-controle-de-rumo-pelo-giroscopio-e-giros-em-malha-fechada) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04), PlatformIO Core 6.1.18, `native` 1.2.1, Unity 2.6.1.
+
+#### Critérios da issue e testes
+
+| Critério da #190 | Testes | Situação |
+|---|---|:-:|
+| Giro de 90° e 180° em malha fechada, com tolerância configurável | 6 testes do `ControleGiro` (giros de ±90° e ±180°, tolerância estrita de 0,5° e ampla de 5,0°) | Aprovado |
+| Correção do desvio de rumo durante o avanço, integrada ao `ControleMovimento` | 8 testes unitários e de avanço do `ControleMovimento` (desvio à direita, à esquerda, proporcionalidade, derivada, saturação e rumo alvo) | Aprovado |
+| Testes no computador com giroscópio simulado, incluindo deriva e deslizamento | 6 testes de condições adversas (deslizamento severo de 40% de tração, viés de 1,5 °/s calibrado sem deriva, deslizamento assimétrico no avanço, overshoot e timeout de bloqueio) | Aprovado |
+| Parâmetros (ganhos, tolerância) provisórios e documentados | Tabela completa em `ConfiguracaoGiro.h`, `ConfiguracaoControle.h` e documentação técnica no `README.md` e `firmware.md` | Aprovado |
+
+#### Testes unitários e de integração
+
+```bash
+pio test -e native -f test_controle_giroscopio
+```
+
+| Grupo | Casos | Nível | O que verificam |
+|---|:-:|---|---|
+| Manobras angulares (`ControleGiro`) | 4 | Unitário | Giros de 90° e 180° nos sentidos horário e anti-horário fechando dentro da tolerância com parada dos motores |
+| Tolerância e dinâmica de rotação | 3 | Unitário | Tolerância estrita (0,5°) vs ampla (5,0°), rampa de desaceleração proporcional até a potência mínima (150) e reversão de sentido em caso de overshoot |
+| Robustez e segurança no giro | 3 | Integração | Timeout de segurança após 2 500 ms com robô travado, cancelamento imediato e inibição de comando com leitura inválida do giroscópio |
+| Deslizamento e viés na rotação | 2 | Integração | Deslizamento severo (apenas 40% de tração no piso) atinge os 90° nominais; sensor com viés de 15 dps calibrado pelo `IntegradorGiro` atinge o alvo sem acúmulo de deriva |
+| Correção de rumo no avanço (`ControleMovimento`) | 8 | Unitário | Desvio nulo sem correção, desvios à direita/esquerda com correção de sentido oposto, proporcionalidade ao erro angular, amortecimento derivativo, saturação no limite máximo (200), teto percentual da base (60%), múltiplos rumos alvo e reinício de histórico |
+| Perturbações no avanço e integração | 5 | Integração | Avanço em trecho aberto sem paredes laterais (`SemReferencia`) mantido em linha reta pelo giroscópio; compensação de deslizamento assimétrico contínuo entre rodas; integração com desaceleração e parada na parede frontal |
+
+**Resultado:** 25 de 25 testes aprovados.
+
+```text
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:553: test_giro_90_esquerda_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:554: test_giro_90_direita_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:555: test_giro_180_esquerda_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:556: test_giro_180_direita_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:557: test_tolerancia_configuravel_afeta_precisao [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:558: test_deslizamento_de_rodas_compensa_e_atinge_90_graus [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:559: test_giro_com_giroscopio_simulado_vies_e_calibracao [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:560: test_rampa_de_potencia_reduz_ao_aproximar_do_alvo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:561: test_overshoot_inverte_potencia_para_corrigir [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:562: test_timeout_em_caso_de_bloqueio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:563: test_cancelar_giro [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:564: test_leitura_giro_invalida_segura_motores [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:567: test_avanco_sem_desvio_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:568: test_avanco_desvio_direita_vira_para_esquerda [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:569: test_avanco_desvio_esquerda_vira_para_direita [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:570: test_avanco_correcao_proporcional_ao_desvio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:571: test_avanco_sem_paredes_laterais_mantem_linha_reta_por_giroscopio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:572: test_avanco_compensa_deslizamento_assimetrico [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:573: test_avanco_derivada_amortece_rotacao_rapida [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:574: test_avanco_saturacao_da_correcao_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:575: test_avanco_respeita_limite_percentual_da_base [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:576: test_definir_rumo_alvo_diferentes_direcoes [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:577: test_reiniciar_zera_historico_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:578: test_atualizar_com_leitura_giro [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:579: test_integracao_avanco_e_parada_na_parede_com_rumo [PASSED]
+--------------------------------------------------------------------------------
+25 test cases: 25 succeeded in 00:00:00.956
+```
+
+#### Suíte completa e compilação para a placa
+
+A execução da suíte completa de testes de regressão no ambiente `native` confirmou a ausência de impactos em outros módulos:
+- **Testes nativos:** **437 de 437 aprovados** (26 suítes de teste).
+- **Compilação para ESP32-C3 (`pio run -e esp32c3`):** Sucesso (RAM: 4,8%, Flash: 22,5%).
+
+#### Pendências desta etapa
+
+A validação física das rotações no labirinto e a conferência dos ganhos proporcionais e derivativos com os motores N20 reais dependem da pista montada e do robô completo na bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
 ### Sprint 5 · Filtro do histórico por labirinto
 
 !!! warning "Testes em simulação"
