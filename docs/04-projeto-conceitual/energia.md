@@ -155,6 +155,8 @@ Para garantir modularidade e rastreabilidade com os ensaios de bancada futuros, 
 | **[4.2.2 Reguladores Step-Down (Buck)](energia/reguladores-buck.md)** | Dimensionamento analítico dos três conversores `MP1584EN` (`+6V0 U4`, `+5V0 U2`, `+3V3 U5`), térmico e margem de *dropout* | #199 | Teórico consolidado / Bancada pendente |
 | **[4.2.3 Curva de Descarga e SoC da LiPo](energia/curva-descarga-lipo.md)** | Modelo de Shepherd modificado, curva teórica em Python (426 mA), tabela SoC vs. Tensão e integração com o firmware | #139 | Teórico consolidado / Bancada pendente |
 | **[4.2.4 Monitoramento de Tensão (ADC)](energia/monitoramento-tensao.md)** | Divisor resistivo 100k/33k, filtro anti-aliasing RC (`C5 = 100 nF`, $f_c \approx 64\text{ Hz}$), nó `BAT_ADC_TEST` e UVLO | #203 | Teórico consolidado / Bancada pendente |
+| **[4.2.7 Chave Geral e Conectores de Potência](energia/chaves-conectores.md)** | Chave geral `SW1` (Mini Rocker KCD1 SPST), conector XT-30 (`BT1`) e chicote de $0{,}50\text{ mm}^2$; capacidade de corrente comparada ao robô e teste de continuidade | #204 | Continuidade validada em bancada / Teste sob corrente pendente |
+
 
 ---
 
