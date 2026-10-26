@@ -4070,3 +4070,175 @@ A branch recebeu a `main` de 25/10/2026, com os PRs [#442](https://github.com/fc
 - **Bancada:** com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado; conferir a sequência do log ([Figura 27](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c)), o reinício pelo XSHUT e a volta dos motores. Combinar com a eletrônica como soltar o conector sem curto no barramento.
 - **Valores provisórios:** ajustar as tentativas, as leituras para recuperar, os reinícios e a espera com o que a bancada mostrar.
 - **Compilação para a placa:** anotar aqui a RAM e a Flash do `pio run -e esp32c3` do CI do PR.
+
+### Sprint 5 · Detecção de colisão e recuperação sem perda do mapa (testes com batidas simuladas)
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, sem o robô montado. As acelerações, as leituras do ToF e as potências dos testes unitários foram **definidas pelos testes**. Nos testes de integração, o `RoboSimulado` anda nos labirintos de exemplo com **paredes sólidas**: o chassi que encostaria numa parede fica parado, as rodas patinam e o encontrão chega ao `ImuSimulado` como um pico de 2500 mg. Para o robô bater, o ToF frontal é cegado (`cegarTofFrontal`). O pico de uma batida real e o ruído do acelerômetro com os motores ligados ficam para a bancada.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#192 Detecção de colisão e recuperação sem perda do mapa](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192) |
+| História de usuário | HU-17 · Recuperar-se de colisões sem perder o mapa ([#44](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/44)), RF17 |
+| Código testado | `src/firmware` na `main`, depois do merge do PR [#451](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/451) (commit `98389b8`); executado na `main` de 26/10/2026 (commit `9612a3b`, que também tem a [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)) |
+| Data da execução | 26/10/2026 |
+| Executado por | Eduardo Viana |
+| Tipo de teste | Unitário e de integração, no computador, com batidas simuladas |
+| Documentação do código | [Firmware: detecção de colisão e recuperação](../04-projeto-conceitual/firmware.md#navegacao-deteccao-de-colisao-e-recuperacao-detectorcolisao) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04.5 LTS), g++ 13.3.0 (C++17), Unity 2.6.1, ArduinoJson 7.4.2 e gcov 13.3.0. Os testes foram compilados direto com o g++, com as mesmas bibliotecas do ambiente `native` (todas as de `lib/`, menos `drivers_esp32`); cada bloco traz o comando equivalente do PlatformIO.
+
+#### Critérios da issue e testes
+
+| Critério da #192 | Como foi atendido | Testes | Situação |
+|---|---|---|:-:|
+| Colisão detectada pelo IMU (aceleração) e pelo ToF frontal (distância que para de variar com os motores acionados); a detecção por encoder fica para quando os encoders existirem | `DetectorColisao`: impacto pelo afastamento da aceleração no plano em relação à referência de repouso (1000 mg) e frente parada pela regra da `ProtecaoMotorTravado` (potência alta por 500 ms sem o ToF frontal nem o giroscópio mostrarem movimento), só com o robô em movimento | Os 28 casos do `DetectorColisao` em `test_colisao`; `test_batida_e_detectada_pelo_acelerometro_e_o_robo_recua`; `test_corrida_sem_batidas_nao_detecta_colisao` (sem falso positivo nos 3 labirintos) | Aprovado no computador; o limiar real fica para a bancada |
+| Robô recua, realinha-se ao centro da célula e retoma a navegação | Estado `Recuperando` do `CicloNavegacao`: recuo de ré até o centro da célula pela odometria (10 a 40 mm), com o rumo pelo giroscópio e parada pela parede da frente da própria célula; depois, `Percebendo` na mesma célula e decisão de novo | Os 8 casos do recuo e os de `Recuperando` em `test_recuperacao_colisao`; `test_corrida_com_tof_frontal_cego_recupera_de_cada_batida_e_chega_ao_objetivo` e `test_corrida_com_tof_frontal_cego_no_8x4` | Aprovado |
+| Mapa e posição preservados após a recuperação | A célula e a direção da navegação não mudam; o mapa só ganha a parede da frente quando a batida se repete na mesma célula e direção, com o robô no lugar da batida e o ToF sem medir a frente livre | `test_depois_do_recuo_o_ciclo_percebe_de_novo_na_mesma_celula_sem_mexer_no_mapa`, os três casos sobre gravar a parede e as corridas cegas, que conferem que nenhuma parede gravada é falsa | Aprovado |
+| Evento de colisão registrado na telemetria | O evento `colisao` sai na telemetria serial, um por amostra, com a posição; a linha `{"status":"colisao",...}` sai no log | `test_serializa_telemetria_com_evento_colisao` | Aprovado na telemetria serial; **o envio ao Supabase ainda não leva o evento** (veja as pendências) |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/hal/src/IAcelerometro.h` | Interface nova: aceleração nos eixos X e Y, em mg |
+| `lib/imu/src/ConversorAceleracao.h`, `lib/imu/src/ConfiguracaoImu.h` | Conversão da leitura bruta do acelerômetro e faixa de ±4 g |
+| `lib/drivers_esp32/src/ImuMpu6050.h/.cpp` | Configura a faixa do acelerômetro no `iniciar()` e lê X e Y (`lerAceleracaoPlano`) |
+| `lib/simulacao/src/ImuSimulado.h` | Aceleração definida pelo teste |
+| `lib/atuacao/src/RegistradorPotencia.h` | Decorador que guarda a última potência comandada |
+| `lib/execucao/src/ConfiguracaoColisao.h`, `DetectorColisao.h/.cpp` | Parâmetros provisórios e a detecção pelo impacto e pela frente parada |
+| `lib/execucao/src/ExecutorMovimentos.h/.cpp`, `Movimento.h` | Movimento `Recuar` e a falha `ColisoesSeguidas` |
+| `lib/execucao/src/CicloNavegacao.h/.cpp` | Estado `Recuperando`, gravação da parede por batida repetida e limite de colisões seguidas |
+| `lib/simulacao/src/RoboSimulado.h/.cpp` | Paredes sólidas, encontrão no acelerômetro, `encontroes()` e `preso()` |
+| `src/main.cpp` | Acelerômetro na tarefa da IMU, detecção na navegação, linha `colisao` no log e evento na telemetria |
+| `test/test_colisao`, `test/test_recuperacao_colisao`, `test/test_integracao_colisao`, `test/test_integracao_execucao/SimulacaoCorrida.h`, `test/test_telemetria_json` | Suítes novas com 36, 26 e 5 casos, a detecção na simulação da corrida e 1 caso novo de telemetria |
+| `README.md` do firmware | Seção "Detecção de colisão e recuperação (#192)" |
+
+#### Testes unitários e de integração
+
+```bash
+pio test -e native -f test_colisao -f test_recuperacao_colisao -f test_integracao_colisao -f test_telemetria_json
+```
+
+| Suíte | Casos | Resultado |
+| :--- | :--- | :--- |
+| `test_colisao` | 36 | **36 aprovados** |
+| `test_recuperacao_colisao` | 26 | **26 aprovados** |
+| `test_integracao_colisao` | 5 | **5 aprovados** |
+| `test_telemetria_json` | 11 | **11 aprovados** (1 da #192) |
+
+Os casos estão descritos na tabela de testes da [documentação do firmware](../04-projeto-conceitual/firmware.md#testes). Na corrida com o ToF frontal cego, o 4×4 teve 6 colisões, todas recuperadas, com 3 paredes gravadas por batida repetida, e o 8×4 teve 4 colisões e 2 paredes; os dois chegaram ao objetivo sem nenhuma parede falsa no mapa.
+
+```text
+test/test_colisao/test_colisao.cpp:407:test_converte_o_bruto_do_acelerometro_para_mg_em_cada_faixa:PASS
+test/test_colisao/test_colisao.cpp:408:test_a_conversao_do_acelerometro_arredonda_para_o_mais_proximo:PASS
+test/test_colisao/test_colisao.cpp:409:test_junta_os_bytes_do_acelerometro_em_complemento_de_dois:PASS
+test/test_colisao/test_colisao.cpp:410:test_registrador_de_faixa_do_acelerometro:PASS
+test/test_colisao/test_colisao.cpp:411:test_imu_simulada_devolve_a_aceleracao_definida:PASS
+test/test_colisao/test_colisao.cpp:412:test_imu_simulada_com_falha_nao_mexe_na_aceleracao:PASS
+test/test_colisao/test_colisao.cpp:413:test_registrador_repassa_e_guarda_a_ultima_potencia:PASS
+test/test_colisao/test_colisao.cpp:414:test_registrador_limita_a_potencia_como_o_motor:PASS
+test/test_colisao/test_colisao.cpp:415:test_leituras_calmas_andando_nao_sao_colisao:PASS
+test/test_colisao/test_colisao.cpp:416:test_pico_de_aceleracao_e_impacto:PASS
+test/test_colisao/test_colisao.cpp:417:test_o_modulo_do_plano_conta_os_dois_eixos:PASS
+test/test_colisao/test_colisao.cpp:418:test_o_desvio_e_o_modulo_exato:PASS
+test/test_colisao/test_colisao.cpp:419:test_abaixo_do_limiar_nao_e_impacto_e_no_limiar_e:PASS
+test/test_colisao/test_colisao.cpp:420:test_o_zero_e_a_inclinacao_do_sensor_nao_contam:PASS
+test/test_colisao/test_colisao.cpp:421:test_a_referencia_acompanha_a_inclinacao_devagar:PASS
+test/test_colisao/test_colisao.cpp:422:test_a_referencia_e_media_lenta_e_nao_a_ultima_leitura_calma:PASS
+test/test_colisao/test_colisao.cpp:423:test_um_impacto_nao_vira_o_novo_repouso:PASS
+test/test_colisao/test_colisao.cpp:424:test_confirmacao_exige_leituras_seguidas:PASS
+test/test_colisao/test_colisao.cpp:425:test_zero_amostras_de_confirmacao_vale_uma:PASS
+test/test_colisao/test_colisao.cpp:426:test_limiar_configuravel:PASS
+test/test_colisao/test_colisao.cpp:427:test_parado_ou_sem_permissao_um_pico_nao_e_colisao:PASS
+test/test_colisao/test_colisao.cpp:428:test_o_extremo_da_escala_nao_estoura:PASS
+test/test_colisao/test_colisao.cpp:429:test_cada_colisao_e_avisada_uma_vez_ate_o_robo_parar:PASS
+test/test_colisao/test_colisao.cpp:430:test_reiniciar_permite_avisar_de_novo:PASS
+test/test_colisao/test_colisao.cpp:431:test_sem_acelerometro_valido_nao_ha_impacto:PASS
+test/test_colisao/test_colisao.cpp:432:test_a_primeira_leitura_andando_vira_a_referencia:PASS
+test/test_colisao/test_colisao.cpp:433:test_potencia_alta_sem_nenhum_movimento_e_frente_parada:PASS
+test/test_colisao/test_colisao.cpp:434:test_so_depois_do_tempo_limite:PASS
+test/test_colisao/test_colisao.cpp:435:test_frente_que_varia_nao_e_parada:PASS
+test/test_colisao/test_colisao.cpp:436:test_girando_no_lugar_nao_e_parada:PASS
+test/test_colisao/test_colisao.cpp:437:test_potencia_baixa_nao_e_parada:PASS
+test/test_colisao/test_colisao.cpp:438:test_sem_leitura_frontal_valida_nao_conclui_nada:PASS
+test/test_colisao/test_colisao.cpp:439:test_frente_alem_do_alcance_nao_e_parada:PASS
+test/test_colisao/test_colisao.cpp:440:test_parar_de_andar_zera_a_janela_da_frente_parada:PASS
+test/test_colisao/test_colisao.cpp:441:test_o_impacto_vem_antes_da_frente_parada_no_mesmo_ciclo:PASS
+test/test_colisao/test_colisao.cpp:442:test_nomes_dos_tipos_de_colisao:PASS
+36 Tests 0 Failures 0 Ignored
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:558:test_o_recuo_nao_e_um_movimento_de_giro_nem_avanco:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:559:test_o_recuo_so_comeca_por_iniciar_recuo_e_com_distancia:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:560:test_o_recuo_anda_de_re_e_para_na_distancia:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:561:test_o_recuo_mantem_o_rumo_pelo_giroscopio:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:562:test_o_recuo_falha_por_tempo_se_o_robo_nao_anda:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:563:test_o_recuo_termina_no_centro_quando_a_parede_da_frente_esta_a_vista:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:564:test_o_recuo_ignora_parede_de_outra_celula_e_frente_sem_alvo:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:565:test_cancelar_o_recuo_freia:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:566:test_colisao_avancando_vai_para_recuperando_e_o_robo_recua:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:567:test_depois_do_recuo_o_ciclo_percebe_de_novo_na_mesma_celula_sem_mexer_no_mapa:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:568:test_o_recuo_vai_ate_o_centro_pela_odometria_com_minimo_e_maximo:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:569:test_sem_pose_valida_o_recuo_e_o_fixo:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:570:test_recuo_recusado_pelo_executor_para_o_ciclo_em_falha:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:571:test_colisao_fora_do_movimento_e_ignorada:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:572:test_colisao_durante_a_recuperacao_nao_conta_de_novo:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:573:test_so_a_segunda_batida_na_mesma_frente_grava_a_parede_se_o_tof_nao_a_viu:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:574:test_a_parede_nao_e_gravada_se_o_tof_mede_a_frente_livre:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:575:test_a_parede_nao_e_gravada_se_o_robo_nao_esta_onde_a_batida_na_parede_acontece:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:576:test_colisoes_demais_seguidas_param_o_ciclo_em_falha:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:577:test_concluir_uma_celula_zera_a_contagem_das_colisoes_seguidas:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:578:test_colisao_no_giro_volta_o_rumo_alvo_para_o_da_direcao_atual:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:579:test_colisao_no_giro_sem_giroscopio_desfaz_a_variacao_do_giro_no_rumo_alvo:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:580:test_tirar_a_permissao_na_recuperacao_volta_a_aguardar_a_largada:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:581:test_recuo_travado_pelo_tempo_para_em_falha:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:582:test_reiniciar_zera_os_contadores_da_colisao:PASS
+test/test_recuperacao_colisao/test_recuperacao_colisao.cpp:583:test_nome_do_estado_recuperando:PASS
+26 Tests 0 Failures 0 Ignored
+test/test_integracao_colisao/test_integracao_colisao.cpp:36:test_corrida_sem_batidas_nao_detecta_colisao:INFO: 4x4: estado objetivo_alcancado em 35.2 s, 12 celulas, 0 colisoes (0 recuperadas, 0 paredes por colisao), 0 encontroes; real (3,3)
+test/test_integracao_colisao/test_integracao_colisao.cpp:36:test_corrida_sem_batidas_nao_detecta_colisao:INFO: 8x4: estado objetivo_alcancado em 30.9 s, 12 celulas, 0 colisoes (0 recuperadas, 0 paredes por colisao), 0 encontroes; real (3,7)
+test/test_integracao_colisao/test_integracao_colisao.cpp:36:test_corrida_sem_batidas_nao_detecta_colisao:INFO: 12x4: estado objetivo_alcancado em 38.2 s, 16 celulas, 0 colisoes (0 recuperadas, 0 paredes por colisao), 0 encontroes; real (3,11)
+test/test_integracao_colisao/test_integracao_colisao.cpp:188:test_corrida_sem_batidas_nao_detecta_colisao:PASS
+test/test_integracao_colisao/test_integracao_colisao.cpp:36:test_batida_e_detectada_pelo_acelerometro_e_o_robo_recua:INFO: depois do recuo: real (3,1), erro ao longo 2.9 mm, lateral 0.8 mm
+test/test_integracao_colisao/test_integracao_colisao.cpp:189:test_batida_e_detectada_pelo_acelerometro_e_o_robo_recua:PASS
+test/test_integracao_colisao/test_integracao_colisao.cpp:36:test_corrida_com_tof_frontal_cego_recupera_de_cada_batida_e_chega_ao_objetivo:INFO: 4x4 com ToF frontal cego: estado objetivo_alcancado em 38.4 s, 12 celulas, 6 colisoes (6 recuperadas, 3 paredes por colisao), 7 encontroes; real (3,3)
+test/test_integracao_colisao/test_integracao_colisao.cpp:190:test_corrida_com_tof_frontal_cego_recupera_de_cada_batida_e_chega_ao_objetivo:PASS
+test/test_integracao_colisao/test_integracao_colisao.cpp:36:test_corrida_com_tof_frontal_cego_no_8x4:INFO: 8x4 com ToF frontal cego: estado objetivo_alcancado em 31.8 s, 12 celulas, 4 colisoes (4 recuperadas, 2 paredes por colisao), 4 encontroes; real (3,7)
+test/test_integracao_colisao/test_integracao_colisao.cpp:191:test_corrida_com_tof_frontal_cego_no_8x4:PASS
+test/test_integracao_colisao/test_integracao_colisao.cpp:192:test_sem_deteccao_o_robo_cego_acha_que_andou_mas_fica_preso_na_parede:PASS
+5 Tests 0 Failures 0 Ignored
+test/test_telemetria_json/test_telemetria_json.cpp:271:test_serializa_telemetria_com_evento_colisao:PASS
+```
+
+#### Cobertura e suíte completa
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa (as 42 suítes do `native`) | **797 aprovados, 0 falhas** |
+| Cobertura das linhas de `lib/`, somando todas as suítes | **98,0%** (3824 de 3901), acima da meta de 80% |
+| `DetectorColisao.cpp`, `RegistradorPotencia.h` e `ConversorAceleracao.h` | 100% (65, 10 e 10 linhas) |
+| `CicloNavegacao.cpp` e `ExecutorMovimentos.cpp` | 96% (296 de 309) e 99% (281 de 285) |
+
+No `CicloNavegacao.cpp`, as duas linhas sem execução que são da #192 ficam no ajuste da posição ao centro de célula mais próximo, quando o robô está a mais de meia célula de um centro: as batidas dos testes acontecem a cerca de 34 mm do centro. As outras linhas sem execução são de antes da #192. O `ImuMpu6050` e o `main.cpp` não compilam no `native`; por isso a regra fica em `lib/execucao`, e os testes de integração repetem a ligação do `main.cpp` na `SimulacaoCorrida`.
+
+#### Prova de mutação
+
+Para conferir se os testes pegam erros, e não só passam, foram feitas alterações propositais no código, uma de cada vez, rodando `test_colisao`, `test_recuperacao_colisao` e `test_integracao_colisao` a cada uma. Por exemplo: impacto só acima do limiar, a referência aprendendo leituras agitadas, a mesma colisão avisada várias vezes, a frente além do alcance valendo como parada, a parede gravada já na primeira batida (ou com a frente livre, ou com o robô fora do lugar da batida), desistir uma colisão antes, recuar para a frente, ignorar a parede da frente no recuo e o registrador sem zerar a potência no `parar()`.
+
+| Execução | Resultado |
+|---|---|
+| `DetectorColisao` (8 alterações) | **8 detectadas** |
+| Recuperação no `CicloNavegacao` (10 alterações) | **10 detectadas** |
+| Recuo no `ExecutorMovimentos` (3 alterações) | **3 detectadas** |
+| `RegistradorPotencia` (2 alterações) | **2 detectadas** |
+| Total | **23 de 23 alterações detectadas** |
+
+#### Pendências desta etapa
+
+- **Bancada:** com o robô montado, bater devagar contra a parede e ver o `desvio_mg` no log para ajustar `LIMIAR_IMPACTO_MG` (entre o maior desvio andando sem bater e o menor batendo); conferir se o pico satura a faixa de ±4 g, onde o robô para depois do recuo e a frente parada com o robô preso.
+- **Evento no Supabase:** o `coletarAmostra()` do `main.cpp` só manda `objetivo_alcancado`; a colisão precisa ir como `EventoTelemetria::Colisao`, que o contrato já tem, para aparecer no banco e no dashboard.
+- **Encoders:** a detecção por encoder parado com os motores acionados, quando os encoders forem instalados.
