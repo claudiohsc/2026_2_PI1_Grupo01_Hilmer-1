@@ -1771,6 +1771,7 @@ pio run -e esp32c3
 | Faixa de medição em arquivo de configuração e conversão da leitura | 5 testes da conversão (4 faixas, sinal, arredondamento, fundo de escala, faixa cobre giro rápido) | Aprovado |
 | Integração do yaw com viés removido (giro, deriva e viés simulados) | 16 testes unitários do `IntegradorGiro`, 3 de integração e 7 do `AcompanhadorGiro` (ciclo da tarefa com o `ImuSimulado`) | Aprovado |
 | Leitura do MPU6050 (bits da faixa, bytes do sensor, sinal) | 3 testes das funções puras do driver (`valorGyroConfig`, `juntarBytesGiro`, `ajustarSinalGiro`) | Aprovado |
+| Leitura do giroscópio Z em intervalo fixo | `tarefaImu` com `vTaskDelayUntil` a cada 10 ms; os 7 testes do `AcompanhadorGiro` simulam o ciclo dela | Aprovado no computador; intervalo real na bancada |
 | I²C compartilhado com os ToF, protegido contra uso simultâneo | `BarramentoI2c` com mutex, usado pela IMU e pela leitura dos ToF na navegação; depende do FreeRTOS, sem teste no computador | Implementado; validação na bancada pendente |
 | Biblioteca do sensor só no `esp32c3` | `ImuMpu6050` em `lib/drivers_esp32`, ignorada no ambiente `native` (`lib_ignore`); `pio run -e esp32c3` compila | Aprovado |
 
@@ -1877,10 +1878,59 @@ Na segunda parte (código do Eduardo, 24/10), 15 alterações foram feitas no `A
 | A contagem de falhas seguidas não volta a zero depois de uma leitura boa | Falhas, uma leitura boa e mais falhas, abaixo do limite: o ângulo deve continuar válido |
 | O `ciclo` ignora o `dtMs` recebido e usa sempre 10 ms | Um ciclo com `dtMs` diferente de 10 ms (todos os testes usam 10 ms) |
 
+#### Driver, barramento I²C e tarefa da IMU
+
+Segunda parte da [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378): o driver do MPU6050, o barramento I²C protegido, o `AcompanhadorGiro` e a tarefa da IMU no `main.cpp` (documentação em [Driver, barramento I²C e tarefa da IMU](../04-projeto-conceitual/firmware.md#driver-barramento-i2c-e-tarefa-da-imu)).
+
+| Item | Valor |
+|---|---|
+| Código testado | `lib/imu/src/AcompanhadorGiro`, `ConversorGiro.h`, `lib/drivers_esp32/src/ImuMpu6050` e `BarramentoI2c`, `src/main.cpp` (branch `feat/378-driver-do-mpu6050-e-ângulo-de-giro-yaw`, commits `39fc912`, `54ba2f6` e `f8f0f07`, PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403)) |
+| Data da execução | 24/10/2026 |
+| Executado por | Eduardo Viana |
+| Tipo de teste | Unitário, no computador, com o `ImuSimulado`; compilação para o `esp32c3` |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04), GCC 13.3, Unity 2.6.1 e ArduinoJson 7.4.2, com as mesmas bibliotecas do ambiente `native` (todas as de `lib/`, menos `drivers_esp32`). Cobertura medida com `gcov`, somando todas as suítes.
+
+```bash
+pio test -e native -f test_imu
+```
+
+| Grupo | Casos | Nível | O que verificam |
+|---|:-:|---|---|
+| Registradores e bytes do sensor | 3 | Unitário | Valor de `GYRO_CONFIG` para as 4 faixas (0x00, 0x08, 0x10, 0x18); os dois bytes do eixo Z viram o valor de 16 bits em complemento de dois; sensor de cabeça para baixo inverte o sinal sem estourar em −32 768 |
+| `AcompanhadorGiro` (ciclo da tarefa da IMU) | 7 | Unitário | Calibra na largada e só então fica válido; giro de 90° integrado sem o viés; calibração recusada por movimento recomeça sozinha; 5 falhas seguidas invalidam o ângulo e uma leitura boa o revalida; sem calibrar não é válido, mas integra; falha durante a calibração não conta amostra; taxa publicada sem o viés não estoura o `int16_t` |
+
+**Resultado:** `test_imu` com **39 de 39 aprovados** (os 29 da primeira parte e os 10 novos).
+
+```text
+test/test_imu/test_imu.cpp:535: test_valor_do_gyro_config_para_cada_faixa [PASSED]
+test/test_imu/test_imu.cpp:536: test_juntar_bytes_em_complemento_de_dois [PASSED]
+test/test_imu/test_imu.cpp:537: test_sensor_de_cabeca_para_baixo_inverte_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:562: test_acompanhador_calibra_na_largada_e_so_entao_fica_valido [PASSED]
+test/test_imu/test_imu.cpp:563: test_acompanhador_integra_um_giro_de_90_graus_sem_o_vies [PASSED]
+test/test_imu/test_imu.cpp:564: test_acompanhador_recomeca_a_calibracao_se_o_robo_se_mexer [PASSED]
+test/test_imu/test_imu.cpp:565: test_acompanhador_falhas_seguidas_invalidam_o_angulo [PASSED]
+test/test_imu/test_imu.cpp:566: test_acompanhador_sem_calibrar_nao_e_valido_mas_integra [PASSED]
+test/test_imu/test_imu.cpp:567: test_acompanhador_falha_durante_a_calibracao_nao_conta_amostra [PASSED]
+test/test_imu/test_imu.cpp:568: test_acompanhador_taxa_publicada_nao_estoura_com_o_vies [PASSED]
+```
+
+| Arquivo | Linhas | Cobertura |
+|---|:-:|:-:|
+| `lib/imu/src/AcompanhadorGiro.cpp` | 39 | 100% |
+| `lib/imu/src/ConversorGiro.h` | 12 | 100% |
+| `lib/imu/src/IntegradorGiro.cpp` | 45 | 100% |
+| `lib/simulacao/src/ImuSimulado.h` | 22 | 100% |
+| **Total do firmware** (`lib/`, com a `main` de 23/10 já mesclada) | 1243 | **98,4%** |
+
+Suíte completa do firmware nesta branch: **314 de 314 aprovados**, em 20 suítes.
+
+**Compilação para a placa.** `main.cpp`, `ImuMpu6050.cpp` e `BarramentoI2c.cpp` passaram pela verificação de sintaxe com os cabeçalhos do Arduino-ESP32 2.x e 3.x. O driver e o barramento não têm teste no computador, porque dependem do `Wire` e do FreeRTOS; o build completo (`pio run -e esp32c3`) é conferido pelo CI do PR, e o comportamento real, na bancada.
+
 #### Pendências desta etapa
 
 - Três testes do `AcompanhadorGiro`, para as alterações não detectadas na prova de mutação (vão num PR de código para a `main`).
-- Leitura do sensor real na bancada: viés e ruído do MPU6050 parado, para ajustar a zona morta e os limites da calibração, e o sinal do eixo Z (`INVERTER_GIRO_Z`) (#381).
+- Leitura do sensor real na bancada: `imu_iniciada` com `who_am_i` 0x68 no log, viés e ruído do MPU6050 parado, para ajustar a zona morta e os limites da calibração, o sinal do eixo Z (`INVERTER_GIRO_Z`) e um giro de 90° feito à mão conferido no ângulo (#381).
 - Bancada com os 3 VL53L0X e o MPU6050 ligados ao mesmo tempo, para confirmar o barramento compartilhado: a contagem `esperasEsgotadas()` e as falhas de leitura devem ficar em zero com o robô rodando (#381).
 - Frequência do I²C (100 kHz) e espera máxima pelo barramento (8 ms), ainda provisórias.
 
@@ -2323,6 +2373,112 @@ pio run -e esp32c3
 
 - Validação física dos offsets reais dos sensores e limiares calibrados na bancada de ensaios com o chassi montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
 
+### Sprint 5 · Rotina de calibração dos VL53L0X e do giroscópio
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#240 Rotina de calibração dos VL53L0X e do giroscópio](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240) |
+| Requisitos | [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) · Calibração de sensores (RF13), [RNF-08](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/26) · Tempo de calibração (limite de 1 s) |
+| Código testado | `src/firmware` (branch `feat/240-calibracao-sensores-giroscopio`; commit `fb6f9a3`) |
+| Data da execução | 24/10/2026 |
+| Executado por | Rafael Lima |
+| Documentação do código | [Firmware: calibração de sensores](../04-projeto-conceitual/firmware.md#calibracao-autocalibracao-dos-vl53l0x-e-do-giroscopio-calibradortof-calibradorgiro-e-rotinacalibracao) |
+
+Esta etapa valida a autocalibração dos sensores de distância (3 VL53L0X) e do giroscópio (MPU6050, eixo Z) executada antes do início da exploração do labirinto. A rotina foi implementada em C++17 puro dentro de `lib/calibracao`, sem dependência do ecossistema Arduino, sendo exaustivamente testada no computador com os dispositivos simulados `SensorDistanciaSimulado` e `ImuSimulado`.
+
+**Ambiente de execução**
+
+| Componente | Valor |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 24.04.4 LTS, kernel 7.0) |
+| PlatformIO | Core 6.2.0 |
+| Compilador (`native`) | g++ 13.3.0 (C++17) |
+| Framework de testes | Unity 2.6.1 |
+| Cobertura | gcov 13.3.0 e gcovr 8.6 |
+
+#### Critérios de pronto da #240
+
+| Critério | Como foi atendido | Verificação |
+| :--- | :--- | :--- |
+| Calibração dos VL53L0X calcula desvios e detecta movimento | `CalibradorTof` coleta 10 amostras a cada 33 ms (~330 ms total), calcula a média por sensor e o offset contra 54 mm de referência nominal. Se a oscilação entre máxima e mínima for > 8 mm, transiciona para `Recusada` mantendo os desvios anteriores | `test_calibracao_guarda_desvio_por_sensor`, `test_media_arredonda_para_o_inteiro_mais_proximo`, `test_recusa_se_algum_lado_variar_demais`, `test_recusa_mantem_desvios_da_calibracao_anterior` |
+| Calibração do giroscópio calcula viés estático do eixo Z e detecta rotação | `CalibradorGiro` coleta 50 amostras a cada 10 ms (500 ms total), calcula o viés estático em décimos de °/s com arredondamento simétrico e detecta movimentação do chassi se a variação for > 5,0 °/s (50 décimos de °/s), mantendo o viés anterior se for recusada | `test_calibrador_giro_calcula_vies_pela_media_arredondada`, `test_calibrador_giro_vies_negativo_arredondado`, `test_calibrador_giro_recusa_se_robo_se_mover_variacao_excessiva`, `test_calibrador_giro_recusa_mantem_vies_anterior` |
+| Orquestração unificada respeitando estritamente o limite de 1 s do RNF-08 | `RotinaCalibracao` orquestra ambos os calibradores em paralelo com medição ativa da duração (`duracaoMedidaMs()`). Executada em 500 ms com margem de segurança de 500 ms para o limite de 1000 ms. Aborta com `TempoExcedido` caso o laço estoure o orçamento | `test_rotina_calibracao_sucesso_com_imu_simulado_e_lidar_simulado`, `test_rotina_calibracao_duracao_medida_dentro_do_orcamento_rnf08`, `test_rotina_calibracao_falha_tempo_excedido_quando_estoura_orcamento`, `test_orcamento_tof_cabe_no_rnf08` |
+| Lógica defensiva e robustez a falhas de leitura | Aplicação de correções com saturação defensiva em zero nos ToF; tratamento de leitura com falha comutando para `FalhaSensor`; descarte de amostras adicionadas fora do estado `Calibrando` | `test_corrigir_satura_em_zero_quando_desvio_e_maior_que_a_leitura`, `test_rotina_calibracao_aborta_em_caso_de_falha_de_sensor`, `test_amostra_fora_de_calibrando_e_ignorada`, `test_calibrador_giro_amostra_fora_de_calibrando_e_ignorada` |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/calibracao/src/ConfiguracaoCalibracao.h` | Constantes de calibração: orçamento total (1000 ms), amostras (10 ToF, 50 Giro), limiares de variação (8 mm, 50 décimos de °/s) e referência nominal (54 mm) |
+| `lib/calibracao/src/CalibradorTof.h/.cpp` | Coleta de amostras ToF, cálculo de desvio contra referência, detecção de movimento e correção |
+| `lib/calibracao/src/CalibradorGiro.h/.cpp` | Coleta de amostras do giroscópio (eixo Z), cálculo do viés em repouso com média arredondada, detecção de rotação e correção |
+| `lib/calibracao/src/RotinaCalibracao.h/.cpp` | Máquina de estados unificada, medição ativa de duração, laço `executar(ISensorDistancia&, IImu&)` e despacho de correções |
+| `test/test_calibracao_tof/test_calibracao_tof.cpp` | Suíte de testes unitários do calibrador de ToF (10 testes) |
+| `test/test_rotina_calibracao/test_rotina_calibracao.cpp` | Suíte de testes unitários do calibrador de giroscópio e da rotina unificada (14 testes) |
+
+#### Testes unitários (ambiente native)
+
+```bash
+pio test -e native -f test_calibracao_tof -f test_rotina_calibracao
+```
+
+| Suíte | Casos | Resultado |
+| :--- | :---: | :--- |
+| `test_calibracao_tof` | 10 | **10 aprovados** |
+| `test_rotina_calibracao` | 14 | **14 aprovados** |
+| **Total da calibração** | **24** | **24 aprovados (100%)** |
+
+Os casos detalhados estão descritos na tabela de testes da [documentação do firmware](../04-projeto-conceitual/firmware.md#testes).
+
+#### Saída da execução
+
+```text
+test/test_calibracao_tof/test_calibracao_tof.cpp:189:test_comeca_nao_calibrado_e_desvios_zero:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:190:test_calibracao_guarda_desvio_por_sensor:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:191:test_media_arredonda_para_o_inteiro_mais_proximo:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:192:test_corrigir_aplica_desvio_nas_leituras:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:193:test_corrigir_satura_em_zero_quando_desvio_e_maior_que_a_leitura:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:194:test_recusa_se_algum_lado_variar_demais:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:195:test_recusa_mantem_desvios_da_calibracao_anterior:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:196:test_amostra_fora_de_calibrando_e_ignorada:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:197:test_orcamento_tof_cabe_no_rnf08:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:198:test_com_leituras_simuladas_do_lidar:PASS
+-----------------------
+10 Tests 0 Failures 0 Ignored
+OK
+
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:244:test_calibrador_giro_inicial_nao_calibrado_e_vies_zero:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:245:test_calibrador_giro_calcula_vies_pela_media_arredondada:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:246:test_calibrador_giro_vies_negativo_arredondado:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:247:test_calibrador_giro_aplica_vies_nas_leituras_corrigir:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:248:test_calibrador_giro_recusa_se_robo_se_mover_variacao_excessiva:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:249:test_calibrador_giro_recusa_mantem_vies_anterior:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:250:test_calibrador_giro_amostra_fora_de_calibrando_e_ignorada:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:251:test_rotina_calibracao_sucesso_com_imu_simulado_e_lidar_simulado:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:252:test_rotina_calibracao_duracao_medida_dentro_do_orcamento_rnf08:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:253:test_rotina_calibracao_falha_tempo_excedido_quando_estoura_orcamento:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:254:test_rotina_calibracao_recusa_quando_robo_se_move_no_giro:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:255:test_rotina_calibracao_recusa_quando_robo_se_move_no_tof:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:256:test_rotina_calibracao_aborta_em_caso_de_falha_de_sensor:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:257:test_rotina_calibracao_iniciar_com_referencias_customizadas:PASS
+-----------------------
+14 Tests 0 Failures 0 Ignored
+OK
+```
+
+#### Verificações consolidadas
+
+| Verificação | Resultado |
+|---|---|
+| Suíte de calibração (`test_calibracao_tof` + `test_rotina_calibracao`) | **24 de 24 aprovados (100%)** |
+| Todos os testes unitários do firmware (`pio test -e native`) | **436 de 436 aprovados** |
+| Compilação do firmware para o microcontrolador (`pio run -e esp32c3`) | **Sucesso** (Flash: 21,9%, RAM: 4,6%) |
+
+#### Pendências desta etapa
+
+- Validação em bancada de ensaios com o chassi montado e sensores reais posicionados na célula inicial do labirinto ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
+- Ajuste fino dos limiares de rejeição de ruído após caracterização física dos módulos VL53L0X e MPU6050.
+
 ### Sprint 5 · Testes do frontend (Vitest e Testing Library) e CI
 
 | Item | Valor |
@@ -2464,6 +2620,397 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 - [#234 Filtro de histórico](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234): expandirá os testes de filtros e paginação da tela de histórico.
 - [#239 Exibição de mapa e percurso](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239): utilizará os testes de parsing e células de `labirinto.ts` integrados à grade visual.
 - [#242 Estado "Aguardando Largada"](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242): utilizará o hook `useReproducaoCorrida` e os estados do painel.
+
+### Sprint 5 · Envio da telemetria ao Supabase, buffer local e reenvio sem duplicação
+
+| Item | Valor |
+|---|---|
+| Tarefas | [#236 Envio de telemetria do ESP32 ao Supabase](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/236) e [#238 Buffer local e reenvio sem duplicação](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/238) |
+| Histórias de usuário | HU-08 · Captura e Transmissão ([#45](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/45)) e HU-16 · Estabilização de Conexão ([#46](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/46)); RF08, RF16 e RNF05 |
+| Código testado | `src/firmware/lib/comunicacao`, `lib/hal`, `lib/simulacao` e `lib/drivers_esp32` (branch `feat/238-buffer-reenvio` com a `feat/238-envio-http`: commits `2909415`, `b759b6a`, `d42378c`, `f3b0a28` e `c1ba268`, PR [#412](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/412)) |
+| Data da execução | 24/10/2026 |
+| Executado por | Eduardo Viana |
+| Tipo de teste | Unitário e de integração, no computador, com o servidor simulado `EnvioSimulado` |
+| Documentação do código | [Comunicação: envio da telemetria ao Supabase, *buffer* e reenvio](../04-projeto-conceitual/firmware.md#comunicacao-envio-da-telemetria-ao-supabase-buffer-e-reenvio) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04), GCC 13.3, Unity 2.6.1 e ArduinoJson 7.4.2, com as mesmas bibliotecas do ambiente `native` (todas as de `lib/`, menos `drivers_esp32`). Cobertura medida com `gcov`, somando todas as suítes.
+
+!!! warning "Testes no computador"
+    O servidor, a rede e o Wi-Fi foram simulados: o `EnvioSimulado` imita o backend (ignora `(corrida, sequência)` repetidos, fica fora do ar, perde respostas e, no `EnvioLentoSimulado`, demora a responder quando o teste pede), e a `RedeWifiSimulada` imita o Wi-Fi. O teste com o Wi-Fi real fica para a bancada (ED2), e o ponta a ponta com o Supabase, para a [#232](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/232).
+
+#### Critérios da issue e testes
+
+| Critério da #236 | Testes | Situação |
+|---|---|:-:|
+| Cliente Wi-Fi e HTTPS (`HTTPClient` com `WiFiClientSecure`), com validação de certificado; `setInsecure` só na bancada e documentado | `EnvioHttpSupabase` e `RedeWifiEsp32` (`drivers_esp32`); `test_so_https_e_com_certificado_ou_excecao_de_bancada`; seção "Credenciais" do README | Aprovado no código; HTTPS real na bancada |
+| Credenciais fora do repositório (arquivo ignorado e `.exemplo` versionado); sem credenciais, inicia e não envia | `include/credenciais.exemplo.h` e `.gitignore`; `test_sem_credenciais_o_envio_fica_desligado` | Aprovado |
+| `IEnvioTelemetria` em `hal`, implementação HTTP em `drivers_esp32` e `EnvioSimulado` para os testes | `IEnvioTelemetria.h`, `EnvioHttpSupabase` e `EnvioSimulado` | Aprovado |
+| Montagem do lote testada: nomes das colunas, `numero_sequencia` crescente, tamanho máximo do lote e do JSON, `evento` só quando existe | 7 testes do JSON do lote; `test_registrar_numera_na_coleta_e_nunca_chama_a_rede`; `test_lotes_de_no_maximo_100_amostras` | Aprovado |
+| Criação da corrida no início e encerramento no fim, com o `corrida_id` em todos os lotes | `test_le_o_id_da_corrida_criada`, `test_corpos_da_criacao_e_do_encerramento`, `test_nova_corrida_limpa_buffer_numeracao_e_contadores`; `tarefaRede` no `main.cpp` | Aprovado |
+| Amostragem de cerca de 1 s e envio sem bloquear a navegação: tarefa concorrente, tempo limite configurável e fila com descarte da mais antiga e contador de perdas | `test_periodo_da_coleta_e_tempos_da_rede`, `test_integracao_servidor_lento_nao_atrasa_a_coleta_nem_duplica`, `test_a_trava_nunca_e_segurada_durante_a_rede`, `test_buffer_cheio_sobrescreve_o_mais_antigo_e_conta_a_perda` | Aprovado |
+| Reconexão do Wi-Fi com espera crescente, sem travar a tarefa | 5 testes do Wi-Fi | Aprovado |
+| Contrato do lote num arquivo de exemplo único, validado pelos testes do firmware e do backend ([#229](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/229)) | `test_contrato_lote_igual_ao_exemplo_do_backend` | Aprovado com a fixture do PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398) (veja abaixo); roda sozinho quando os dois estiverem na `main` |
+| Parâmetros (período, lote, tempo limite da rede, tamanho da fila) em arquivo de configuração, provisórios e documentados | `Configuracao.h`, `ConfiguracaoReenvio.h`, `ConfiguracaoRede.h` e README | Aprovado |
+
+| Teste obrigatório da #236 | Testes | Situação |
+|---|---|:-:|
+| Unitários da montagem do lote, da fila, do período e do comportamento sem credenciais | JSON do lote (7), *buffer* (7), período e tempos da rede (1) e credenciais (3) | Aprovado |
+| Integração com `EnvioSimulado`: coleta, fila, lote e envio numa corrida simulada; servidor com sucesso, erro e demora; navegação nunca espera | `test_integracao_servidor_lento_nao_atrasa_a_coleta_nem_duplica` e `test_integracao_corrida_pelo_json_com_rede_caindo_no_meio` | Aprovado |
+| Contrato: o lote do firmware é igual ao exemplo único, que o backend aceita | `test_contrato_lote_igual_ao_exemplo_do_backend` | Aprovado com a fixture do PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398) |
+| `pio test -e native` no CI, com pelo menos 80% das linhas dos arquivos novos | Suíte completa aprovada; arquivos novos entre 96% e 100% | Aprovado localmente; o CI roda no PR |
+| Execução registrada em `docs/07-testes/software.md` | Este registro | Aprovado |
+
+| Critério da #238 | Testes | Situação |
+|---|---|:-:|
+| *Buffer* circular de tamanho fixo, com capacidade e RAM documentadas no README e no código | `test_amostra_ocupa_pouco_e_o_buffer_cabe_dez_minutos` (600 amostras de até 24 bytes); `ConfiguracaoReenvio.h` e README | Aprovado |
+| Sobrescrita da amostra mais antiga quando cheio, com contagem de perdas | `test_buffer_cheio_sobrescreve_o_mais_antigo_e_conta_a_perda`, `test_buffer_da_a_volta_no_vetor_varias_vezes`, `test_integracao_buffer_cheio_perde_so_as_mais_antigas` | Aprovado |
+| Remoção apenas das amostras confirmadas | `test_buffer_remove_so_o_prefixo_confirmado`, `test_buffer_confirmacao_de_item_ja_sobrescrito_nao_remove_nada`, `test_lote_confirmado_sai_do_buffer_na_ordem`, `test_resposta_que_nao_fecha_com_o_tamanho_do_lote_nao_remove_nada`, `test_integracao_confirmacao_nao_apaga_amostras_novas` | Aprovado |
+| Reenvio em ordem, lotes de até 100, espera crescente e volta a 1 s | `test_lotes_de_no_maximo_100_amostras`, `test_espera_dobra_ate_o_teto_e_volta_ao_minimo_no_sucesso`, `test_espera_crescente_entre_tentativas_e_volta_ao_minimo`, `test_o_relogio_que_da_a_volta_nao_trava_a_espera` | Aprovado |
+| Classificação das respostas: repetir, descartar e pausar | `test_classificacao_das_respostas`, `test_erro_do_servidor_e_limite_de_requisicoes_sao_tentados_de_novo`, `test_lote_recusado_e_descartado_e_a_fila_segue`, `test_nao_autorizado_pausa_o_envio_ate_retomar` | Aprovado |
+| `numero_sequencia` dado na coleta e nunca mudado no reenvio | `test_registrar_numera_na_coleta_e_nunca_chama_a_rede`, `test_integracao_resposta_perdida_nao_duplica` | Aprovado |
+| Encerramento só com o *buffer* vazio, ou tentado de novo quando a rede voltar | `test_integracao_encerramento_so_depois_do_ultimo_lote`, `test_encerramento_sem_rede_tenta_de_novo_depois_da_espera`, `test_encerramento_atrasado_continua_tentando_ate_conseguir` | Aprovado |
+| Contadores de ocupação, perdas, tentativas e reenvios, registrados no log | Contadores conferidos nos testes de integração; o `main.cpp` os escreve no log (`envio`) a cada 10 s | Aprovado; log a conferir na bancada |
+| Parâmetros em arquivo de configuração, provisórios e documentados | `test_espera_vem_da_configuracao`, `test_o_tamanho_do_lote_vem_da_configuracao`; `ConfiguracaoReenvio.h`, `ConfiguracaoRede.h` e README | Aprovado |
+
+| Teste obrigatório da #238 | Testes | Situação |
+|---|---|:-:|
+| Unitários do *buffer* e da política de reenvio | 7 do *buffer* e 3 da política | Aprovado |
+| Integração: 120 amostras com a rede fora do ar no meio, servidor com exatamente 120, sem duplicata e em ordem, navegação sem esperar | `test_integracao_rede_fora_no_meio_da_corrida_nao_perde_nem_duplica` e, passando pelo JSON de verdade, `test_integracao_corrida_pelo_json_com_rede_caindo_no_meio`; `test_a_trava_nunca_e_segurada_durante_a_rede` | Aprovado |
+| Integração, resposta perdida: o reenvio não duplica | `test_integracao_resposta_perdida_nao_duplica` (e a resposta perdida da integração pelo JSON) | Aprovado |
+| Integração, encerramento só depois do último lote confirmado | `test_integracao_encerramento_so_depois_do_ultimo_lote` | Aprovado |
+| `pio test -e native` no CI, com pelo menos 80% das linhas dos arquivos novos | Suíte completa aprovada; arquivos novos entre 96% e 100% (tabela abaixo) | Aprovado localmente; o CI roda no PR |
+| Execução registrada em `docs/07-testes/software.md` | Este registro | Aprovado |
+
+#### *Buffer*, política e `ControladorEnvio`
+
+```bash
+pio test -e native -f test_reenvio_telemetria
+```
+
+| Grupo | Casos | Nível | O que verificam |
+|---|:-:|---|---|
+| Amostra e *buffer* | 9 | Unitário | Nomes do estado e do evento iguais aos do banco; amostra pequena e 10 minutos no *buffer*; ordem de chegada; cópia limitada ao pedido; sobrescrita do mais antigo com a perda contada; várias voltas no vetor; remoção só do prefixo confirmado; confirmação de item já sobrescrito não remove nada; remover além do tamanho e limpar |
+| Política de reenvio | 3 | Unitário | Classificação de cada código HTTP; espera que dobra até o teto e volta ao mínimo; espera vinda da configuração |
+| `ControladorEnvio` | 8 | Unitário | Numeração na coleta sem chamar a rede; ciclo ocioso sem corrida ou sem amostras; lote confirmado sai em ordem; lotes de no máximo 100; tamanho do lote da configuração; espera crescente e volta ao mínimo; relógio que dá a volta não trava a espera; primeira tentativa com o relógio alto não espera |
+| Respostas do servidor | 4 | Unitário | Lote recusado é descartado e a fila segue; `5xx` e `429` tentados de novo; `401` pausa até `retomar()`; contagens que não fecham não removem nada |
+| Encerramento | 6 | Unitário | Sem amostras pendentes, sai na hora; sem rede, tenta de novo depois da espera; pedir de novo não reinicia o atraso; atrasado continua tentando; corrida inexistente (`404`) não insiste; credencial recusada pausa |
+| Concorrência e nova corrida | 2 | Unitário | A trava nunca é segurada durante a chamada de rede; nova corrida limpa o *buffer*, a numeração e os contadores |
+| Integração com o servidor simulado | 5 | Integração | Rede fora no meio da corrida sem perder nem duplicar; resposta perdida sem duplicar; *buffer* cheio perde só as mais antigas; confirmação não apaga amostras novas; encerramento só depois do último lote |
+
+**Resultado:** 37 de 37 aprovados (32 unitários e 5 de integração).
+
+#### Contrato com o backend, credenciais, tempos da rede e Wi-Fi
+
+```bash
+pio test -e native -f test_envio_supabase
+```
+
+| Grupo | Casos | Nível | O que verificam |
+|---|:-:|---|---|
+| JSON do lote | 7 | Unitário | Nomes das colunas e unidades do banco; `evento` só quando existe; várias amostras em ordem e JSON válido; números negativos e pequenos com três casas; lote vazio e orientação inválida não quebram o JSON; lote que não cabe devolve zero; a pior amostra e o pior lote cabem no espaço reservado |
+| Contrato igual ao exemplo do backend | 1 | Unitário | Compara o lote com `src/backend/tests/fixtures/lote-telemetria.json`. **Ignorado** nesta branch: o arquivo chega com a [#229](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/229) (PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398)) e o teste passa a rodar sozinho quando os dois estiverem juntos |
+| Respostas e corpos | 5 | Unitário | Contagens da resposta do lote; resposta sem as contagens recusada; `id` da corrida criada; corpos da criação e do encerramento; amostra montada a partir da pose |
+| Credenciais | 3 | Unitário | Sem credenciais, o envio fica desligado; só `https`, com certificado ou com a exceção de bancada; URL das funções |
+| Período da coleta e tempos da rede | 1 | Unitário | Coleta a 1 s, dentro dos 2 s do RNF05; vários ciclos de rede por período; um *buffer* cheio se esvazia em menos de um período (6 lotes de 100); uma chamada que esgota o tempo limite cabe no prazo do encerramento |
+| Wi-Fi | 5 | Unitário | Conecta na primeira tentativa; espera cada vez mais entre tentativas e volta a 1 s; queda com a rede conectada tenta de novo na hora e é contada; rede que volta sozinha durante a espera é aceita; relógio que dá a volta |
+| Corrida inteira pelo JSON | 1 | Integração | 120 amostras passando pelo `serializarLote` e pela leitura da resposta, com o servidor fora do ar da 40ª à 70ª e uma resposta perdida: o servidor termina com as 120, de 1 a 120, sem duplicata, e a corrida só é encerrada com tudo entregue |
+| Servidor lento | 1 | Integração | 60 amostras com o servidor respondendo em 200 ms, depois em 3 s (dentro do tempo limite), depois passando do tempo limite de 5 s (o robô desiste, mas o servidor grava), com `503` no meio. A coleta continua durante as chamadas lentas (25 amostras registradas com a rede em curso, nenhuma atrasada, nenhuma com a trava segura); o servidor termina com as 60, em ordem, e ignora 11 repetidas dos 2 tempos esgotados; a corrida só é encerrada com tudo entregue |
+
+**Resultado:** 23 de 23 aprovados e 1 ignorado (21 unitários e 2 de integração).
+
+```text
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:633: test_nomes_do_estado_e_do_evento_batem_com_o_banco [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:634: test_amostra_ocupa_pouco_e_o_buffer_cabe_dez_minutos [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:635: test_buffer_guarda_na_ordem_de_chegada [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:636: test_buffer_copia_no_maximo_o_pedido [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:637: test_buffer_cheio_sobrescreve_o_mais_antigo_e_conta_a_perda [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:638: test_buffer_da_a_volta_no_vetor_varias_vezes [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:639: test_buffer_remove_so_o_prefixo_confirmado [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:640: test_buffer_confirmacao_de_item_ja_sobrescrito_nao_remove_nada [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:641: test_buffer_remover_alem_do_tamanho_limita_e_limpar_zera [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:642: test_classificacao_das_respostas [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:643: test_espera_dobra_ate_o_teto_e_volta_ao_minimo_no_sucesso [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:644: test_espera_vem_da_configuracao [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:645: test_registrar_numera_na_coleta_e_nunca_chama_a_rede [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:646: test_sem_corrida_ou_sem_amostras_o_ciclo_fica_ocioso [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:647: test_lote_confirmado_sai_do_buffer_na_ordem [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:648: test_lotes_de_no_maximo_100_amostras [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:649: test_o_tamanho_do_lote_vem_da_configuracao [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:650: test_espera_crescente_entre_tentativas_e_volta_ao_minimo [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:651: test_o_relogio_que_da_a_volta_nao_trava_a_espera [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:652: test_primeira_tentativa_com_o_relogio_alto_nao_espera [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:653: test_integracao_rede_fora_no_meio_da_corrida_nao_perde_nem_duplica [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:654: test_integracao_resposta_perdida_nao_duplica [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:655: test_integracao_buffer_cheio_perde_so_as_mais_antigas [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:656: test_integracao_confirmacao_nao_apaga_amostras_novas [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:657: test_lote_recusado_e_descartado_e_a_fila_segue [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:658: test_erro_do_servidor_e_limite_de_requisicoes_sao_tentados_de_novo [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:659: test_nao_autorizado_pausa_o_envio_ate_retomar [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:660: test_resposta_que_nao_fecha_com_o_tamanho_do_lote_nao_remove_nada [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:661: test_integracao_encerramento_so_depois_do_ultimo_lote [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:662: test_encerramento_sem_amostras_pendentes_sai_na_hora [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:663: test_encerramento_sem_rede_tenta_de_novo_depois_da_espera [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:664: test_pedir_o_encerramento_de_novo_nao_reinicia_o_atraso [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:665: test_encerramento_atrasado_continua_tentando_ate_conseguir [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:666: test_encerramento_de_corrida_inexistente_nao_insiste [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:667: test_encerramento_com_credencial_recusada_pausa [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:668: test_a_trava_nunca_e_segurada_durante_a_rede [PASSED]
+test/test_reenvio_telemetria/test_reenvio_telemetria.cpp:669: test_nova_corrida_limpa_buffer_numeracao_e_contadores [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:764: test_lote_com_uma_amostra_tem_os_nomes_das_colunas_e_as_unidades_do_banco [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:765: test_evento_so_aparece_quando_existe [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:766: test_lote_com_varias_amostras_em_ordem_e_json_valido [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:767: test_numeros_negativos_e_pequenos_com_tres_casas [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:768: test_lote_vazio_e_orientacao_invalida_nao_quebram_o_json [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:769: test_lote_que_nao_cabe_devolve_zero_e_texto_vazio [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:770: test_pior_amostra_e_pior_lote_cabem_no_espaco_reservado [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:364: test_contrato_lote_igual_ao_exemplo_do_backend [IGNORED]
+test/test_envio_supabase/test_envio_supabase.cpp:772: test_le_as_contagens_da_resposta_do_lote [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:773: test_resposta_do_lote_sem_as_contagens_e_recusada [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:774: test_le_o_id_da_corrida_criada [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:775: test_corpos_da_criacao_e_do_encerramento [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:776: test_amostra_montada_a_partir_da_pose [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:777: test_sem_credenciais_o_envio_fica_desligado [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:778: test_so_https_e_com_certificado_ou_excecao_de_bancada [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:779: test_url_das_funcoes [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:780: test_periodo_da_coleta_e_tempos_da_rede [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:781: test_wifi_conecta_na_primeira_tentativa [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:782: test_wifi_espera_cada_vez_mais_entre_tentativas_e_volta_a_1s [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:783: test_wifi_que_cai_tenta_de_novo_na_hora_e_conta_a_queda [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:784: test_wifi_que_volta_sozinho_durante_a_espera_e_aceito [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:785: test_wifi_com_o_relogio_dando_a_volta [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:786: test_integracao_corrida_pelo_json_com_rede_caindo_no_meio [PASSED]
+test/test_envio_supabase/test_envio_supabase.cpp:787: test_integracao_servidor_lento_nao_atrasa_a_coleta_nem_duplica [PASSED]
+```
+
+**Contrato com o backend.** Para conferir o teste ignorado, a fixture `src/backend/tests/fixtures/lote-telemetria.json` do PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398) (commit `3bb9319`) foi copiada para uma cópia desta branch: `test_contrato_lote_igual_ao_exemplo_do_backend` **passou**, com as 5 amostras do exemplo (inclusive `colisao` e `objetivo_alcancado`) iguais campo a campo. Quando o [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398) e este PR estiverem na `main`, o teste passa a rodar no CI sem mudança.
+
+#### Cobertura, suíte completa e compilação da placa
+
+| Arquivo | Linhas | Cobertura |
+|---|:-:|:-:|
+| `lib/comunicacao/src/ControladorEnvio.cpp` e `.h` | 116 | 100% |
+| `lib/comunicacao/src/BufferCircular.h` | 39 | 100% |
+| `lib/comunicacao/src/PoliticaReenvio.cpp` e `.h` | 24 | 100% |
+| `lib/comunicacao/src/ContratoTelemetria.cpp` | 107 | 99% |
+| `lib/comunicacao/src/ReconexaoWifi.cpp` e `.h` | 42 | 100% |
+| `lib/comunicacao/src/CredenciaisSupabase.cpp` | 21 | 100% |
+| `lib/simulacao/src/EnvioSimulado.h` | 75 | 96% |
+| `lib/simulacao/src/TravaNula.h` e `lib/nucleo/src/AmostraTelemetria.h` | 18 | 100% |
+| **Total do firmware** (`lib/`) | 1475 | **98,6%** |
+
+Suíte completa do firmware nesta branch: **327 de 328 aprovados e 1 ignorado** (o contrato acima), em 21 suítes. `main.cpp`, `EnvioHttpSupabase.cpp`, `RedeWifiEsp32.h` e `TravaSecaoCritica.h` passaram pela verificação de sintaxe com os cabeçalhos do Arduino-ESP32 2.x e 3.x, com e sem `include/credenciais.h`; o build completo (`pio run -e esp32c3`) é conferido pelo CI do PR. O cliente HTTPS e o Wi-Fi não têm teste no computador, porque dependem do `HTTPClient` e do `WiFi` do ESP32.
+
+#### Pendências desta etapa
+
+- Edge Function `telemetria` ([#229](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/229), PR [#398](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/398)): já está na `main`. O teste do contrato deixou de ser ignorado e, na `main` de 25/10/2026, a suíte nativa passa com 762 de 762.
+- Bancada com o Wi-Fi real (ED2): criar a corrida, desligar o roteador no meio, conferir no log os contadores e, no banco, as amostras sem buraco e sem duplicata; depois, o ponta a ponta da [#232](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/232).
+
+### Sprint 5 · Motores N20: freio no boot, duty máximo e motor travado sem encoder
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#341 Motores N20 pelo DRV8833: novos pinos, tensão e proteção sem encoder](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) |
+| História de usuário | HU-01 · Algoritmo de Resolução ([#42](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42)), RF01 |
+| Código testado | `src/firmware/lib/atuacao` e `lib/drivers_esp32/src/MotoresDrv8833` (branch `feat/341-motores-n20` com a `feat/341-protecao-pwm`: commits `ded7cdb`, `e1447bf` e `e3bc772`, PR [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396)) |
+| Data da execução | 24/10/2026 |
+| Executado por | Eduardo Viana |
+| Tipo de teste | Unitário e de integração, no computador, com `MotoresSimulados` e `LidarSimulado` |
+| Documentação do código | [Atuação: motores N20 e proteção sem encoder](../04-projeto-conceitual/firmware.md#atuacao-motores-n20-e-protecao-sem-encoder) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04), GCC 13.3, Unity 2.6.1 e ArduinoJson 7.4.2, com as mesmas bibliotecas do ambiente `native` (todas as de `lib/`, menos `drivers_esp32`). Cobertura medida com `gcov`, somando todas as suítes.
+
+!!! warning "Testes no computador"
+    Os motores, o ToF frontal e o giroscópio foram simulados. O freio no boot, o tranco pelos GPIO20/21 e o corte com uma roda presa só podem ser conferidos na bancada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
+#### Critérios da issue e testes
+
+| Critério da #341 | Como foi verificado | Situação |
+|---|---|:-:|
+| Pinos conforme a Rev 2.0, vindos de `Pinos.h` | O `main.cpp` cria o `MotoresDrv8833` com `pinos::MOTOR_ESQ_IN1`, `MOTOR_ESQ_IN2`, `MOTOR_DIR_IN3` e `MOTOR_DIR_IN4` (GPIO10, 3, 20 e 21); `test_pinos` confere que nenhum GPIO se repete | Aprovado |
+| Motores em freio antes do PWM; tranco no boot documentado no README | Revisão do código: `motores.iniciar()` é a primeira linha do `setup()` e põe os pinos em nível alto antes de ligar o PWM, que começa com duty total; seção "Tranco no boot" no README do firmware | Aprovado no código; tranco a medir na bancada |
+| Duty máximo configurável e comprovado em teste no computador | 7 testes do duty em `test_motores` | Aprovado |
+| Motor travado por tempo contínuo em duty alto, sem variação do ToF frontal nem do giroscópio | 22 testes da `ProtecaoMotorTravado` e 8 da `MotoresComProtecao` | Aprovado no computador; as medidas reais (ToF frontal e giroscópio) já estão ligadas no `main.cpp`, e o corte com o robô preso falta na bancada |
+| Parâmetros provisórios listados no README do firmware | Tabela "Valores provisórios" da seção "Motores N20 (DRV8833)" | Aprovado |
+
+#### Duty máximo e `MotoresComProtecao`
+
+```bash
+pio test -e native -f test_motores
+```
+
+| Caso de teste | O que verifica | Resultado |
+|---|---|:-:|
+| `test_duty_total_pela_resolucao` | 10 bits dão 1023 de duty total; 8 bits, 255 | Aprovado |
+| `test_duty_maximo_e_a_fracao_configurada_do_total` | 70% de 1023 = 716 (arredonda para baixo); 50% = 511; 0% = 0; acima de 100% vale 100% | Aprovado |
+| `test_duty_maximo_em_uso_vem_da_configuracao` | `DUTY_MAXIMO_MOTORES` sai de `ConfiguracaoMotores.h` e não passa do duty total | Aprovado |
+| `test_potencia_maxima_vira_o_duty_maximo_e_nao_100_por_cento` | Potência 1000 para a frente e para trás vira o duty máximo, e não 1023 | Aprovado |
+| `test_potencias_menores_sao_proporcionais_ao_duty_maximo` | Potência 500 vira metade do duty máximo (358), e não 511 | Aprovado |
+| `test_nenhuma_potencia_passa_do_duty_maximo` | De −1500 a 1500, com e sem motor invertido, nenhuma entrada passa do duty máximo | Aprovado |
+| `test_freio_usa_o_duty_total` | O freio põe IN1 e IN2 em 1023: o limite não vale para ele | Aprovado |
+| `test_comandos_chegam_ao_driver_limitados` | O decorador repassa a potência ao driver, limitada a ±1000, e repassa o freio | Aprovado |
+| `test_robo_travado_e_freado_no_tempo_limite` | Cruzeiro sem movimento: monitorando até 400 ms e freado aos 500 ms, com 1 corte contado | Aprovado |
+| `test_travado_recusa_comandos_ate_liberar` | Travado, o comando de andar vira freio e é contado; ciclos seguintes não contam corte novo; depois de `liberar()`, os comandos voltam a chegar | Aprovado |
+| `test_robo_andando_ou_girando_nao_e_freado` | Andando 20 mm a cada 100 ms ou girando no lugar a 90 °/s, não há corte | Aprovado |
+| `test_potencia_baixa_ou_sem_leitura_frontal_nao_freia` | Potência 200 (zona morta) ou ToF frontal inválido nunca freiam | Aprovado |
+| `test_freio_comandado_zera_a_contagem` | Um freio pedido pelo controle zera a contagem; ao religar, ela recomeça do zero | Aprovado |
+| `test_configuracao_da_protecao_passa_pelo_decorador` | Com tempo limite de 200 ms na configuração, o decorador freia em 2 ciclos | Aprovado |
+| `test_integracao_controle_com_robo_preso` | Integração: o `ControleMovimento` manda cruzeiro pelo decorador com o `LidarSimulado` parado; freio em 5 ciclos (500 ms), e os 5 comandos seguintes são recusados | Aprovado |
+
+**Resultado:** 15 de 15 aprovados (14 unitários e 1 de integração).
+
+#### Detecção do motor travado (`ProtecaoMotorTravado`)
+
+```bash
+pio test -e native -f test_protecao_motor
+```
+
+| Grupo | Casos | O que verificam | Resultado |
+|---|:-:|---|:-:|
+| Regra do travamento | 6 | Duty alto sem movimento trava aos 500 ms (e não aos 499 ms); potência abaixo de 300 nunca trava; basta uma roda em duty alto; a ré também conta; 300 trava e 299 não | Aprovado |
+| Sinais de movimento | 6 | Aproximar ou afastar da parede não trava; girar no lugar, para os dois lados, não trava; variação frontal de exatamente 5 mm e taxa de exatamente 5 °/s contam como movimento, um a menos não | Aprovado |
+| Reinício da contagem | 6 | Sem leitura frontal, a contagem recomeça; potência baixa no meio zera; anda e depois prende, e a janela seguinte pega; travado só sai com `reiniciar()`; a configuração muda os 4 limites; `dt` zero não avança o tempo | Aprovado |
+| Integração com o `ControleMovimento` | 4 | Robô preso freado em 5 ciclos; robô andando até a parede nunca freado; depois de reiniciar, volta a andar; sem leitura do sensor, a proteção não dispara | Aprovado |
+
+**Resultado:** 22 de 22 aprovados (18 unitários e 4 de integração).
+
+```text
+test/test_motores/test_motores.cpp:223: test_duty_total_pela_resolucao [PASSED]
+test/test_motores/test_motores.cpp:224: test_duty_maximo_e_a_fracao_configurada_do_total [PASSED]
+test/test_motores/test_motores.cpp:225: test_duty_maximo_em_uso_vem_da_configuracao [PASSED]
+test/test_motores/test_motores.cpp:226: test_potencia_maxima_vira_o_duty_maximo_e_nao_100_por_cento [PASSED]
+test/test_motores/test_motores.cpp:227: test_potencias_menores_sao_proporcionais_ao_duty_maximo [PASSED]
+test/test_motores/test_motores.cpp:228: test_nenhuma_potencia_passa_do_duty_maximo [PASSED]
+test/test_motores/test_motores.cpp:229: test_freio_usa_o_duty_total [PASSED]
+test/test_motores/test_motores.cpp:230: test_comandos_chegam_ao_driver_limitados [PASSED]
+test/test_motores/test_motores.cpp:231: test_robo_travado_e_freado_no_tempo_limite [PASSED]
+test/test_motores/test_motores.cpp:232: test_travado_recusa_comandos_ate_liberar [PASSED]
+test/test_motores/test_motores.cpp:233: test_robo_andando_ou_girando_nao_e_freado [PASSED]
+test/test_motores/test_motores.cpp:234: test_potencia_baixa_ou_sem_leitura_frontal_nao_freia [PASSED]
+test/test_motores/test_motores.cpp:235: test_freio_comandado_zera_a_contagem [PASSED]
+test/test_motores/test_motores.cpp:236: test_configuracao_da_protecao_passa_pelo_decorador [PASSED]
+test/test_motores/test_motores.cpp:237: test_integracao_controle_com_robo_preso [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:335: test_duty_alto_sem_movimento_trava_no_tempo_limite [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:336: test_nao_trava_antes_do_tempo_limite [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:337: test_potencia_baixa_nunca_trava [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:338: test_basta_uma_roda_em_duty_alto [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:339: test_re_em_duty_alto_tambem_trava [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:340: test_limite_da_potencia_alta [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:341: test_aproximacao_da_parede_nao_trava [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:342: test_afastamento_da_parede_nao_trava [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:343: test_giro_no_lugar_nao_trava [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:344: test_giro_negativo_tambem_conta [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:345: test_limite_da_variacao_frontal [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:346: test_limite_da_taxa_de_giro [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:347: test_sem_leitura_frontal_nao_trava_e_zera_a_contagem [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:348: test_potencia_baixa_no_meio_zera_a_contagem [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:349: test_trava_depois_de_andar_um_tempo [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:350: test_travado_so_sai_com_reiniciar [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:351: test_configuracao_altera_os_limites [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:352: test_dt_zero_nao_avanca_o_tempo [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:353: test_integracao_robo_preso_e_freado [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:354: test_integracao_robo_andando_nao_e_freado [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:355: test_integracao_destrava_e_volta_a_andar [PASSED]
+test/test_protecao_motor/test_protecao_motor.cpp:356: test_integracao_sem_leitura_nao_dispara_a_protecao [PASSED]
+```
+
+#### Cobertura, suíte completa e compilação da placa
+
+| Arquivo | Linhas | Cobertura |
+|---|:-:|:-:|
+| `lib/atuacao/src/MotoresComProtecao.cpp` e `.h` | 26 | 100% |
+| `lib/atuacao/src/ProtecaoMotorTravado.cpp` e `.h` | 49 | 100% |
+| `lib/atuacao/src/ConfiguracaoMotores.h` | 3 | 100% |
+| **Total do firmware** (`lib/`) | 1096 | **97,0%** |
+
+Suíte completa do firmware nesta branch: **299 de 299 aprovados**, em 21 suítes. O `MotoresDrv8833.cpp` e o `main.cpp` passaram pela verificação de sintaxe com os cabeçalhos do Arduino-ESP32 2.x e 3.x; o build completo (`pio run -e esp32c3`) é conferido pelo CI do PR.
+
+#### Pendências desta etapa
+
+- Bancada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)): tranco no boot, sentido das rodas, duty máximo com a tensão real do VM e o corte com uma roda presa em potência de cruzeiro.
+
+### Sprint 5 · Controle de rumo pelo giroscópio e giros em malha fechada
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, com o giroscópio simulado `ImuSimulado` e um modelo dinâmico diferencial de rotação e avanço no lugar do hardware real. Os efeitos de deslizamento severo das rodas, viés inercial e ruído foram modelados e validados por software. O acionamento dos motores físicos e a resposta do sensor real no labirinto serão validados na bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#190 Controle de rumo pelo giroscópio: giros de 90° e retidão do avanço](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190) |
+| História de usuário | [HU-11 Compensar irregularidades do solo](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF-11 / RNF-02) |
+| Código testado | `src/firmware/lib/atuacao` (`ControleGiro`, `ConfiguracaoGiro`, `ControleMovimento`, `ConfiguracaoControle`), branch `feat/190-controle-giroscopio` (commit `eebd8ee`) |
+| Autoria do código | Rafael Lima |
+| Data da execução | 24/10/2026 |
+| Executado por | Rafael Lima |
+| Tipo de teste | Unitário e de integração, no computador, com dinâmica diferencial e IMU simulada |
+| Documentação do código | [Atuação: controle de rumo pelo giroscópio e giros em malha fechada](../04-projeto-conceitual/firmware.md#atuacao-controle-de-rumo-pelo-giroscopio-e-giros-em-malha-fechada) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04), PlatformIO Core 6.1.18, `native` 1.2.1, Unity 2.6.1.
+
+#### Critérios da issue e testes
+
+| Critério da #190 | Testes | Situação |
+|---|---|:-:|
+| Giro de 90° e 180° em malha fechada, com tolerância configurável | 6 testes do `ControleGiro` (giros de ±90° e ±180°, tolerância estrita de 0,5° e ampla de 5,0°) | Aprovado |
+| Correção do desvio de rumo durante o avanço, integrada ao `ControleMovimento` | 8 testes unitários e de avanço do `ControleMovimento` (desvio à direita, à esquerda, proporcionalidade, derivada, saturação e rumo alvo) | Aprovado |
+| Testes no computador com giroscópio simulado, incluindo deriva e deslizamento | 6 testes de condições adversas (deslizamento severo de 40% de tração, viés de 1,5 °/s calibrado sem deriva, deslizamento assimétrico no avanço, overshoot e timeout de bloqueio) | Aprovado |
+| Parâmetros (ganhos, tolerância) provisórios e documentados | Tabela completa em `ConfiguracaoGiro.h`, `ConfiguracaoControle.h` e documentação técnica no `README.md` e `firmware.md` | Aprovado |
+
+#### Testes unitários e de integração
+
+```bash
+pio test -e native -f test_controle_giroscopio
+```
+
+| Grupo | Casos | Nível | O que verificam |
+|---|:-:|---|---|
+| Manobras angulares (`ControleGiro`) | 4 | Unitário | Giros de 90° e 180° nos sentidos horário e anti-horário fechando dentro da tolerância com parada dos motores |
+| Tolerância e dinâmica de rotação | 3 | Unitário | Tolerância estrita (0,5°) vs ampla (5,0°), rampa de desaceleração proporcional até a potência mínima (150) e reversão de sentido em caso de overshoot |
+| Robustez e segurança no giro | 3 | Integração | Timeout de segurança após 2 500 ms com robô travado, cancelamento imediato e inibição de comando com leitura inválida do giroscópio |
+| Deslizamento e viés na rotação | 2 | Integração | Deslizamento severo (apenas 40% de tração no piso) atinge os 90° nominais; sensor com viés de 15 dps calibrado pelo `IntegradorGiro` atinge o alvo sem acúmulo de deriva |
+| Correção de rumo no avanço (`ControleMovimento`) | 8 | Unitário | Desvio nulo sem correção, desvios à direita/esquerda com correção de sentido oposto, proporcionalidade ao erro angular, amortecimento derivativo, saturação no limite máximo (200), teto percentual da base (60%), múltiplos rumos alvo e reinício de histórico |
+| Perturbações no avanço e integração | 5 | Integração | Avanço em trecho aberto sem paredes laterais (`SemReferencia`) mantido em linha reta pelo giroscópio; compensação de deslizamento assimétrico contínuo entre rodas; integração com desaceleração e parada na parede frontal |
+
+**Resultado:** 25 de 25 testes aprovados.
+
+```text
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:553: test_giro_90_esquerda_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:554: test_giro_90_direita_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:555: test_giro_180_esquerda_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:556: test_giro_180_direita_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:557: test_tolerancia_configuravel_afeta_precisao [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:558: test_deslizamento_de_rodas_compensa_e_atinge_90_graus [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:559: test_giro_com_giroscopio_simulado_vies_e_calibracao [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:560: test_rampa_de_potencia_reduz_ao_aproximar_do_alvo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:561: test_overshoot_inverte_potencia_para_corrigir [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:562: test_timeout_em_caso_de_bloqueio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:563: test_cancelar_giro [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:564: test_leitura_giro_invalida_segura_motores [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:567: test_avanco_sem_desvio_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:568: test_avanco_desvio_direita_vira_para_esquerda [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:569: test_avanco_desvio_esquerda_vira_para_direita [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:570: test_avanco_correcao_proporcional_ao_desvio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:571: test_avanco_sem_paredes_laterais_mantem_linha_reta_por_giroscopio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:572: test_avanco_compensa_deslizamento_assimetrico [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:573: test_avanco_derivada_amortece_rotacao_rapida [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:574: test_avanco_saturacao_da_correcao_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:575: test_avanco_respeita_limite_percentual_da_base [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:576: test_definir_rumo_alvo_diferentes_direcoes [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:577: test_reiniciar_zera_historico_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:578: test_atualizar_com_leitura_giro [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:579: test_integracao_avanco_e_parada_na_parede_com_rumo [PASSED]
+--------------------------------------------------------------------------------
+25 test cases: 25 succeeded in 00:00:00.956
+```
+
+#### Suíte completa e compilação para a placa
+
+A execução da suíte completa de testes de regressão no ambiente `native` confirmou a ausência de impactos em outros módulos:
+- **Testes nativos:** **437 de 437 aprovados** (26 suítes de teste).
+- **Compilação para ESP32-C3 (`pio run -e esp32c3`):** Sucesso (RAM: 4,8%, Flash: 22,5%).
+
+#### Pendências desta etapa
+
+A validação física das rotações no labirinto e a conferência dos ganhos proporcionais e derivativos com os motores N20 reais dependem da pista montada e do robô completo na bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
 
 ### Sprint 5 · Filtro do histórico por labirinto
 
@@ -2831,3 +3378,137 @@ O menu `scripts/bancada_deslocamento.py` foi executado contra uma placa simulada
 - **Erro na bancada:** percorrer 3 células e registrar o erro da célula estimada, junto com a etapa 10 da bancada da [#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188).
 
 Desde este registro, o ciclo da navegação da [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184) passou a acionar as rodas por `motoresTracao`, então a estimativa já acompanha os comandos no robô.
+
+
+### Sprint 5 · Falha do I²C durante a corrida (testes com falhas simuladas)
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, sem o barramento real: os 3 VL53L0X foram simulados sobre o `CombinadorTof` real (medindo a cada 30 ms, sem resposta ou parados), a IMU pelo `ImuSimulado` e os motores pelo `MotoresSimulados`. Na corrida inteira, o robô é o `RoboSimulado` andando no labirinto 4×4 de exemplo, com o `CicloNavegacao` da [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184). As falhas e os tempos foram **definidos pelos testes**. O reinício pelo XSHUT e a supervisão no `main.cpp` dependem do hardware e ficam para a bancada.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#241 Detecção de falha de I²C e nova tentativa](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241) |
+| História de usuário | HU-13 · Calibração de Hardware ([#51](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51)) |
+| Código testado | `src/firmware` (branch `feat/241-falha-i2c`, com a `main` de 25/10/2026, até o merge do PR [#451](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/451); commit `0570bb5`) |
+| Data da execução | 25/10/2026 |
+| Executado por | Eduardo Viana |
+| Tipo de teste | Unitário e de integração, no computador, com falhas simuladas |
+| Documentação do código | [Firmware: falha do I²C durante a corrida](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04.5 LTS), g++ 13.3.0 (C++17), Unity 2.6.1, ArduinoJson 7.4.2 e gcov 13.3.0. Os testes foram compilados direto com o g++, com as mesmas bibliotecas do ambiente `native` (todas as de `lib/`, menos `drivers_esp32`); cada bloco traz o comando equivalente do PlatformIO.
+
+#### Critérios da issue e testes
+
+| Critério da #241 | Como foi atendido | Testes | Situação |
+|---|---|---|:-:|
+| Falha de leitura detectada em cada um dos 4 dispositivos (3 ToF e IMU), com tentativas máximas configuráveis | `SupervisorI2c` conta as falhas seguidas de cada dispositivo; `VigiaTof` transforma as amostras de cada ToF em leitura (sem resposta, tempo esgotado ou parado de medir) e `leituraDaImu` faz o mesmo com a IMU. As tentativas, os reinícios e a espera ficam em `ConfiguracaoFalhasI2c.h` | `test_tentativas_esgotadas_param_os_motores_e_pedem_reinicio_em_cada_dispositivo`, `test_tentativas_vem_da_configuracao`, os 6 `test_vigia_*`, `test_leitura_da_imu_com_barramento_ocupado_nao_e_falha` | Aprovado |
+| Reinicialização do ToF por XSHUT após as tentativas | Esgotadas as 5 tentativas, o supervisor pede o reinício, e a navegação chama `TofVl53l0x::reiniciarSensor`; até 3 reinícios, a pelo menos 500 ms um do outro, e depois `inoperante` | `test_integracao_tof_frontal_sem_resposta_e_reiniciado_pelo_xshut`, `test_integracao_tof_que_nao_volta_fica_inoperante_e_os_motores_seguem_parados`, `test_integracao_tof_que_para_de_medir_e_reiniciado`, `test_reinicios_respeitam_a_espera` | Aprovado no computador; o XSHUT real fica para a bancada |
+| Motores parados enquanto houver falha, e o estado de erro informado | `TravaFalhaI2c` trava a `MotoresComTrava` do boot enquanto algum dispositivo estiver `em_falha` ou `inoperante`, antes do reinício, sem soltar a trava do boot reprovado. A navegação também tira a permissão do `CicloNavegacao`, que espera e retoma a corrida quando a falha passa. O log anuncia cada mudança, e a telemetria traz `i2c_falhas` e `i2c_reinicios` | `test_trava_para_os_motores_e_solta_quando_a_falha_acaba`, `test_trava_nao_solta_a_trava_do_boot`, `test_motores_so_seguem_com_todos_os_dispositivos_ok`, `test_descreve_os_dispositivos_em_falha`, `test_serializa_falhas_do_i2c`, `test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida`, `test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida` | Aprovado |
+| Testes no computador com falhas simuladas | Suíte `test_falhas_i2c` com 30 casos (25 unitários e 5 de integração, que simulam a navegação e a tarefa da IMU na ordem do `main.cpp`) e suíte `test_integracao_falhas_i2c` com 4 casos (a corrida simulada inteira, com o ToF e a IMU caindo no meio de um avanço) | Suítes `test_falhas_i2c` e `test_integracao_falhas_i2c` | Aprovado |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/falhas/src/ConfiguracaoFalhasI2c.h` | Tentativas (5), leituras para recuperar (3), reinícios (3) e espera entre reinícios (500 ms), provisórios |
+| `lib/falhas/src/SupervisorI2c.h/.cpp` | Situação de cada dispositivo (`ok`, `tentando`, `em_falha`, `inoperante`), decisão do reinício e da parada dos motores, contadores e texto das falhas |
+| `lib/falhas/src/VigiaTof.h/.cpp` | Leitura de cada ToF a partir das amostras do `CombinadorTof` |
+| `lib/falhas/src/TravaFalhaI2c.h` | Trava dos motores durante a falha, sem soltar a trava do boot |
+| `lib/drivers_esp32/src/TofVl53l0x.h/.cpp` | `reiniciarSensor(lado)`: reinício de um sensor só pelo XSHUT |
+| `lib/comunicacao/src/TelemetriaJson.h/.cpp` | Campos `i2c_falhas` e `i2c_reinicios`; o pior caso do JSON passou a 689 bytes (sem eles, 602; o comentário do código dizia 547), dentro do buffer de 768 |
+| `src/main.cpp` | Supervisão dos ToF na navegação e da IMU (giroscópio e acelerômetro) na tarefa dela, trava antes do reinício, permissão do ciclo de navegação retirada durante a falha, linhas de log e campos da telemetria |
+| `lib/execucao/src/CicloNavegacao.h` | Só o comentário: a falha do I²C pausa o ciclo, em vez de deixá-lo terminar em `Falha` |
+| `test/test_falhas_i2c/test_falhas_i2c.cpp`, `test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp`, `test/test_telemetria_json/test_telemetria_json.cpp` | Suítes novas com 30 e 4 casos e 1 caso novo de telemetria |
+| `README.md` do firmware | Seção "Falha do I²C durante a corrida" |
+
+#### Testes unitários e de integração
+
+```bash
+pio test -e native -f test_falhas_i2c -f test_integracao_falhas_i2c -f test_telemetria_json
+```
+
+| Suíte | Casos | Resultado |
+| :--- | :--- | :--- |
+| `test_falhas_i2c` | 30 | **30 aprovados** |
+| `test_integracao_falhas_i2c` | 4 | **4 aprovados** |
+| `test_telemetria_json` | 11 | **11 aprovados** (1 novo) |
+
+Os casos estão descritos na tabela de testes da [documentação do firmware](../04-projeto-conceitual/firmware.md#testes).
+
+```text
+test/test_falhas_i2c/test_falhas_i2c.cpp:710:test_sem_falha_fica_ok_e_nao_para_os_motores:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:711:test_falha_isolada_tenta_de_novo_sem_parar_os_motores:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:712:test_tentativas_esgotadas_param_os_motores_e_pedem_reinicio_em_cada_dispositivo:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:713:test_tentativas_vem_da_configuracao:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:714:test_configuracao_zerada_vale_como_um:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:715:test_depois_do_reinicio_o_dispositivo_tem_todas_as_tentativas_de_novo:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:716:test_reinicios_respeitam_a_espera:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:717:test_espera_entre_reinicios_com_o_relogio_dando_a_volta:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:718:test_reinicios_esgotados_deixam_o_dispositivo_inoperante:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:719:test_inoperante_nao_pede_mais_reinicio_mas_volta_com_leituras_boas:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:720:test_recuperar_exige_leituras_boas_seguidas:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:721:test_motores_so_seguem_com_todos_os_dispositivos_ok:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:722:test_sem_novidade_nao_muda_nada:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:723:test_descreve_os_dispositivos_em_falha:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:724:test_contadores_de_falhas_e_reinicios:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:725:test_nomes_das_situacoes:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:726:test_leitura_da_imu_com_barramento_ocupado_nao_e_falha:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:727:test_vigia_amostra_nova_de_sensor_que_respondeu_e_ok:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:728:test_vigia_mesma_amostra_e_sem_novidade_ate_a_idade_maxima:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:729:test_vigia_sensor_parado_falha_uma_vez_por_janela:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:730:test_vigia_sem_nenhuma_amostra_falha_depois_da_idade_maxima:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:731:test_vigia_depois_do_reinicio_ignora_as_amostras_antigas:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:732:test_vigia_cada_lado_e_um_dispositivo:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:733:test_trava_para_os_motores_e_solta_quando_a_falha_acaba:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:734:test_trava_nao_solta_a_trava_do_boot:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:735:test_integracao_tof_frontal_sem_resposta_e_reiniciado_pelo_xshut:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:736:test_integracao_tof_que_nao_volta_fica_inoperante_e_os_motores_seguem_parados:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:737:test_integracao_tof_que_para_de_medir_e_reiniciado:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:738:test_integracao_imu_sem_resposta_e_reiniciada:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:739:test_integracao_barramento_ocupado_nao_derruba_a_imu:PASS
+30 Tests 0 Failures 0 Ignored
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_sem_falha_a_corrida_chega_ao_objetivo:INFO: sem falha: estado objetivo_alcancado em 35.2 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:336:test_sem_falha_a_corrida_chega_ao_objetivo:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida:INFO: ToF frontal sem resposta por 300 ms: estado objetivo_alcancado em 36.0 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:337:test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:338:test_tof_que_nao_volta_deixa_o_robo_parado:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida:INFO: IMU sem resposta por 200 ms: estado objetivo_alcancado em 35.6 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:339:test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida:PASS
+4 Tests 0 Failures 0 Ignored
+```
+
+#### Cobertura e suíte completa
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa (as 42 suítes do `native`) | **797 aprovados, 0 falhas** (a `main` tem 762) |
+| Cobertura das linhas de `lib/`, somando todas as suítes | **98,0%** (3824 de 3901), acima da meta de 80% |
+| Cobertura de `SupervisorI2c.cpp`, `VigiaTof.cpp`, `TravaFalhaI2c.h` e `TelemetriaJson.cpp` | 100% (91, 24, 13 e 38 linhas) |
+
+`TofVl53l0x` e `main.cpp` não compilam no `native`; por isso as regras ficam em `lib/falhas`, e os testes de integração repetem a ordem do `main.cpp` com os simulados. Para a placa, as chamadas do `main.cpp`, do `TofVl53l0x.cpp` e do `ImuMpu6050.cpp` foram conferidas contra cabeçalhos simplificados do Arduino-ESP32 2.x e 3.x e a biblioteca `pololu/VL53L0X` 1.3.1, sem erros nem avisos. A compilação completa (`pio run -e esp32c3`) é feita pelo CI do PR.
+
+#### Prova de mutação
+
+Para conferir se os testes pegam erros, e não só passam, foram feitas alterações propositais no código, uma de cada vez, rodando `test_falhas_i2c` e `test_telemetria_json` a cada uma. Por exemplo: declarar a falha uma tentativa depois, não devolver as tentativas depois do reinício, não zerar os reinícios na recuperação, reiniciar sem respeitar a espera, parar os motores só em `em_falha`, soltar a trava do boot, contar a amostra antiga depois do reinício, contar a mesma amostra duas vezes e mandar `i2c_falhas` sempre vazio.
+
+| Execução | Resultado |
+|---|---|
+| Primeira rodada | 20 de 24 alterações detectadas. Duas eram lacunas: o texto de `i2c_falhas` no limite exato do buffer e a amostra do mesmo instante do reinício. As outras duas não mudavam o comportamento: guardas que repetiam o que a contagem já fazia |
+| Correção | Dois casos novos para as lacunas; a guarda redundante de configuração zerada saiu do código, e o atalho de `inoperante` ficou, por clareza, fora da lista |
+| Rodada final | **22 de 22 alterações detectadas** |
+| Corrida simulada | Tirar a pausa do ciclo (`liberado` sempre verdadeiro) ou a trava dos motores faz 3 dos 4 casos de `test_integracao_falhas_i2c` falharem: **2 de 2 alterações detectadas** |
+
+#### Integração com a `main`
+
+A branch recebeu a `main` de 25/10/2026, com os PRs [#442](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/442) ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)), [#444](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/444) ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)), [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396) ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)), [#424](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/424) ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), [#438](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/438) ([#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242)) e [#451](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/451) ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)). Os conflitos foram só de texto (no `main.cpp`, no README e nos campos da telemetria) e ficaram as duas partes. Com o ciclo de navegação na `main`, a falha do I²C passou a tirar a permissão do ciclo, e a leitura do acelerômetro passou a contar como leitura do MPU6050.
+
+#### Pendências desta etapa
+
+- **Bancada:** com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado; conferir a sequência do log ([Figura 24](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c)), o reinício pelo XSHUT e a volta dos motores. Combinar com a eletrônica como soltar o conector sem curto no barramento.
+- **Valores provisórios:** ajustar as tentativas, as leituras para recuperar, os reinícios e a espera com o que a bancada mostrar.
+- **Compilação para a placa:** anotar aqui a RAM e a Flash do `pio run -e esp32c3` do CI do PR.
