@@ -1745,6 +1745,145 @@ pio run -e esp32c3
 
 - Integração com a `Odometria` (a célula troca 90 mm antes do centro): o mapa e o `darPasso` devem ser chamados com o robô perto do centro da célula. Fica para a integração do Épico 02, como registrado na issue.
 
+### Sprint 5 · IMU MPU6050 e ângulo de giro (testes com giroscópio simulado)
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, com o giroscópio simulado `ImuSimulado` no lugar do MPU6050. Os valores de taxa, viés e ruído foram **definidos pelos testes** para reproduzir as condições do sensor real. O driver do MPU6050, a tarefa da IMU e a trava do barramento I²C dependem do ESP32-C3 e **não rodam no computador**: deles, só foi verificado que o firmware compila. **Ainda não houve leitura do MPU6050 real**; a validação na placa faz parte da bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#378 Driver do MPU6050 e ângulo de giro (yaw)](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) |
+| História de usuário | HU-05 · Odometria e localização ([#41](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41)), RF05 |
+| Código testado | `src/firmware/lib/imu`, `lib/hal/src/IImu.h` e `lib/simulacao/src/ImuSimulado.h`, na `main` depois do merge do PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403) (commit `6bf0c06`) |
+| Autoria do código | Ana Carolina Fialho (`IImu`, `ImuSimulado`, `IntegradorGiro`, conversão) e Eduardo Viana (`ImuMpu6050`, `BarramentoI2c`, `AcompanhadorGiro`, tarefa da IMU) |
+| Data da execução | 23/10/2026 (primeira parte) e 24/10/2026 (código completo, depois do merge) |
+| Executado por | Ana Carolina Fialho |
+| Tipo de teste | Unitário e de integração, no computador, com dados simulados |
+| Documentação do código | [Orientação: IMU e ângulo de giro](../04-projeto-conceitual/firmware.md#orientacao-imu-e-angulo-de-giro) |
+
+**Ambiente de execução:** macOS (Apple Silicon), PlatformIO Core 6.2.0, `native` 1.2.1, Unity 2.6.1 e `gcovr` 8.6.
+
+#### Critérios da issue e testes
+
+| Critério da #378 | Testes | Situação |
+|---|---|:-:|
+| `IImu` e `ImuSimulado`, com testes no computador | 5 testes da `ImuSimulado` (viés, ruído, falha, saturação, uso pela interface) | Aprovado |
+| Faixa de medição em arquivo de configuração e conversão da leitura | 5 testes da conversão (4 faixas, sinal, arredondamento, fundo de escala, faixa cobre giro rápido) | Aprovado |
+| Integração do yaw com viés removido (giro, deriva e viés simulados) | 16 testes unitários do `IntegradorGiro`, 3 de integração e 7 do `AcompanhadorGiro` (ciclo da tarefa com o `ImuSimulado`) | Aprovado |
+| Leitura do MPU6050 (bits da faixa, bytes do sensor, sinal) | 3 testes das funções puras do driver (`valorGyroConfig`, `juntarBytesGiro`, `ajustarSinalGiro`) | Aprovado |
+| I²C compartilhado com os ToF, protegido contra uso simultâneo | `BarramentoI2c` com mutex, usado pela IMU e pela leitura dos ToF na navegação; depende do FreeRTOS, sem teste no computador | Implementado; validação na bancada pendente |
+| Biblioteca do sensor só no `esp32c3` | `ImuMpu6050` em `lib/drivers_esp32`, ignorada no ambiente `native` (`lib_ignore`); `pio run -e esp32c3` compila | Aprovado |
+
+#### Testes unitários e de integração
+
+```bash
+pio test -e native -f test_imu
+```
+
+| Grupo | Casos | Nível | O que verificam |
+|---|:-:|---|---|
+| Conversão da leitura bruta | 5 | Unitário | 1 °/s nas 4 faixas, sinal, arredondamento, fundo de escala de ±500 e ±2000 °/s, faixa do robô cobre um giro de 300 °/s |
+| Funções do driver | 3 | Unitário | Bits da faixa no `GYRO_CONFIG`, dois bytes em complemento de dois, sinal invertido com o sensor de cabeça para baixo |
+| `ImuSimulado` | 5 | Unitário | Soma de taxa e viés, ruído alternado, falha sem alterar a saída, saturação em `int16_t`, uso pela interface `IImu` |
+| Integração do ângulo | 6 | Unitário | 90°/s por 1 s = 90°, giro para a direita negativo, `dt` zero, frações acumuladas sem perda, `zerarAngulo` mantém o viés, normalização em (−180°, 180°] |
+| Viés, deriva e calibração | 10 | Unitário | Sem calibrar, 1,2 °/s viram 12° em 10 s; calibrado, 0°; viés negativo; média arredondada; calibração incompleta, recusada por movimento e no limite exato; amostra fora da calibração ignorada; zona morta; deriva do viés depois da calibração |
+| IMU simulada + integrador | 3 | Integração | Calibração com viés de 1,5 °/s e ruído, giro de 90° terminando exatamente em 90° e sem deriva parado por 5 s; giro de 180° para a direita; leitura com falha não soma ao ângulo |
+| `AcompanhadorGiro` + IMU simulada | 7 | Integração | Só fica válido depois de calibrar na largada; giro de 90° sem o viés; calibração recomeça se o robô se mexer; falhas seguidas invalidam o ângulo; sem calibrar integra mas não é válido; falha na calibração não conta amostra; taxa publicada não estoura com o viés |
+
+**Resultado:** 39 de 39 aprovados (29 unitários e 10 de integração).
+
+```text
+test/test_imu/test_imu.cpp:530: test_conversao_um_grau_por_segundo_em_cada_faixa [PASSED]
+test/test_imu/test_imu.cpp:531: test_conversao_preserva_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:532: test_conversao_arredonda_para_o_mais_proximo [PASSED]
+test/test_imu/test_imu.cpp:533: test_conversao_no_limite_da_faixa [PASSED]
+test/test_imu/test_imu.cpp:534: test_faixa_do_robo_cobre_um_giro_rapido [PASSED]
+test/test_imu/test_imu.cpp:535: test_valor_do_gyro_config_para_cada_faixa [PASSED]
+test/test_imu/test_imu.cpp:536: test_juntar_bytes_em_complemento_de_dois [PASSED]
+test/test_imu/test_imu.cpp:537: test_sensor_de_cabeca_para_baixo_inverte_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:538: test_imu_simulada_soma_taxa_e_vies [PASSED]
+test/test_imu/test_imu.cpp:539: test_imu_simulada_ruido_alterna_o_sinal [PASSED]
+test/test_imu/test_imu.cpp:540: test_imu_simulada_em_falha_nao_altera_a_saida [PASSED]
+test/test_imu/test_imu.cpp:541: test_imu_simulada_satura_no_limite_de_int16 [PASSED]
+test/test_imu/test_imu.cpp:542: test_imu_simulada_pode_ser_usada_pela_interface [PASSED]
+test/test_imu/test_imu.cpp:543: test_noventa_graus_por_segundo_durante_um_segundo_da_noventa_graus [PASSED]
+test/test_imu/test_imu.cpp:544: test_giro_para_a_direita_e_negativo [PASSED]
+test/test_imu/test_imu.cpp:545: test_dt_zero_nao_muda_o_angulo [PASSED]
+test/test_imu/test_imu.cpp:546: test_fracoes_nao_se_perdem_entre_ciclos [PASSED]
+test/test_imu/test_imu.cpp:547: test_zerar_angulo_mantem_o_vies [PASSED]
+test/test_imu/test_imu.cpp:548: test_angulo_normalizado_fica_entre_menos_180_e_180 [PASSED]
+test/test_imu/test_imu.cpp:549: test_sem_calibrar_o_vies_vira_deriva [PASSED]
+test/test_imu/test_imu.cpp:550: test_calibracao_remove_o_vies_e_a_deriva [PASSED]
+test/test_imu/test_imu.cpp:551: test_calibracao_com_vies_negativo [PASSED]
+test/test_imu/test_imu.cpp:552: test_calibracao_usa_a_media_arredondada [PASSED]
+test/test_imu/test_imu.cpp:553: test_calibracao_incompleta_segue_calibrando_e_nao_troca_o_vies [PASSED]
+test/test_imu/test_imu.cpp:554: test_robo_se_mexendo_na_calibracao_e_recusada [PASSED]
+test/test_imu/test_imu.cpp:555: test_limite_da_variacao_na_calibracao [PASSED]
+test/test_imu/test_imu.cpp:556: test_amostra_fora_de_calibracao_e_ignorada [PASSED]
+test/test_imu/test_imu.cpp:557: test_zona_morta_segura_o_ruido_do_sensor_parado [PASSED]
+test/test_imu/test_imu.cpp:558: test_deriva_do_vies_depois_da_calibracao [PASSED]
+test/test_imu/test_imu.cpp:559: test_integracao_giro_de_90_graus_com_vies_e_ruido [PASSED]
+test/test_imu/test_imu.cpp:560: test_integracao_giro_de_180_graus_para_a_direita [PASSED]
+test/test_imu/test_imu.cpp:561: test_integracao_leitura_com_falha_nao_soma_ao_angulo [PASSED]
+test/test_imu/test_imu.cpp:562: test_acompanhador_calibra_na_largada_e_so_entao_fica_valido [PASSED]
+test/test_imu/test_imu.cpp:563: test_acompanhador_integra_um_giro_de_90_graus_sem_o_vies [PASSED]
+test/test_imu/test_imu.cpp:564: test_acompanhador_recomeca_a_calibracao_se_o_robo_se_mexer [PASSED]
+test/test_imu/test_imu.cpp:565: test_acompanhador_falhas_seguidas_invalidam_o_angulo [PASSED]
+test/test_imu/test_imu.cpp:566: test_acompanhador_sem_calibrar_nao_e_valido_mas_integra [PASSED]
+test/test_imu/test_imu.cpp:567: test_acompanhador_falha_durante_a_calibracao_nao_conta_amostra [PASSED]
+test/test_imu/test_imu.cpp:568: test_acompanhador_taxa_publicada_nao_estoura_com_o_vies [PASSED]
+================= 39 test cases: 39 succeeded in 00:00:01.758 =================
+```
+
+#### Cobertura e suíte completa
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --txt --fail-under-line 80
+```
+
+| Arquivo | Linhas | Cobertura |
+|---|:-:|:-:|
+| `lib/imu/src/IntegradorGiro.cpp` | 54 | 100% |
+| `lib/imu/src/AcompanhadorGiro.cpp` | 43 | 100% |
+| `lib/imu/src/ConversorGiro.h` | 14 | 100% |
+| `lib/simulacao/src/ImuSimulado.h` | 32 | 100% |
+| `lib/imu/src/ConfiguracaoImu.h`, `IntegradorGiro.h`, `AcompanhadorGiro.h`, `lib/hal/src/IImu.h` | 16 | 100% |
+| **Total do firmware** (`lib/`) | 2028 | **98%** |
+
+`ImuMpu6050` e `BarramentoI2c` ficam em `lib/drivers_esp32`, fora do ambiente `native`, e por isso fora da cobertura.
+
+Suíte completa do firmware: **412 de 412 aprovados**. `pio run -e esp32c3`: compilação concluída.
+
+#### Prova de mutação
+
+Para conferir se os testes detectam erros, e não só passam, 17 alterações propositais foram feitas no código, uma de cada vez. Por exemplo: somar o viés em vez de subtrair, deixar a zona morta só de um lado, errar a sensibilidade de uma faixa, aceitar amostras fora da calibração e trocar `>` por `>=` nos limites. Depois de cada alteração, os testes foram rodados de novo.
+
+| Execução | Resultado |
+|---|---|
+| Primeira rodada | 16 de 17 alterações detectadas; "aceitar amostra fora da calibração" passou despercebida |
+| Correção | O teste `test_amostra_fora_de_calibracao_e_ignorada` passou a usar uma calibração de 1 amostra, em que a alteração calibraria sozinha |
+| Rodada final | **17 de 17 alterações detectadas** |
+
+Na segunda parte (código do Eduardo, 24/10), 15 alterações foram feitas no `AcompanhadorGiro` e nas funções do driver. Por exemplo: somar o viés em vez de subtrair, errar o deslocamento dos bits da faixa, trocar a ordem dos bytes, não inverter o sinal e não recomeçar a calibração recusada.
+
+| Execução | Resultado |
+|---|---|
+| Rodada única | **12 de 15 alterações detectadas**; 3 passaram despercebidas (abaixo) |
+
+| Alteração não detectada | O que falta testar |
+|---|---|
+| `iniciarCalibracao()` do `AcompanhadorGiro` não zera o ângulo do integrador | Integrar um giro, recalibrar e conferir que o ângulo recomeça de zero depois da calibração |
+| A contagem de falhas seguidas não volta a zero depois de uma leitura boa | Falhas, uma leitura boa e mais falhas, abaixo do limite: o ângulo deve continuar válido |
+| O `ciclo` ignora o `dtMs` recebido e usa sempre 10 ms | Um ciclo com `dtMs` diferente de 10 ms (todos os testes usam 10 ms) |
+
+#### Pendências desta etapa
+
+- Três testes do `AcompanhadorGiro`, para as alterações não detectadas na prova de mutação (vão num PR de código para a `main`).
+- Leitura do sensor real na bancada: viés e ruído do MPU6050 parado, para ajustar a zona morta e os limites da calibração, e o sinal do eixo Z (`INVERTER_GIRO_Z`) (#381).
+- Bancada com os 3 VL53L0X e o MPU6050 ligados ao mesmo tempo, para confirmar o barramento compartilhado: a contagem `esperasEsgotadas()` e as falhas de leitura devem ficar em zero com o robô rodando (#381).
+- Frequência do I²C (100 kHz) e espera máxima pelo barramento (8 ms), ainda provisórias.
+
 ### Sprint 5 · Driver dos 3 sensores VL53L0X
 
 | Item | Valor |
@@ -2431,3 +2570,428 @@ A infraestrutura entregue nesta issue desbloqueia a escrita de testes unitários
 - [#234 Filtro de histórico](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234): expandirá os testes de filtros e paginação da tela de histórico.
 - [#239 Exibição de mapa e percurso](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239): utilizará os testes de parsing e células de `labirinto.ts` integrados à grade visual.
 - [#242 Estado "Aguardando Largada"](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242): utilizará o hook `useReproducaoCorrida` e os estados do painel.
+
+### Sprint 5 · Controle de rumo pelo giroscópio e giros em malha fechada
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, com o giroscópio simulado `ImuSimulado` e um modelo dinâmico diferencial de rotação e avanço no lugar do hardware real. Os efeitos de deslizamento severo das rodas, viés inercial e ruído foram modelados e validados por software. O acionamento dos motores físicos e a resposta do sensor real no labirinto serão validados na bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#190 Controle de rumo pelo giroscópio: giros de 90° e retidão do avanço](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190) |
+| História de usuário | [HU-11 Compensar irregularidades do solo](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF-11 / RNF-02) |
+| Código testado | `src/firmware/lib/atuacao` (`ControleGiro`, `ConfiguracaoGiro`, `ControleMovimento`, `ConfiguracaoControle`), branch `feat/190-controle-giroscopio` (commit `eebd8ee`) |
+| Autoria do código | Rafael Lima |
+| Data da execução | 24/10/2026 |
+| Executado por | Rafael Lima |
+| Tipo de teste | Unitário e de integração, no computador, com dinâmica diferencial e IMU simulada |
+| Documentação do código | [Atuação: controle de rumo pelo giroscópio e giros em malha fechada](../04-projeto-conceitual/firmware.md#atuacao-controle-de-rumo-pelo-giroscopio-e-giros-em-malha-fechada) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04), PlatformIO Core 6.1.18, `native` 1.2.1, Unity 2.6.1.
+
+#### Critérios da issue e testes
+
+| Critério da #190 | Testes | Situação |
+|---|---|:-:|
+| Giro de 90° e 180° em malha fechada, com tolerância configurável | 6 testes do `ControleGiro` (giros de ±90° e ±180°, tolerância estrita de 0,5° e ampla de 5,0°) | Aprovado |
+| Correção do desvio de rumo durante o avanço, integrada ao `ControleMovimento` | 8 testes unitários e de avanço do `ControleMovimento` (desvio à direita, à esquerda, proporcionalidade, derivada, saturação e rumo alvo) | Aprovado |
+| Testes no computador com giroscópio simulado, incluindo deriva e deslizamento | 6 testes de condições adversas (deslizamento severo de 40% de tração, viés de 1,5 °/s calibrado sem deriva, deslizamento assimétrico no avanço, overshoot e timeout de bloqueio) | Aprovado |
+| Parâmetros (ganhos, tolerância) provisórios e documentados | Tabela completa em `ConfiguracaoGiro.h`, `ConfiguracaoControle.h` e documentação técnica no `README.md` e `firmware.md` | Aprovado |
+
+#### Testes unitários e de integração
+
+```bash
+pio test -e native -f test_controle_giroscopio
+```
+
+| Grupo | Casos | Nível | O que verificam |
+|---|:-:|---|---|
+| Manobras angulares (`ControleGiro`) | 4 | Unitário | Giros de 90° e 180° nos sentidos horário e anti-horário fechando dentro da tolerância com parada dos motores |
+| Tolerância e dinâmica de rotação | 3 | Unitário | Tolerância estrita (0,5°) vs ampla (5,0°), rampa de desaceleração proporcional até a potência mínima (150) e reversão de sentido em caso de overshoot |
+| Robustez e segurança no giro | 3 | Integração | Timeout de segurança após 2 500 ms com robô travado, cancelamento imediato e inibição de comando com leitura inválida do giroscópio |
+| Deslizamento e viés na rotação | 2 | Integração | Deslizamento severo (apenas 40% de tração no piso) atinge os 90° nominais; sensor com viés de 15 dps calibrado pelo `IntegradorGiro` atinge o alvo sem acúmulo de deriva |
+| Correção de rumo no avanço (`ControleMovimento`) | 8 | Unitário | Desvio nulo sem correção, desvios à direita/esquerda com correção de sentido oposto, proporcionalidade ao erro angular, amortecimento derivativo, saturação no limite máximo (200), teto percentual da base (60%), múltiplos rumos alvo e reinício de histórico |
+| Perturbações no avanço e integração | 5 | Integração | Avanço em trecho aberto sem paredes laterais (`SemReferencia`) mantido em linha reta pelo giroscópio; compensação de deslizamento assimétrico contínuo entre rodas; integração com desaceleração e parada na parede frontal |
+
+**Resultado:** 25 de 25 testes aprovados.
+
+```text
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:553: test_giro_90_esquerda_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:554: test_giro_90_direita_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:555: test_giro_180_esquerda_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:556: test_giro_180_direita_conclui_na_tolerancia [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:557: test_tolerancia_configuravel_afeta_precisao [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:558: test_deslizamento_de_rodas_compensa_e_atinge_90_graus [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:559: test_giro_com_giroscopio_simulado_vies_e_calibracao [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:560: test_rampa_de_potencia_reduz_ao_aproximar_do_alvo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:561: test_overshoot_inverte_potencia_para_corrigir [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:562: test_timeout_em_caso_de_bloqueio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:563: test_cancelar_giro [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:564: test_leitura_giro_invalida_segura_motores [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:567: test_avanco_sem_desvio_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:568: test_avanco_desvio_direita_vira_para_esquerda [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:569: test_avanco_desvio_esquerda_vira_para_direita [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:570: test_avanco_correcao_proporcional_ao_desvio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:571: test_avanco_sem_paredes_laterais_mantem_linha_reta_por_giroscopio [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:572: test_avanco_compensa_deslizamento_assimetrico [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:573: test_avanco_derivada_amortece_rotacao_rapida [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:574: test_avanco_saturacao_da_correcao_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:575: test_avanco_respeita_limite_percentual_da_base [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:576: test_definir_rumo_alvo_diferentes_direcoes [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:577: test_reiniciar_zera_historico_de_rumo [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:578: test_atualizar_com_leitura_giro [PASSED]
+test/test_controle_giroscopio/test_controle_giroscopio.cpp:579: test_integracao_avanco_e_parada_na_parede_com_rumo [PASSED]
+--------------------------------------------------------------------------------
+25 test cases: 25 succeeded in 00:00:00.956
+```
+
+#### Suíte completa e compilação para a placa
+
+A execução da suíte completa de testes de regressão no ambiente `native` confirmou a ausência de impactos em outros módulos:
+- **Testes nativos:** **437 de 437 aprovados** (26 suítes de teste).
+- **Compilação para ESP32-C3 (`pio run -e esp32c3`):** Sucesso (RAM: 4,8%, Flash: 22,5%).
+
+#### Pendências desta etapa
+
+A validação física das rotações no labirinto e a conferência dos ganhos proporcionais e derivativos com os motores N20 reais dependem da pista montada e do robô completo na bancada integrada ([#381](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/381)).
+
+### Sprint 5 · Filtro do histórico por labirinto
+
+!!! warning "Testes em simulação"
+    Os testes automatizados deste registro rodaram **no computador**, com o Supabase simulado em memória (`src/test/supabaseSimulado.ts`, do [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) no lugar do banco real. As corridas usadas foram **inventadas pelos testes**, só com o formato real da tabela `corridas`.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#234 Filtro do histórico por tipo de labirinto](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/234) |
+| História de usuário | HU-15 · Gestão de corridas, RF15 |
+| Código testado | `src/frontend` (branch `feat/234-filtro-historico`, commit `76dd7ea`) |
+| Data da execução | 24/10/2026 |
+| Executado por | Ana Carolina Fialho |
+| Tipo de teste | Unitário e de integração, no computador, com dados simulados |
+| Documentação do código | [Software: filtro do histórico por labirinto na consulta ao banco](../04-projeto-conceitual/software.md#filtro-do-historico-por-labirinto-na-consulta-ao-banco-hu-15) |
+
+**Ambiente de execução:** macOS (Apple Silicon), Node.js 22.22.3, Vitest 5.0.5, Testing Library, jsdom, Vite 6 e TypeScript 5.
+
+#### Critérios da issue e testes
+
+| Critério da #234 | Testes | Situação |
+|---|---|:-:|
+| Cada opção mostra só as corridas daquele labirinto; "Todos" mostra tudo | Integração da tela: cada opção consulta o banco com o `labirinto_id` certo e a tabela mostra só as corridas dele; "Todos" consulta sem filtro e mostra todas. Integração do hook: as 3 opções, "Todos", troca de filtro, resposta atrasada, erro e modo sem Supabase | Aprovado |
+| Consulta ao banco com o filtro escolhido | O auxiliar `src/test/registroConsultas.ts` registra cada consulta feita ao Supabase simulado e os testes conferem o `eq('labirinto_id', id)` enviado | Aprovado |
+| Layout igual aos Frames 04_History_View_M1 a M3 | Unitário do `FiltroLabirinto`: as 4 opções na ordem dos Frames e só a escolhida marcada como ativa. A comparação visual com o protótipo é feita pelas capturas anexadas ao PR | Aprovado no automatizado; comparação visual no PR |
+
+#### Testes unitários e de integração
+
+```bash
+cd src/frontend
+npm install
+npx vitest run src/componentes/FiltroLabirinto.test.tsx src/hooks/useCorridas.test.ts src/paginas/TelaHistorico.test.tsx
+```
+
+| Arquivo | Casos novos | Nível | O que verificam |
+|---|:-:|---|---|
+| `componentes/FiltroLabirinto.test.tsx` | 6 | Unitário | As 4 opções na ordem dos Frames; para cada valor, só a opção certa fica ativa (`aria-pressed` e classe); o clique avisa a opção escolhida |
+| `hooks/useCorridas.test.ts` | 8 | Integração | Sem filtro, consulta sem `labirinto_id` e traz tudo em ordem decrescente; com os labirintos 1, 2 e 3, o filtro vai na consulta e só voltam as corridas dele; trocar o filtro refaz a consulta; resposta atrasada do filtro anterior é ignorada; erro do banco; modo sem Supabase |
+| `paginas/TelaHistorico.test.tsx` | 3 | Integração | Cada opção do filtro consulta o banco com o labirinto escolhido e mostra só as corridas dele; com as corridas por props, o filtro funciona no navegador; "Atualizar" repete a consulta com o filtro escolhido |
+
+**Resultado:** 21 de 21 aprovados nos três arquivos (17 casos novos e os 4 que já existiam em `TelaHistorico.test.tsx`).
+
+```text
+✓ hooks/useCorridas.test.ts > sem filtro, consulta o banco sem labirinto_id e traz todas, da mais recente para a mais antiga
+✓ hooks/useCorridas.test.ts > com o labirinto 1, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > com o labirinto 2, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > com o labirinto 3, o filtro vai na consulta ao banco e só voltam as corridas dele
+✓ hooks/useCorridas.test.ts > trocar o labirinto refaz a consulta com o filtro novo
+✓ hooks/useCorridas.test.ts > uma resposta atrasada do filtro anterior não sobrescreve a do filtro atual
+✓ hooks/useCorridas.test.ts > com erro no banco, avisa e não troca a lista
+✓ hooks/useCorridas.test.ts > sem Supabase configurado, filtra as corridas de exemplo
+✓ componentes/FiltroLabirinto.test.tsx > mostra as 4 opções na ordem dos Frames M1 a M3: Todos, 4×4, 8×4 e 12×4
+✓ componentes/FiltroLabirinto.test.tsx > com o valor todos, só a opção "Todos os Labirintos" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 4x4, só a opção "Labirinto 1 (4×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 8x4, só a opção "Labirinto 2 (8×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > com o valor 12x4, só a opção "Labirinto 3 (12×4)" fica marcada como ativa
+✓ componentes/FiltroLabirinto.test.tsx > avisa a opção clicada
+✓ paginas/TelaHistorico.test.tsx > renderiza as corridas retornadas pelo cliente Supabase simulado
+✓ paginas/TelaHistorico.test.tsx > permite filtrar as corridas pelo tipo de labirinto selecionado
+✓ paginas/TelaHistorico.test.tsx > cada opção do filtro consulta o banco com o labirinto escolhido e mostra só as corridas dele (#234)
+✓ paginas/TelaHistorico.test.tsx > com as corridas recebidas por props, o filtro funciona no navegador
+✓ paginas/TelaHistorico.test.tsx > o botão Atualizar repete a consulta com o filtro escolhido
+✓ paginas/TelaHistorico.test.tsx > atualiza os dados na tabela ao clicar no botão Atualizar
+✓ paginas/TelaHistorico.test.tsx > exibe mensagem de erro quando o cliente Supabase falha na consulta
+
+ Test Files  3 passed (3)
+      Tests  21 passed (21)
+```
+
+#### Cobertura, suíte completa e build
+
+```bash
+npm run test:cobertura
+npm run build
+```
+
+| Arquivo | Linhas | Desvios |
+|---|:-:|:-:|
+| `componentes/FiltroLabirinto.tsx` | 100% | 100% |
+| `hooks/useCorridas.ts` | 100% | 94% |
+| `paginas/TelaHistorico.tsx` | 92% | 96% |
+
+A linha sem cobertura em `TelaHistorico.tsx` é o botão "Tentar novamente" do alerta de erro, que já não tinha teste antes desta tarefa.
+
+Suíte completa do frontend: **57 de 57 aprovados** (eram 40). `npm run build` (`tsc --noEmit` e Vite): concluído sem erros.
+
+#### Prova de mutação
+
+Para conferir se os testes detectam erros, e não só passam, 13 alterações propositais foram feitas no código, uma de cada vez. Por exemplo: não mandar o filtro ao banco, mandar sempre o labirinto 1, aceitar a resposta atrasada, não refazer a consulta na troca de filtro, inverter a ordenação, marcar a opção ativa errada e tirar uma das opções do filtro.
+
+| Execução | Resultado |
+|---|---|
+| Primeira rodada | 12 de 13 alterações detectadas; "tirar o filtro no navegador" passou despercebida, porque o banco simulado já devolvia só as corridas certas |
+| Correção | Teste novo com as corridas recebidas por props, em que só o filtro no navegador atua |
+| Rodada final | **13 de 13 alterações detectadas** |
+
+#### Pendências desta etapa
+
+- Comparação visual com os Frames `04_History_View_M1` a `M3`: capturas da tela com cada filtro anexadas ao PR de código.
+- Índice em `corridas.labirinto_id` no banco (sugestão para o backend; sem efeito com poucas corridas).
+
+### Sprint 5 · Mapa e percurso do robô no dashboard
+
+!!! warning "Testes em simulação"
+    Os testes automatizados deste registro rodaram **no computador**, utilizando o Supabase simulado em memória (`src/test/supabaseSimulado.ts`, originado na tarefa [#394](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/394)) em substituição ao banco real. As linhas de `corridas`, `telemetria` e `mapa_celulas` foram **geradas pelos testes com o esquema real das tabelas**, simulando eventos de inserção e canais Realtime WebSocket.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#239 Mapa e percurso do robô no dashboard](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/239) |
+| História de usuário | HU-06 · Visualizar o percurso do robô sobre o mapa ([#9](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/9)), RF06 |
+| Código testado | `src/frontend` (branch `feat/239-mapa-percurso-dashboard`, commit `d5f2b39`) |
+| Data da execução | 24/10/2026 |
+| Executado por | Rafael Lima |
+| Tipo de teste | Unitário e de integração, no computador, com dados simulados e canais Realtime |
+| Documentação do código | [Software: mapa, percurso e paredes do robô no dashboard em tempo real](../04-projeto-conceitual/software.md#mapa-percurso-e-paredes-do-robo-no-dashboard-em-tempo-real-hu-06) |
+
+**Ambiente de execução:** Linux (x86_64), Node.js 20+, Vitest 5.0.5, Testing Library (`@testing-library/react`), jsdom, Vite 6 e TypeScript 5.
+
+#### Critérios da issue e testes
+
+| Critério da #239 | Testes associados | Situação |
+|---|---|:-:|
+| Malha com as dimensões do labirinto da corrida, partida em verde e chegada em vermelho | Unitário em `GradeLabirinto.test.tsx` (viewBox proporcional para 4×4, 8×4 e 12×4; partida em verde suave em `(0, 0)`; chegada em vermelho suave no canto oposto). Integração em `TelaAoVivo.test.tsx` validando renderização conforme labirinto da corrida | Aprovado |
+| Marcador `Robot` e traçado `Robot Path` atualizados em tempo real | Unitário em `GradeLabirinto.test.tsx` (posicionamento do marcador e rotações cardeais N/L/S/O; polilinha `Robot Path` conectando as coordenadas). Integração em `TelaAoVivo.test.tsx` e `useTelemetriaAoVivo.test.ts` com recepção reativa de telemetria e paredes em `mapa_celulas` | Aprovado |
+| Traçado completo mantido ao final da corrida | Unitário em `GradeLabirinto.test.tsx` (todos os pontos da trajetória mantidos no término). Integração em `TelaAoVivo.test.tsx` e `painelAoVivo.test.ts` conferindo que ao concluir (`objetivo_alcancado`) o traçado e paredes não são resetados | Aprovado |
+
+#### Testes unitários e de integração
+
+```bash
+cd src/frontend
+npx vitest run src/componentes/GradeLabirinto.test.tsx src/lib/painelAoVivo.test.ts src/hooks/useTelemetriaAoVivo.test.ts src/paginas/TelaAoVivo.test.tsx
+```
+
+| Arquivo | Casos novos | Nível | O que verificam |
+|---|:-:|---|---|
+| `componentes/GradeLabirinto.test.tsx` | 10 | Unitário | Proporções e viewBox para 4×4, 8×4 e 12×4; posicionamento de partida `(0,0)` e chegada `(linhas-1, colunas-1)`; marcador `Robot` com translação e rotação em 0°, 90°, 180° e 270°; geração do traçado `Robot Path`; projeção de paredes conhecidas (`true`) e descarte de `null`/`false`; retenção do traçado completo |
+| `lib/painelAoVivo.test.ts` | 5 | Unitário (regras puras) | Adição de células descobertas ao estado do painel (`aplicarMapaCelula`); atualização idempotente de células pré-existentes sem duplicatas; descarte de células pertencentes a outra corrida; recepção de mapa final pós-término de corrida; aplicação de lote completo (`aplicarMapa`) |
+| `hooks/useTelemetriaAoVivo.test.ts` | 3 | Integração (hook) | Assinatura simultânea de três canais Realtime isolados (`telemetria`, `corridas` e `mapa`); carga inicial assíncrona de células existentes em `mapa_celulas`; recepção de eventos de inserção/atualização de paredes em tempo real |
+| `paginas/TelaAoVivo.test.tsx` | 2 | Integração (página) | Renderização integrada da malha com partida e chegada; atualização em tempo real do marcador e do traçado a cada leitura de telemetria; desenho de paredes mapeadas recebidas por Realtime; manutenção integral do percurso após encerramento da corrida |
+
+**Resultado:** 20 novos casos de teste implementados e aprovados, elevando a suíte do frontend de 99 para 119 testes:
+
+```text
+✓ src/componentes/GradeLabirinto.test.tsx (10 tests)
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 4x4
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 8x4
+  ✓ Malha com as dimensões do labirinto da corrida > renderiza o SVG com as dimensões e o viewBox correto para labirinto 12x4
+  ✓ Malha com as dimensões do labirinto da corrida > posiciona a partida em (0, 0) no canto inferior esquerdo e a chegada em (linhas-1, colunas-1) no canto oposto
+  ✓ Marcador Robot > renderiza o marcador do robô na posição e orientação iniciais (0, 0, N)
+  ✓ Marcador Robot > atualiza a translação e a rotação conforme o robô se desloca e gira
+  ✓ Traçado Robot Path > não desenha traçado quando o percurso tem apenas a largada (1 ponto)
+  ✓ Traçado Robot Path > desenha e atualiza o traçado em tempo real conforme as posições avançam
+  ✓ Traçado Robot Path > mantém o traçado completo ao final da corrida
+  ✓ Paredes mapeadas > desenha linhas para paredes com valor true e ignora paredes false ou null
+✓ src/lib/painelAoVivo.test.ts (25 tests)
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > acrescenta células novas ao mapa do painel
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > atualiza célula já existente sem duplicar
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > ignora células de outra corrida
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > aceita células do mapa final após encerramento da corrida (HU-04)
+  ✓ aplicarMapaCelula e aplicarMapa (#239) > aplicarMapa aplica um lote inteiro de células
+✓ src/hooks/useTelemetriaAoVivo.test.ts (18 tests)
+  ✓ assina telemetria, corridas e mapa em canais separados e aguarda quando não há corrida em andamento
+  ✓ ao abrir no meio da corrida, carrega também as células do mapa já mapeadas (#239)
+  ✓ recebe atualizações de células do mapa em tempo real via Realtime (#239)
+✓ src/paginas/TelaAoVivo.test.tsx (7 tests)
+  ✓ desenha a malha com largada verde e chegada vermelha, atualizando robô, percurso e paredes em tempo real (#239)
+  ✓ mantém o traçado completo e o mapa ao final da corrida (#239)
+```
+
+#### Cobertura, suíte completa e build
+
+```bash
+npm run test:cobertura
+npm run build
+```
+
+| Arquivo | Linhas | Desvios (*Branches*) | Funções |
+|---|:-:|:-:|:-:|
+| `componentes/GradeLabirinto.tsx` | 100% | 100% | 100% |
+| `paginas/TelaAoVivo.tsx` | 100% | 100% | 100% |
+| `lib/painelAoVivo.ts` | 100% | 93,5% | 100% |
+| `hooks/useTelemetriaAoVivo.ts` | 97,1% | 78,3% | 100% |
+
+Suíte completa do frontend: **119 de 119 testes aprovados** em 12 arquivos de teste (cobertura global de 94,1% de linhas e 88,0% de *branches*). Compilação estática (`tsc --noEmit`) e *bundle* do Vite (`npm run build`) concluídos com sucesso.
+
+#### Prova de mutação
+
+Para atestar que a suíte é sensível a defeitos e não apenas confirmatória, foram introduzidas 10 mutações manuais deliberadas no código da malha e do painel, uma por vez:
+
+| Mutação introduzida | Efeito esperado | Resultado |
+|---|---|:-:|
+| Inverter o cálculo do eixo $y$ no SVG (`MARGEM + linha * LADO`) | Origem $(0, 0)$ ficaria no canto superior esquerdo | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Não rotacionar o marcador do robô pelo ângulo da orientação | Ângulo de rotação permaneceria fixo em 0° | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Remover a checagem `if (c.parede_*)` ao montar os segmentos | Paredes `false` ou `null` desenhariam linhas pretas | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Resetar o traçado (`leituras: []`) na transição para `concluido` | O traçado desapareceria no encerramento da corrida | **Detectada** (`TelaAoVivo.test.tsx`) |
+| Não passar `aoVivo.mapa` para o painel em `App.tsx` | O mapa ao vivo permaneceria vazio no dashboard | **Detectada** (`TelaAoVivo.test.tsx`) |
+| Assinar `mapa_celulas` no mesmo canal Realtime de `telemetria` | Conflito de isolamento de canais | **Detectada** (`useTelemetriaAoVivo.test.ts`) |
+| Descartar células recebidas após a corrida estar encerrada | Mapa final (HU-04) seria ignorado | **Detectada** (`painelAoVivo.test.ts`) |
+| Não atualizar paredes de células já conhecidas | Atualizações de exploração seriam perdidas | **Detectada** (`painelAoVivo.test.ts`) |
+| Não aplicar o `offset` de margem de 3 px na partida e chegada | Posição dos retângulos ficaria colada na borda externa | **Detectada** (`GradeLabirinto.test.tsx`) |
+| Renderizar `Robot Path` com apenas 1 ponto | SVG desenharia polilinha com ponto singular | **Detectada** (`GradeLabirinto.test.tsx`) |
+
+**Taxa de detecção da prova de mutação:** 10 de 10 mutações detectadas (100%).
+
+#### Pendências desta etapa
+
+- Validação em bancada integrada com o robô físico navegando no labirinto de testes (depende da conclusão da montagem mecânica e dos testes em pista).
+
+
+### Sprint 5 · Falha do I²C durante a corrida (testes com falhas simuladas)
+
+!!! warning "Testes em simulação"
+    Todos os testes deste registro rodaram **no computador**, sem o barramento real: os 3 VL53L0X foram simulados sobre o `CombinadorTof` real (medindo a cada 30 ms, sem resposta ou parados), a IMU pelo `ImuSimulado` e os motores pelo `MotoresSimulados`. Na corrida inteira, o robô é o `RoboSimulado` andando no labirinto 4×4 de exemplo, com o `CicloNavegacao` da [#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184). As falhas e os tempos foram **definidos pelos testes**. O reinício pelo XSHUT e a supervisão no `main.cpp` dependem do hardware e ficam para a bancada.
+
+| Item | Valor |
+|---|---|
+| Tarefa | [#241 Detecção de falha de I²C e nova tentativa](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241) |
+| História de usuário | HU-13 · Calibração de Hardware ([#51](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51)) |
+| Código testado | `src/firmware` (branch `feat/241-falha-i2c`, com a `main` de 25/10/2026, até o merge do PR [#451](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/451); commit `0570bb5`) |
+| Data da execução | 25/10/2026 |
+| Executado por | Eduardo Viana |
+| Tipo de teste | Unitário e de integração, no computador, com falhas simuladas |
+| Documentação do código | [Firmware: falha do I²C durante a corrida](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c) |
+
+**Ambiente de execução:** Linux (Ubuntu 24.04.5 LTS), g++ 13.3.0 (C++17), Unity 2.6.1, ArduinoJson 7.4.2 e gcov 13.3.0. Os testes foram compilados direto com o g++, com as mesmas bibliotecas do ambiente `native` (todas as de `lib/`, menos `drivers_esp32`); cada bloco traz o comando equivalente do PlatformIO.
+
+#### Critérios da issue e testes
+
+| Critério da #241 | Como foi atendido | Testes | Situação |
+|---|---|---|:-:|
+| Falha de leitura detectada em cada um dos 4 dispositivos (3 ToF e IMU), com tentativas máximas configuráveis | `SupervisorI2c` conta as falhas seguidas de cada dispositivo; `VigiaTof` transforma as amostras de cada ToF em leitura (sem resposta, tempo esgotado ou parado de medir) e `leituraDaImu` faz o mesmo com a IMU. As tentativas, os reinícios e a espera ficam em `ConfiguracaoFalhasI2c.h` | `test_tentativas_esgotadas_param_os_motores_e_pedem_reinicio_em_cada_dispositivo`, `test_tentativas_vem_da_configuracao`, os 6 `test_vigia_*`, `test_leitura_da_imu_com_barramento_ocupado_nao_e_falha` | Aprovado |
+| Reinicialização do ToF por XSHUT após as tentativas | Esgotadas as 5 tentativas, o supervisor pede o reinício, e a navegação chama `TofVl53l0x::reiniciarSensor`; até 3 reinícios, a pelo menos 500 ms um do outro, e depois `inoperante` | `test_integracao_tof_frontal_sem_resposta_e_reiniciado_pelo_xshut`, `test_integracao_tof_que_nao_volta_fica_inoperante_e_os_motores_seguem_parados`, `test_integracao_tof_que_para_de_medir_e_reiniciado`, `test_reinicios_respeitam_a_espera` | Aprovado no computador; o XSHUT real fica para a bancada |
+| Motores parados enquanto houver falha, e o estado de erro informado | `TravaFalhaI2c` trava a `MotoresComTrava` do boot enquanto algum dispositivo estiver `em_falha` ou `inoperante`, antes do reinício, sem soltar a trava do boot reprovado. A navegação também tira a permissão do `CicloNavegacao`, que espera e retoma a corrida quando a falha passa. O log anuncia cada mudança, e a telemetria traz `i2c_falhas` e `i2c_reinicios` | `test_trava_para_os_motores_e_solta_quando_a_falha_acaba`, `test_trava_nao_solta_a_trava_do_boot`, `test_motores_so_seguem_com_todos_os_dispositivos_ok`, `test_descreve_os_dispositivos_em_falha`, `test_serializa_falhas_do_i2c`, `test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida`, `test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida` | Aprovado |
+| Testes no computador com falhas simuladas | Suíte `test_falhas_i2c` com 30 casos (25 unitários e 5 de integração, que simulam a navegação e a tarefa da IMU na ordem do `main.cpp`) e suíte `test_integracao_falhas_i2c` com 4 casos (a corrida simulada inteira, com o ToF e a IMU caindo no meio de um avanço) | Suítes `test_falhas_i2c` e `test_integracao_falhas_i2c` | Aprovado |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/falhas/src/ConfiguracaoFalhasI2c.h` | Tentativas (5), leituras para recuperar (3), reinícios (3) e espera entre reinícios (500 ms), provisórios |
+| `lib/falhas/src/SupervisorI2c.h/.cpp` | Situação de cada dispositivo (`ok`, `tentando`, `em_falha`, `inoperante`), decisão do reinício e da parada dos motores, contadores e texto das falhas |
+| `lib/falhas/src/VigiaTof.h/.cpp` | Leitura de cada ToF a partir das amostras do `CombinadorTof` |
+| `lib/falhas/src/TravaFalhaI2c.h` | Trava dos motores durante a falha, sem soltar a trava do boot |
+| `lib/drivers_esp32/src/TofVl53l0x.h/.cpp` | `reiniciarSensor(lado)`: reinício de um sensor só pelo XSHUT |
+| `lib/comunicacao/src/TelemetriaJson.h/.cpp` | Campos `i2c_falhas` e `i2c_reinicios`; o pior caso do JSON passou a 689 bytes (sem eles, 602; o comentário do código dizia 547), dentro do buffer de 768 |
+| `src/main.cpp` | Supervisão dos ToF na navegação e da IMU (giroscópio e acelerômetro) na tarefa dela, trava antes do reinício, permissão do ciclo de navegação retirada durante a falha, linhas de log e campos da telemetria |
+| `lib/execucao/src/CicloNavegacao.h` | Só o comentário: a falha do I²C pausa o ciclo, em vez de deixá-lo terminar em `Falha` |
+| `test/test_falhas_i2c/test_falhas_i2c.cpp`, `test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp`, `test/test_telemetria_json/test_telemetria_json.cpp` | Suítes novas com 30 e 4 casos e 1 caso novo de telemetria |
+| `README.md` do firmware | Seção "Falha do I²C durante a corrida" |
+
+#### Testes unitários e de integração
+
+```bash
+pio test -e native -f test_falhas_i2c -f test_integracao_falhas_i2c -f test_telemetria_json
+```
+
+| Suíte | Casos | Resultado |
+| :--- | :--- | :--- |
+| `test_falhas_i2c` | 30 | **30 aprovados** |
+| `test_integracao_falhas_i2c` | 4 | **4 aprovados** |
+| `test_telemetria_json` | 11 | **11 aprovados** (1 novo) |
+
+Os casos estão descritos na tabela de testes da [documentação do firmware](../04-projeto-conceitual/firmware.md#testes).
+
+```text
+test/test_falhas_i2c/test_falhas_i2c.cpp:710:test_sem_falha_fica_ok_e_nao_para_os_motores:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:711:test_falha_isolada_tenta_de_novo_sem_parar_os_motores:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:712:test_tentativas_esgotadas_param_os_motores_e_pedem_reinicio_em_cada_dispositivo:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:713:test_tentativas_vem_da_configuracao:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:714:test_configuracao_zerada_vale_como_um:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:715:test_depois_do_reinicio_o_dispositivo_tem_todas_as_tentativas_de_novo:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:716:test_reinicios_respeitam_a_espera:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:717:test_espera_entre_reinicios_com_o_relogio_dando_a_volta:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:718:test_reinicios_esgotados_deixam_o_dispositivo_inoperante:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:719:test_inoperante_nao_pede_mais_reinicio_mas_volta_com_leituras_boas:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:720:test_recuperar_exige_leituras_boas_seguidas:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:721:test_motores_so_seguem_com_todos_os_dispositivos_ok:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:722:test_sem_novidade_nao_muda_nada:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:723:test_descreve_os_dispositivos_em_falha:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:724:test_contadores_de_falhas_e_reinicios:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:725:test_nomes_das_situacoes:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:726:test_leitura_da_imu_com_barramento_ocupado_nao_e_falha:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:727:test_vigia_amostra_nova_de_sensor_que_respondeu_e_ok:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:728:test_vigia_mesma_amostra_e_sem_novidade_ate_a_idade_maxima:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:729:test_vigia_sensor_parado_falha_uma_vez_por_janela:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:730:test_vigia_sem_nenhuma_amostra_falha_depois_da_idade_maxima:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:731:test_vigia_depois_do_reinicio_ignora_as_amostras_antigas:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:732:test_vigia_cada_lado_e_um_dispositivo:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:733:test_trava_para_os_motores_e_solta_quando_a_falha_acaba:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:734:test_trava_nao_solta_a_trava_do_boot:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:735:test_integracao_tof_frontal_sem_resposta_e_reiniciado_pelo_xshut:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:736:test_integracao_tof_que_nao_volta_fica_inoperante_e_os_motores_seguem_parados:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:737:test_integracao_tof_que_para_de_medir_e_reiniciado:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:738:test_integracao_imu_sem_resposta_e_reiniciada:PASS
+test/test_falhas_i2c/test_falhas_i2c.cpp:739:test_integracao_barramento_ocupado_nao_derruba_a_imu:PASS
+30 Tests 0 Failures 0 Ignored
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_sem_falha_a_corrida_chega_ao_objetivo:INFO: sem falha: estado objetivo_alcancado em 35.2 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:336:test_sem_falha_a_corrida_chega_ao_objetivo:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida:INFO: ToF frontal sem resposta por 300 ms: estado objetivo_alcancado em 36.0 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:337:test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:338:test_tof_que_nao_volta_deixa_o_robo_parado:PASS
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:247:test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida:INFO: IMU sem resposta por 200 ms: estado objetivo_alcancado em 35.6 s, 12 celulas
+test/test_integracao_falhas_i2c/test_integracao_falhas_i2c.cpp:339:test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida:PASS
+4 Tests 0 Failures 0 Ignored
+```
+
+#### Cobertura e suíte completa
+
+```bash
+pio test -e native_cobertura
+gcovr --root . --filter 'lib/' --object-directory .pio/build/native_cobertura --fail-under-line 80
+```
+
+| Verificação | Resultado |
+|---|---|
+| Suíte completa (as 42 suítes do `native`) | **797 aprovados, 0 falhas** (a `main` tem 762) |
+| Cobertura das linhas de `lib/`, somando todas as suítes | **98,0%** (3824 de 3901), acima da meta de 80% |
+| Cobertura de `SupervisorI2c.cpp`, `VigiaTof.cpp`, `TravaFalhaI2c.h` e `TelemetriaJson.cpp` | 100% (91, 24, 13 e 38 linhas) |
+
+`TofVl53l0x` e `main.cpp` não compilam no `native`; por isso as regras ficam em `lib/falhas`, e os testes de integração repetem a ordem do `main.cpp` com os simulados. Para a placa, as chamadas do `main.cpp`, do `TofVl53l0x.cpp` e do `ImuMpu6050.cpp` foram conferidas contra cabeçalhos simplificados do Arduino-ESP32 2.x e 3.x e a biblioteca `pololu/VL53L0X` 1.3.1, sem erros nem avisos. A compilação completa (`pio run -e esp32c3`) é feita pelo CI do PR.
+
+#### Prova de mutação
+
+Para conferir se os testes pegam erros, e não só passam, foram feitas alterações propositais no código, uma de cada vez, rodando `test_falhas_i2c` e `test_telemetria_json` a cada uma. Por exemplo: declarar a falha uma tentativa depois, não devolver as tentativas depois do reinício, não zerar os reinícios na recuperação, reiniciar sem respeitar a espera, parar os motores só em `em_falha`, soltar a trava do boot, contar a amostra antiga depois do reinício, contar a mesma amostra duas vezes e mandar `i2c_falhas` sempre vazio.
+
+| Execução | Resultado |
+|---|---|
+| Primeira rodada | 20 de 24 alterações detectadas. Duas eram lacunas: o texto de `i2c_falhas` no limite exato do buffer e a amostra do mesmo instante do reinício. As outras duas não mudavam o comportamento: guardas que repetiam o que a contagem já fazia |
+| Correção | Dois casos novos para as lacunas; a guarda redundante de configuração zerada saiu do código, e o atalho de `inoperante` ficou, por clareza, fora da lista |
+| Rodada final | **22 de 22 alterações detectadas** |
+| Corrida simulada | Tirar a pausa do ciclo (`liberado` sempre verdadeiro) ou a trava dos motores faz 3 dos 4 casos de `test_integracao_falhas_i2c` falharem: **2 de 2 alterações detectadas** |
+
+#### Integração com a `main`
+
+A branch recebeu a `main` de 25/10/2026, com os PRs [#442](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/442) ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)), [#444](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/444) ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)), [#396](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/396) ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)), [#424](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/424) ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), [#438](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/438) ([#242](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/242)) e [#451](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/451) ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)). Os conflitos foram só de texto (no `main.cpp`, no README e nos campos da telemetria) e ficaram as duas partes. Com o ciclo de navegação na `main`, a falha do I²C passou a tirar a permissão do ciclo, e a leitura do acelerômetro passou a contar como leitura do MPU6050.
+
+#### Pendências desta etapa
+
+- **Bancada:** com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado; conferir a sequência do log ([Figura 19](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c)), o reinício pelo XSHUT e a volta dos motores. Combinar com a eletrônica como soltar o conector sem curto no barramento.
+- **Valores provisórios:** ajustar as tentativas, as leituras para recuperar, os reinícios e a espera com o que a bancada mostrar.
+- **Compilação para a placa:** anotar aqui a RAM e a Flash do `pio run -e esp32c3` do CI do PR.
