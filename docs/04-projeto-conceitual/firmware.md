@@ -91,6 +91,7 @@ Há ainda o ambiente **`bancada_tof`**, que herda o `esp32c3` mas compila só `s
 | `lib/nucleo` | Tipos compartilhados, constantes do desafio e pinagem |
 | `lib/hal` | Interfaces de hardware: `ISensorDistancia` (sensores de distância), `IEncoder`, `IMotores`, `IBarramentoI2c` ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e `IImu` (PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
 | `lib/inicializacao` | Autoteste do boot: varredura do I²C, conferência dos 4 dispositivos e relatório (`AutotesteBoot`, `RelatorioBoot`), com os parâmetros em `ConfiguracaoBoot.h` ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
+| `lib/calibracao` | Rotina de autocalibração dos sensores de distância VL53L0X e do giroscópio no limite de 1 s (`CalibradorTof`, `CalibradorGiro` e `RotinaCalibracao`), com parâmetros em `ConfiguracaoCalibracao.h` ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)) |
 | `lib/falhas` | Falha do I²C durante a corrida: tentativas, reinício e recuperação dos 4 dispositivos (`SupervisorI2c`), leitura de cada ToF pelas amostras (`VigiaTof`) e motores parados enquanto durar a falha (`TravaFalhaI2c`), com os parâmetros em `ConfiguracaoFalhasI2c.h` ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)) |
 | `lib/tof` | Regra de validade das leituras dos 3 VL53L0X (`CombinadorTof`) e seus parâmetros (`ConfiguracaoTof.h`), sem Arduino ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)) |
 | `lib/encoders` | Decodificação em quadratura dos encoders, conversão de pulsos em mm e distância por roda ([#186](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/186)) |
@@ -111,7 +112,7 @@ As pastas ainda vazias têm um arquivo `.gitkeep` para existirem no repositório
 
 ## Regras de dependência
 
-- As camadas de lógica (`nucleo`, `percepcao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Por isso o ambiente `native` ignora `drivers_esp32` (`lib_ignore` no `platformio.ini`).
+- As camadas de lógica (`nucleo`, `percepcao`, `calibracao`, `mapeamento`, `navegacao`, `comunicacao`, `simulacao`) **não incluem `Arduino.h`**. Por isso o ambiente `native` ignora `drivers_esp32` (`lib_ignore` no `platformio.ini`).
 - Todo acesso ao hardware passa por uma interface de `hal`.
 - **Sem alocação dinâmica** na lógica: o maior labirinto tem 12×4 células, então estruturas de tamanho fixo bastam.
 - Todo o código fica no namespace `micromouse`, com um `.h` por conceito e `#pragma once`.
@@ -399,6 +400,68 @@ flowchart TD
 
 **No `main.cpp`.** A sequência da Figura 5 roda no `setup()`, antes de criar as tarefas. Como a linha do boot se perde se o monitor serial abrir depois do reset (a USB nativa reconecta), a telemetria repete `boot_ok`, `boot_falhas` e `boot_ms` em todo pacote, e o comando `B` no monitor reimprime o relatório. Com os campos do boot, o pior caso do JSON de telemetria chegou a 516 bytes, e o buffer (`TAMANHO_MAX_JSON_TELEMETRIA`) passou de 512 para 768 bytes.
 
+## Calibração: autocalibração dos VL53L0X e do giroscópio (`CalibradorTof`, `CalibradorGiro` e `RotinaCalibracao`)
+
+Na largada, o robô deve estar parado e centralizado na célula inicial (0, 0). Antes de iniciar o deslocamento pelo labirinto, o micromouse executa uma rotina de autocalibração dos sensores de distância (3 VL53L0X) e inerciais (IMU MPU6050, eixo Z) ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240), [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) / RF-13).
+
+A camada `lib/calibracao` é puramente em C++17, não inclui `Arduino.h` e roda no computador com falsos (`SensorDistanciaSimulado` e `ImuSimulado`). A rotina cumpre o requisito não funcional **[RNF-08](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/26)**: a calibração completa deve ser concluída em **até 1 segundo** (1000 ms), com a duração ativamente medida pela rotina.
+
+```mermaid
+flowchart TD
+    inicio["iniciar(): zera duração e inicia calibradores"] --> loop["Passo de amostragem (dtMs)"]
+    loop --> tempo{"Duração medida > 1000 ms?"}
+    tempo -- Sim --> excedido["TempoExcedido (falha RNF-08)"]
+    tempo -- Não --> sensor{"Leituras válidas da IMU e ToF?"}
+    sensor -- Falha sensor --> falha["FalhaSensor"]
+    sensor -- Ok --> amostras["Alimenta CalibradorTof e CalibradorGiro"]
+    mov{"Variação > limiar (robô se mexeu)?"}
+    amostras --> mov
+    mov -- Sim --> recusa["RecusadaPorMovimento (mantém anteriores)"]
+    mov -- Não --> pronto{"Ambos coletaram todas as amostras?"}
+    pronto -- Não --> loop
+    pronto -- Sim --> sucesso["Sucesso: desvios e viés prontos para uso"]
+```
+
+**Figura 7.** Fluxo de execução e máquinas de estado da rotina de autocalibração unificada.
+
+### Componentes da calibração
+
+1. **`CalibradorTof`:**
+   - Estima o desvio de montagem de cada sensor ToF (frente, esquerda e direita) contra distâncias de referência conhecidas (nominalmente 54 mm na célula de partida centralizada).
+   - O desvio é a diferença `média das amostras − referência nominal`.
+   - Na aplicação (`corrigir`), subtrai o desvio da leitura bruta com saturação defensiva em zero (`uint16_t`).
+   - Se durante a coleta de 10 amostras a amplitude `maior − menor` de qualquer lado ultrapassar `VARIACAO_MAXIMA_CALIBRACAO_TOF_MM` (8 mm), assume que o robô se mexeu ou houve interferência severa, transicionando para `Recusada` e mantendo os desvios anteriores inalterados.
+2. **`CalibradorGiro`:**
+   - Estima o viés estático do giroscópio em torno do eixo Z com o robô em repouso.
+   - O viés é calculado pela média aritmética arredondada das amostras em décimos de °/s (`mediaArredondada`).
+   - Na aplicação (`corrigir`), subtrai o viés da taxa medida (`taxaBruta − viés`).
+   - Se a oscilação entre a maior e a menor amostra exceder `VARIACAO_MAXIMA_CALIBRACAO_GIRO_DECIMOS_DPS` (50 décimos de °/s, ou seja, 5,0 °/s), o estado vai para `Recusada`, mantendo o viés anterior.
+3. **`RotinaCalibracao`:**
+   - Orquestra a execução simultânea dos dois calibradores e **mede ativamente o tempo decorrido** (`duracaoMedidaMs()`).
+   - Com 50 amostras a cada 10 ms da IMU e 10 amostras a cada ~33 ms dos ToF em paralelo, a rotina completa a autocalibração em **500 ms**, deixando 500 ms de margem de segurança dentro de 1 s (RNF-08).
+   - Se o tempo total ultrapassar 1000 ms, transiciona para `TempoExcedido`.
+   - Se qualquer um dos sensores recusar por movimento, transiciona para `RecusadaPorMovimento`.
+   - Disponibiliza o método `executar(ISensorDistancia&, IImu&)` que encapsula o laço síncrono para inicialização no boot ou testes automatizados com simulação.
+
+### Parâmetros da calibração (`ConfiguracaoCalibracao.h`)
+
+| Parâmetro | Constante | Valor | Finalidade |
+|---|---|---|---|
+| Orçamento total | `ORCAMENTO_CALIBRACAO_MS` | **1000 ms** | Limite máximo estabelecido pelo RNF-08 |
+| Fatia prevista ToF | `ORCAMENTO_CALIBRACAO_TOF_MS` | **400 ms** | Janela temporal para amostragem dos 3 VL53L0X |
+| Fatia prevista Giro | `ORCAMENTO_CALIBRACAO_GIRO_MS` | **500 ms** | Janela temporal para amostragem do MPU6050 |
+| Amostras ToF | `AMOSTRAS_CALIBRACAO_TOF` | **10** | 10 amostras a ~33 ms ≈ 330 ms |
+| Amostras Giro | `AMOSTRAS_CALIBRACAO_GIRO` | **50** | 50 amostras a 10 ms = 500 ms |
+| Variação máxima ToF | `VARIACAO_MAXIMA_CALIBRACAO_TOF_MM` | **8 mm** | Limiar de detecção de movimento/vibração lateral |
+| Variação máxima Giro | `VARIACAO_MAXIMA_CALIBRACAO_GIRO_DECIMOS_DPS` | **50** (5 °/s) | Limiar de detecção de rotação do chassi |
+| Referência nominal ToF | `DISTANCIA_REFERENCIA_TOF_MM` | **54 mm** | $84\text{ mm (centro à parede)} - 30\text{ mm (offset de montagem)}$ |
+
+### Interface das Classes
+
+* **`CalibradorTof`:** `iniciar(referencias)`, `adicionarAmostra(distancias)`, `estado()`, `desvios()` e `corrigir(bruta)`.
+* **`CalibradorGiro`:** `iniciar()`, `adicionarAmostra(taxaDecimosDps)`, `estado()`, `viesDecimosDps()` e `corrigir(taxaBruta)`.
+* **`RotinaCalibracao`:** `iniciar(referencias)`, `atualizar(distancias, distValidas, taxaGiro, giroValido, dtMs)`, `executar(ISensorDistancia&, IImu&)`, `estado()`, `duracaoMedidaMs()`, `corrigirTof(bruta)` e `corrigirGiro(taxaBruta)`.
+
 ## Labirinto simulado: `LabirintoSimulado`
 
 O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes conhecidas, usado como verdade de referência nos testes. Com ele, o `SensorDistanciaSimulado` deixa de depender de leituras digitadas à mão: basta posicionar o robô numa célula, e o sensor simulado devolve o que os sensores de distância reais veriam ali. Isso permite testar a classificação de paredes ([#174](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/174)) e a atualização do mapa ([#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177)) num labirinto inteiro, sem hardware.
@@ -417,7 +480,7 @@ O `LabirintoSimulado` (`lib/simulacao`) é um labirinto com todas as paredes con
 +---+---+---+---+
 ```
 
-**Figura 7.** Labirinto 4×4 de exemplo (`LABIRINTO_4X4`), com a partida (0, 0) no canto inferior esquerdo.
+**Figura 8.** Labirinto 4×4 de exemplo (`LABIRINTO_4X4`), com a partida (0, 0) no canto inferior esquerdo.
 
 Cada parede aparece uma única vez no texto, entre as duas células que ela separa. Por isso, o lado leste de uma célula e o lado oeste da vizinha nunca discordam. Ao carregar o texto, o `LabirintoSimulado` recusa:
 
@@ -559,7 +622,7 @@ stateDiagram-v2
     Congelado --> Explorando: iniciarCorrida() (nova corrida)
 ```
 
-**Figura 8.** Ciclo de vida do mapa final no `ArmazenamentoMapa`: o congelamento só acontece uma vez por corrida e só uma nova corrida o destrava.
+**Figura 9.** Ciclo de vida do mapa final no `ArmazenamentoMapa`: o congelamento só acontece uma vez por corrida e só uma nova corrida o destrava.
 
 ### Regras de Negócio e Algoritmo
 
@@ -598,7 +661,7 @@ A decisão devolve `false`, sem direção, quando o robô já está no objetivo 
 | 5 | 4 | 3 | 2 |
 | **6** | 5 | 4 | 3 |
 
-**Figura 9.** Distâncias calculadas pelo *flood fill* num mapa 4×4 sem paredes internas conhecidas, com o objetivo (3, 3) no canto superior direito (0) e a partida (0, 0) no canto inferior esquerdo (6). Na partida, virado para o Norte, as vizinhas Norte (1, 0) e Leste (0, 1) empatam com distância 5; o desempate escolhe a frente, o Norte. Se os sensores revelarem uma parede ao Norte, o próximo cálculo descarta essa vizinha e o robô segue para Leste.
+**Figura 10.** Distâncias calculadas pelo *flood fill* num mapa 4×4 sem paredes internas conhecidas, com o objetivo (3, 3) no canto superior direito (0) e a partida (0, 0) no canto inferior esquerdo (6). Na partida, virado para o Norte, as vizinhas Norte (1, 0) e Leste (0, 1) empatam com distância 5; o desempate escolhe a frente, o Norte. Se os sensores revelarem uma parede ao Norte, o próximo cálculo descarta essa vizinha e o robô segue para Leste.
 
 ### Ciclo de um passo: decisão, movimento e confirmação pelos sensores
 
@@ -620,7 +683,7 @@ stateDiagram-v2
     PassoPendente --> SemPasso: confirmarPose() → Divergente (outra célula, replaneja a partir dela)
 ```
 
-**Figura 10.** Estados de um passo na `Navegacao`: enquanto há passo pendente, `darPasso()` recusa um novo passo, e só a confirmação dos sensores conclui ou cancela o passo.
+**Figura 11.** Estados de um passo na `Navegacao`: enquanto há passo pendente, `darPasso()` recusa um novo passo, e só a confirmação dos sensores conclui ou cancela o passo.
 
 | `ResultadoConfirmacao` | Quando | Efeito |
 |---|---|---|
@@ -666,7 +729,7 @@ O módulo de comunicação (`lib/comunicacao`) implementa a classe `MapaJson`, r
 }
 ```
 
-**Figura 11.** JSON de um mapa 4×4 recém-criado (só o perímetro conhecido), formatado aqui para leitura: a saída real não tem espaços nem quebras de linha.
+**Figura 12.** JSON de um mapa 4×4 recém-criado (só o perímetro conhecido), formatado aqui para leitura: a saída real não tem espaços nem quebras de linha.
 
 | Campo | Valor |
 |---|---|
@@ -705,7 +768,7 @@ flowchart LR
     H --> C
 ```
 
-**Figura 12.** Da contagem dos encoders à pose: a diferença entre as rodas gira a direção, e a média das rodas avança o robô na direção atual.
+**Figura 13.** Da contagem dos encoders à pose: a diferença entre as rodas gira a direção, e a média das rodas avança o robô na direção atual.
 
 ### Regras de Negócio e Algoritmo
 
@@ -786,7 +849,7 @@ flowchart LR
     sim["ImuSimulado<br/>(testes)"] -.->|"no lugar do MPU6050"| acomp
 ```
 
-**Figura 13.** Do sensor ao ângulo de giro: a tarefa da IMU lê o MPU6050 pelo barramento compartilhado, o `AcompanhadorGiro` calibra o viés e o integrador soma a taxa ao longo do tempo. Nos testes, o `ImuSimulado` entra no lugar do MPU6050.
+**Figura 14.** Do sensor ao ângulo de giro: a tarefa da IMU lê o MPU6050 pelo barramento compartilhado, o `AcompanhadorGiro` calibra o viés e o integrador soma a taxa ao longo do tempo. Nos testes, o `ImuSimulado` entra no lugar do MPU6050.
 
 ### Regras de Negócio e Algoritmo
 
@@ -868,7 +931,7 @@ sequenceDiagram
     T->>S: Serial.println(buffer)
 ```
 
-**Figura 14.** Fluxo de detecção da célula objetivo: ao confirmar que a célula da pose coincide com o destino sob a seção crítica `travaOdometria`, o robô freia imediatamente, congela o mapa explorado e envia o evento pontual único pela telemetria serial.
+**Figura 15.** Fluxo de detecção da célula objetivo: ao confirmar que a célula da pose coincide com o destino sob a seção crítica `travaOdometria`, o robô freia imediatamente, congela o mapa explorado e envia o evento pontual único pela telemetria serial.
 
 ### Regras de Negócio e Algoritmo
 
@@ -953,7 +1016,7 @@ flowchart LR
     motores -. implementa .-> sim["MotoresSimulados<br/>testes"]
 ```
 
-**Figura 15.** Fluxo do controle de movimento: a cada leitura dos sensores de distância, a distância frontal define a potência base, as distâncias laterais definem a correção, e o resultado vai para os motores pela interface `IMotores`.
+**Figura 16.** Fluxo do controle de movimento: a cada leitura dos sensores de distância, a distância frontal define a potência base, as distâncias laterais definem a correção, e o resultado vai para os motores pela interface `IMotores`.
 
 ### Geometria considerada
 
@@ -1019,7 +1082,7 @@ flowchart TD
     controleMov --> motores
 ```
 
-**Figura 16.** Controle de orientação em malha fechada: o ângulo de guinada (*yaw*) integrado da IMU orienta tanto os giros no próprio eixo (`ControleGiro`) quanto a manutenção da trajetória retilínea durante o avanço (`ControleMovimento`), compensando o deslizamento de rodas e irregularidades do piso (HU-11).
+**Figura 17.** Controle de orientação em malha fechada: o ângulo de guinada (*yaw*) integrado da IMU orienta tanto os giros no próprio eixo (`ControleGiro`) quanto a manutenção da trajetória retilínea durante o avanço (`ControleMovimento`), compensando o deslizamento de rodas e irregularidades do piso (HU-11).
 
 ### Giros de 90° e 180° em malha fechada (`ControleGiro`)
 
@@ -1083,7 +1146,7 @@ flowchart LR
     inop -- "3 leituras boas seguidas" --> ok
 ```
 
-**Figura 16.** Situações de cada dispositivo no `SupervisorI2c`, com os valores provisórios de `ConfiguracaoFalhasI2c.h`. Os motores só andam com os 4 dispositivos em `ok` ou `tentando`.
+**Figura 18.** Situações de cada dispositivo no `SupervisorI2c`, com os valores provisórios de `ConfiguracaoFalhasI2c.h`. Os motores só andam com os 4 dispositivos em `ok` ou `tentando`.
 
 ### Regras de Negócio e Algoritmo
 
@@ -1095,7 +1158,7 @@ flowchart LR
 * **Recuperação:** em `em_falha` ou `inoperante`, 3 leituras boas seguidas devolvem o dispositivo a `ok` e zeram os reinícios. Uma falha no meio zera a contagem, para um mau contato que oscila não ficar ligando e desligando os motores.
 * **Motores (`TravaFalhaI2c`):** os motores param enquanto qualquer um dos 4 estiver `em_falha` ou `inoperante`, pela mesma `MotoresComTrava` do boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): travada, toda potência vira freio, e o estimador do deslocamento ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)) fica sabendo que o robô parou. A trava do I²C só solta a trava que ela mesma pôs, então um boot reprovado continua travado até o robô ser reiniciado.
 * **Ciclo de navegação ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)):** enquanto a falha durar, a navegação tira a permissão do `CicloNavegacao` (`EntradaCiclo::liberado`). O ciclo cancela o movimento, freia e espera em `aguardando_largada`; quando a falha passa, percebe de novo a célula a partir de onde parou e segue a corrida. Sem isso, o movimento travado acabaria por tempo esgotado, como `Falha` do ciclo, e o robô não voltaria sozinho.
-* **Estado informado:** cada mudança de situação, cada reinício e cada mudança da trava viram uma linha no log (Figura 17), e a telemetria repete em todo pacote `i2c_falhas` (os dispositivos em falha agora, separados por vírgula, ou `""`) e `i2c_reinicios` (os reinícios pedidos desde o boot).
+* **Estado informado:** cada mudança de situação, cada reinício e cada mudança da trava viram uma linha no log (Figura 19), e a telemetria repete em todo pacote `i2c_falhas` (os dispositivos em falha agora, separados por vírgula, ou `""`) e `i2c_reinicios` (os reinícios pedidos desde o boot).
 
 ```json
 {"status":"i2c","dispositivo":"tof_frontal","situacao":"tentando"}
@@ -1108,7 +1171,7 @@ flowchart LR
 {"status":"navegacao","estado":"percebendo","falha":"nenhuma","celulas":2}
 ```
 
-**Figura 17.** Log de uma falha do ToF frontal no meio de um avanço, que volta com o primeiro reinício: os motores param antes do reinício, o ciclo de navegação espera e, depois de 3 medidas boas, os motores voltam e o ciclo percebe a célula de novo.
+**Figura 19.** Log de uma falha do ToF frontal no meio de um avanço, que volta com o primeiro reinício: os motores param antes do reinício, o ciclo de navegação espera e, depois de 3 medidas boas, os motores voltam e o ciclo percebe a célula de novo.
 
 | Parâmetro (`ConfiguracaoFalhasI2c.h`) | Valor | Observação |
 |---|---|---|
@@ -1142,7 +1205,7 @@ flowchart LR
 
 **Rastreabilidade:** `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`, `ConfiguracaoFalhasI2c.h`), `TofVl53l0x::reiniciarSensor`, os campos `i2c_falhas` e `i2c_reinicios` do `TelemetriaJson` e a supervisão no `main.cpp` atendem à tarefa [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241), da [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) (Calibração de Hardware).
 
-**Pendências:** a bancada com o hardware: com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado, conferir a sequência da Figura 17 e ajustar os valores provisórios. A forma de soltar o conector sem curto no barramento precisa ser combinada com a eletrônica.
+**Pendências:** a bancada com o hardware: com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado, conferir a sequência da Figura 19 e ajustar os valores provisórios. A forma de soltar o conector sem curto no barramento precisa ser combinada com a eletrônica.
 
 ## Testes
 
@@ -1291,6 +1354,30 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | | `test_travar_freia_na_hora_e_parar_sempre_passa` | `travar()` freia na hora; `parar()` sempre chega ao driver |
 | | `test_sequencia_do_boot_so_libera_os_motores_com_tudo_presente` | Como no `main.cpp`: sem a IMU os motores não andam; com tudo presente, andam |
 | `test_telemetria_json/test_telemetria_json.cpp` | `test_serializa_resultado_do_boot` | Campos `boot_ok`, `boot_falhas` e `boot_ms` |
+| `test_calibracao_tof/test_calibracao_tof.cpp` | `test_comeca_nao_calibrado_e_desvios_zero` | Estado inicial `NaoCalibrado` e desvios zerados |
+| | `test_calibracao_guarda_desvio_por_sensor` | Cálculo da média de 10 amostras e subtração da referência (54 mm) por sensor |
+| | `test_media_arredonda_para_o_inteiro_mais_proximo` | Arredondamento exato da média das amostras |
+| | `test_corrigir_aplica_desvio_nas_leituras` | Aplicação defensiva do desvio nas leituras brutas |
+| | `test_corrigir_satura_em_zero_quando_desvio_e_maior_que_a_leitura` | Saturação defensiva em 0 quando desvio > leitura |
+| | `test_recusa_se_algum_lado_variar_demais` | Amplitude > 8 mm comuta para `Recusada` (detecção de movimento) |
+| | `test_recusa_mantem_desvios_da_calibracao_anterior` | Falha preserva integralmente os desvios calibrados anteriores |
+| | `test_amostra_fora_de_calibrando_e_ignorada` | Injeção de amostras com estado fora de `Calibrando` é ignorada |
+| | `test_orcamento_tof_cabe_no_rnf08` | Tempo estimado dos ToF (400 ms) cumpre o orçamento global de 1000 ms do RNF-08 |
+| | `test_com_leituras_simuladas_do_lidar` | Integração com sensor simulado gerando amostras válidas |
+| `test_rotina_calibracao/test_rotina_calibracao.cpp` | `test_calibrador_giro_inicial_nao_calibrado_e_vies_zero` | CalibradorGiro inicia em `NaoCalibrado` e viés zerado |
+| | `test_calibrador_giro_calcula_vies_pela_media_arredondada` | Média arredondada de 50 amostras em décimos de °/s |
+| | `test_calibrador_giro_vies_negativo_arredondado` | Média e arredondamento simétrico para viés negativo |
+| | `test_calibrador_giro_aplica_vies_nas_leituras_corrigir` | Correção subtrai o viés da taxa medida (`taxaBruta − viés`) |
+| | `test_calibrador_giro_recusa_se_robo_se_mover_variacao_excessiva` | Oscilação > 50 décimos de °/s (5,0 °/s) ativa recusa por movimento |
+| | `test_calibrador_giro_recusa_mantem_vies_anterior` | Recusa preserva o viés da calibração bem-sucedida anterior |
+| | `test_calibrador_giro_amostra_fora_de_calibrando_e_ignorada` | Amostras adicionadas fora do estado `Calibrando` são descartadas |
+| | `test_rotina_calibracao_sucesso_com_imu_simulado_e_lidar_simulado` | Calibração simultânea completa com ToF e IMU simulados com sucesso |
+| | `test_rotina_calibracao_duracao_medida_dentro_do_orcamento_rnf08` | Medição ativa de tempo encerra em 500 ms, cumprindo o limite de 1000 ms (RNF-08) |
+| | `test_rotina_calibracao_falha_tempo_excedido_quando_estoura_orcamento` | Transiciona para `TempoExcedido` se o tempo acumulado ultrapassar 1000 ms |
+| | `test_rotina_calibracao_recusa_quando_robo_se_move_no_giro` | Recusa por movimento do giroscópio transiciona a rotina para `RecusadaPorMovimento` |
+| | `test_rotina_calibracao_recusa_quando_robo_se_move_no_tof` | Recusa por movimento dos ToF transiciona a rotina para `RecusadaPorMovimento` |
+| | `test_rotina_calibracao_aborta_em_caso_de_falha_de_sensor` | Leituras inválidas dos sensores abortam a rotina com `FalhaSensor` |
+| | `test_rotina_calibracao_iniciar_com_referencias_customizadas` | Iniciação com distâncias de referência customizadas para células não padrão |
 | `test_controle_giroscopio/test_controle_giroscopio.cpp` | `test_giro_90_esquerda_conclui_na_tolerancia` | Giro de 90° à esquerda atinge o alvo dentro da tolerância |
 | | `test_giro_90_direita_conclui_na_tolerancia` | Giro de 90° à direita atinge o alvo dentro da tolerância |
 | | `test_giro_180_esquerda_conclui_na_tolerancia` | Giro de 180° fecha dentro da tolerância |
@@ -1373,6 +1460,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/navegacao` (`Navegacao`: validação da pose, `cancelarPasso`, `Bloqueado`) | [#357](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/357) Robustez da navegação | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
 | `lib/tof` (`CombinadorTof`), `TofVl53l0x`, `ISensorDistancia::idadeUltimaLeituraMs`, endereços em `Pinos.h`, firmware e menu de bancada | [#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344) Driver dos 3 sensores VL53L0X | [HU-02](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/36) (RF02) |
 | `lib/inicializacao` (`AutotesteBoot`, `RelatorioBoot`), `IBarramentoI2c`, `BarramentoI2cEsp32`, `MotoresComTrava` | [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) |
+| `lib/calibracao` (`CalibradorTof`, `CalibradorGiro`, `RotinaCalibracao`) | [#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240) Rotina de calibração dos VL53L0X e do giroscópio | [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) (RF13), [RNF-08](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/26) |
 | `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`), `TofVl53l0x::reiniciarSensor`, `i2c_falhas` e `i2c_reinicios` na telemetria | [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241) Detecção de falha de I²C e nova tentativa | [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) |
 | `lib/hal` (`IImu`), `lib/simulacao` (`ImuSimulado`), `lib/imu` (`IntegradorGiro`, `ConversorGiro`, `AcompanhadorGiro`), `ImuMpu6050`, `BarramentoI2c`, tarefa da IMU no `main.cpp` | [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) Driver do MPU6050 e ângulo de giro | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
 | `lib/atuacao` (`ControleGiro`, `ControleMovimento`, `ConfiguracaoGiro`) | [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190) Controle de rumo pelo giroscópio: giros de 90° e retidão do avanço | [HU-11](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF11, RNF-02) |
@@ -1390,6 +1478,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 - **Odometria** ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)): a lógica, os testes no computador e a ligação no `main.cpp` estão prontos. Falta a bancada: medir os pulsos de diferença entre as rodas num giro de 90° (hoje 625, provisório), testar giros de 90° e 180° e um percurso de 3 células, e registrar o erro.
 - **Sensores VL53L0X** ([#344](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/344)): o driver, a regra de validade (com fora da faixa limitado à faixa), o teste de integração com o mapa e a ligação no `main.cpp` estão prontos, e o build da placa compila. Falta rodar o roteiro da [bancada](#bancada-dos-vl53l0x) com o hardware montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)) e trocar os valores provisórios de `ConfiguracaoTof.h` pelos medidos. Dependem desta tarefa a percepção para ToF ([#379](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/379)), a calibração ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)), o boot ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) e a recuperação de falhas do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)).
 - **Boot do sistema** ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)): o autoteste do I²C, a trava dos motores e o relatório estão prontos e testados no computador com dispositivos simulados. Falta a bancada: medir o tempo desde o ligar (o `boot_ms` não conta a ROM nem o bootloader), conferir o `WHO_AM_I` do módulo montado e confirmar com a eletrônica que o pino AD0 do MPU6050 está em nível baixo (0x68).
+- **Calibração dos sensores e do giroscópio** ([#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240)): a rotina de autocalibração dos 3 VL53L0X e do MPU6050 (eixo Z), a verificação de repouso (rejeição de movimento), a medição do tempo decorrido dentro de 1 s (RNF-08) e todos os testes com simulação foram concluídos. Falta a validação na bancada com o robô físico parado na célula de largada ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
 - **Falha do I²C durante a corrida** ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)): a detecção nos 4 dispositivos, as tentativas, o reinício do ToF pelo XSHUT e da IMU, a trava dos motores, a pausa do ciclo de navegação e o estado no log e na telemetria estão prontos e testados no computador com falhas simuladas, inclusive numa corrida inteira. Falta a bancada (veja [as pendências](#falha-do-i2c-durante-a-corrida-supervisori2c)).
 
 ## Histórico de versões
@@ -1408,3 +1497,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | 1.2 | 24/10/2026 | Boot do sistema: autoteste do I²C, trava dos motores e relatório do boot; camadas dos motores com nome próprio e ordem combinada com as #341 e #380; integração do I²C com o #403 ([#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) | Marllon Fausto | — |
 | 1.3 | 25/10/2026 | Falha do I²C durante a corrida: detecção nos 4 dispositivos, tentativas configuráveis, reinício do ToF pelo XSHUT e da IMU, motores parados e ciclo de navegação em pausa enquanto durar a falha, e estado no log e na telemetria ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)) | Eduardo Viana | — |
 | 1.4 | 24/10/2026 | Controle de rumo pelo giroscópio e giros de 90° e 180° em malha fechada ([#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190)) | Rafael Lima | — |
+| 1.5 | 24/10/2026 | Calibração de hardware: autocalibração dos VL53L0X e do giroscópio em até 1 s (RNF-08); CalibradorTof, CalibradorGiro e RotinaCalibracao (#240) | Rafael Lima | — |

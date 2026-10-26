@@ -2323,6 +2323,112 @@ pio run -e esp32c3
 
 - Validação física dos offsets reais dos sensores e limiares calibrados na bancada de ensaios com o chassi montado ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
 
+### Sprint 5 · Rotina de calibração dos VL53L0X e do giroscópio
+
+| Item | Valor |
+| ------ | ------ |
+| Tarefa | [#240 Rotina de calibração dos VL53L0X e do giroscópio](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240) |
+| Requisitos | [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) · Calibração de sensores (RF13), [RNF-08](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/26) · Tempo de calibração (limite de 1 s) |
+| Código testado | `src/firmware` (branch `feat/240-calibracao-sensores-giroscopio`; commit `fb6f9a3`) |
+| Data da execução | 24/10/2026 |
+| Executado por | Rafael Lima |
+| Documentação do código | [Firmware: calibração de sensores](../04-projeto-conceitual/firmware.md#calibracao-autocalibracao-dos-vl53l0x-e-do-giroscopio-calibradortof-calibradorgiro-e-rotinacalibracao) |
+
+Esta etapa valida a autocalibração dos sensores de distância (3 VL53L0X) e do giroscópio (MPU6050, eixo Z) executada antes do início da exploração do labirinto. A rotina foi implementada em C++17 puro dentro de `lib/calibracao`, sem dependência do ecossistema Arduino, sendo exaustivamente testada no computador com os dispositivos simulados `SensorDistanciaSimulado` e `ImuSimulado`.
+
+**Ambiente de execução**
+
+| Componente | Valor |
+| ------ | ------ |
+| Sistema operacional | Linux (Ubuntu 24.04.4 LTS, kernel 7.0) |
+| PlatformIO | Core 6.2.0 |
+| Compilador (`native`) | g++ 13.3.0 (C++17) |
+| Framework de testes | Unity 2.6.1 |
+| Cobertura | gcov 13.3.0 e gcovr 8.6 |
+
+#### Critérios de pronto da #240
+
+| Critério | Como foi atendido | Verificação |
+| :--- | :--- | :--- |
+| Calibração dos VL53L0X calcula desvios e detecta movimento | `CalibradorTof` coleta 10 amostras a cada 33 ms (~330 ms total), calcula a média por sensor e o offset contra 54 mm de referência nominal. Se a oscilação entre máxima e mínima for > 8 mm, transiciona para `Recusada` mantendo os desvios anteriores | `test_calibracao_guarda_desvio_por_sensor`, `test_media_arredonda_para_o_inteiro_mais_proximo`, `test_recusa_se_algum_lado_variar_demais`, `test_recusa_mantem_desvios_da_calibracao_anterior` |
+| Calibração do giroscópio calcula viés estático do eixo Z e detecta rotação | `CalibradorGiro` coleta 50 amostras a cada 10 ms (500 ms total), calcula o viés estático em décimos de °/s com arredondamento simétrico e detecta movimentação do chassi se a variação for > 5,0 °/s (50 décimos de °/s), mantendo o viés anterior se for recusada | `test_calibrador_giro_calcula_vies_pela_media_arredondada`, `test_calibrador_giro_vies_negativo_arredondado`, `test_calibrador_giro_recusa_se_robo_se_mover_variacao_excessiva`, `test_calibrador_giro_recusa_mantem_vies_anterior` |
+| Orquestração unificada respeitando estritamente o limite de 1 s do RNF-08 | `RotinaCalibracao` orquestra ambos os calibradores em paralelo com medição ativa da duração (`duracaoMedidaMs()`). Executada em 500 ms com margem de segurança de 500 ms para o limite de 1000 ms. Aborta com `TempoExcedido` caso o laço estoure o orçamento | `test_rotina_calibracao_sucesso_com_imu_simulado_e_lidar_simulado`, `test_rotina_calibracao_duracao_medida_dentro_do_orcamento_rnf08`, `test_rotina_calibracao_falha_tempo_excedido_quando_estoura_orcamento`, `test_orcamento_tof_cabe_no_rnf08` |
+| Lógica defensiva e robustez a falhas de leitura | Aplicação de correções com saturação defensiva em zero nos ToF; tratamento de leitura com falha comutando para `FalhaSensor`; descarte de amostras adicionadas fora do estado `Calibrando` | `test_corrigir_satura_em_zero_quando_desvio_e_maior_que_a_leitura`, `test_rotina_calibracao_aborta_em_caso_de_falha_de_sensor`, `test_amostra_fora_de_calibrando_e_ignorada`, `test_calibrador_giro_amostra_fora_de_calibrando_e_ignorada` |
+
+#### O que mudou no código
+
+| Arquivo | Mudança |
+| :--- | :--- |
+| `lib/calibracao/src/ConfiguracaoCalibracao.h` | Constantes de calibração: orçamento total (1000 ms), amostras (10 ToF, 50 Giro), limiares de variação (8 mm, 50 décimos de °/s) e referência nominal (54 mm) |
+| `lib/calibracao/src/CalibradorTof.h/.cpp` | Coleta de amostras ToF, cálculo de desvio contra referência, detecção de movimento e correção |
+| `lib/calibracao/src/CalibradorGiro.h/.cpp` | Coleta de amostras do giroscópio (eixo Z), cálculo do viés em repouso com média arredondada, detecção de rotação e correção |
+| `lib/calibracao/src/RotinaCalibracao.h/.cpp` | Máquina de estados unificada, medição ativa de duração, laço `executar(ISensorDistancia&, IImu&)` e despacho de correções |
+| `test/test_calibracao_tof/test_calibracao_tof.cpp` | Suíte de testes unitários do calibrador de ToF (10 testes) |
+| `test/test_rotina_calibracao/test_rotina_calibracao.cpp` | Suíte de testes unitários do calibrador de giroscópio e da rotina unificada (14 testes) |
+
+#### Testes unitários (ambiente native)
+
+```bash
+pio test -e native -f test_calibracao_tof -f test_rotina_calibracao
+```
+
+| Suíte | Casos | Resultado |
+| :--- | :---: | :--- |
+| `test_calibracao_tof` | 10 | **10 aprovados** |
+| `test_rotina_calibracao` | 14 | **14 aprovados** |
+| **Total da calibração** | **24** | **24 aprovados (100%)** |
+
+Os casos detalhados estão descritos na tabela de testes da [documentação do firmware](../04-projeto-conceitual/firmware.md#testes).
+
+#### Saída da execução
+
+```text
+test/test_calibracao_tof/test_calibracao_tof.cpp:189:test_comeca_nao_calibrado_e_desvios_zero:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:190:test_calibracao_guarda_desvio_por_sensor:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:191:test_media_arredonda_para_o_inteiro_mais_proximo:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:192:test_corrigir_aplica_desvio_nas_leituras:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:193:test_corrigir_satura_em_zero_quando_desvio_e_maior_que_a_leitura:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:194:test_recusa_se_algum_lado_variar_demais:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:195:test_recusa_mantem_desvios_da_calibracao_anterior:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:196:test_amostra_fora_de_calibrando_e_ignorada:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:197:test_orcamento_tof_cabe_no_rnf08:PASS
+test/test_calibracao_tof/test_calibracao_tof.cpp:198:test_com_leituras_simuladas_do_lidar:PASS
+-----------------------
+10 Tests 0 Failures 0 Ignored
+OK
+
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:244:test_calibrador_giro_inicial_nao_calibrado_e_vies_zero:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:245:test_calibrador_giro_calcula_vies_pela_media_arredondada:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:246:test_calibrador_giro_vies_negativo_arredondado:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:247:test_calibrador_giro_aplica_vies_nas_leituras_corrigir:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:248:test_calibrador_giro_recusa_se_robo_se_mover_variacao_excessiva:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:249:test_calibrador_giro_recusa_mantem_vies_anterior:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:250:test_calibrador_giro_amostra_fora_de_calibrando_e_ignorada:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:251:test_rotina_calibracao_sucesso_com_imu_simulado_e_lidar_simulado:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:252:test_rotina_calibracao_duracao_medida_dentro_do_orcamento_rnf08:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:253:test_rotina_calibracao_falha_tempo_excedido_quando_estoura_orcamento:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:254:test_rotina_calibracao_recusa_quando_robo_se_move_no_giro:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:255:test_rotina_calibracao_recusa_quando_robo_se_move_no_tof:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:256:test_rotina_calibracao_aborta_em_caso_de_falha_de_sensor:PASS
+test/test_rotina_calibracao/test_rotina_calibracao.cpp:257:test_rotina_calibracao_iniciar_com_referencias_customizadas:PASS
+-----------------------
+14 Tests 0 Failures 0 Ignored
+OK
+```
+
+#### Verificações consolidadas
+
+| Verificação | Resultado |
+|---|---|
+| Suíte de calibração (`test_calibracao_tof` + `test_rotina_calibracao`) | **24 de 24 aprovados (100%)** |
+| Todos os testes unitários do firmware (`pio test -e native`) | **436 de 436 aprovados** |
+| Compilação do firmware para o microcontrolador (`pio run -e esp32c3`) | **Sucesso** (Flash: 21,9%, RAM: 4,6%) |
+
+#### Pendências desta etapa
+
+- Validação em bancada de ensaios com o chassi montado e sensores reais posicionados na célula inicial do labirinto ([#175](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/175)).
+- Ajuste fino dos limiares de rejeição de ruído após caracterização física dos módulos VL53L0X e MPU6050.
+
 ### Sprint 5 · Testes do frontend (Vitest e Testing Library) e CI
 
 | Item | Valor |
@@ -2886,6 +2992,6 @@ A branch recebeu a `main` de 25/10/2026, com os PRs [#442](https://github.com/fc
 
 #### Pendências desta etapa
 
-- **Bancada:** com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado; conferir a sequência do log ([Figura 17](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c)), o reinício pelo XSHUT e a volta dos motores. Combinar com a eletrônica como soltar o conector sem curto no barramento.
+- **Bancada:** com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado; conferir a sequência do log ([Figura 19](../04-projeto-conceitual/firmware.md#falha-do-i2c-durante-a-corrida-supervisori2c)), o reinício pelo XSHUT e a volta dos motores. Combinar com a eletrônica como soltar o conector sem curto no barramento.
 - **Valores provisórios:** ajustar as tentativas, as leituras para recuperar, os reinícios e a espera com o que a bancada mostrar.
 - **Compilação para a placa:** anotar aqui a RAM e a Flash do `pio run -e esp32c3` do CI do PR.
