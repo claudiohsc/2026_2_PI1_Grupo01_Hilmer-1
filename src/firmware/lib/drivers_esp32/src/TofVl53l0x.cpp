@@ -36,6 +36,16 @@ bool TofVl53l0x::iniciar() {
   return todos;
 }
 
+bool TofVl53l0x::reiniciarSensor(Lado lado) {
+  const uint8_t indice = static_cast<uint8_t>(lado);
+  // Em reset, o sensor esquece o endereço novo e volta ao de fábrica, que o `iniciarSensor` muda.
+  digitalWrite(conexoes_[indice].pinoXshut, LOW);
+  iniciados_[indice] = false;
+  delay(config_.esperaPartidaMs);
+  iniciados_[indice] = iniciarSensor(indice);
+  return iniciados_[indice];
+}
+
 bool TofVl53l0x::iniciarSensor(uint8_t indice) {
   const ConexaoTof& conexao = conexoes_[indice];
   // Objeto novo: depois do reset, o sensor voltou ao endereço de fábrica, que é o do construtor.

@@ -52,6 +52,10 @@ size_t TelemetriaJson::serializar(const PacoteTelemetria& pacote, char* saida, s
   doc["boot_ms"] = pacote.bootMs;
   doc["fase"] = pacote.fase != nullptr ? pacote.fase : "";
 
+  // Falhas do I²C durante a corrida (#241):
+  doc["i2c_falhas"] = pacote.falhasI2c != nullptr ? pacote.falhasI2c : "";
+  doc["i2c_reinicios"] = pacote.reiniciosI2c;
+
   if (measureJson(doc) >= capacidade) {
     return 0;
   }

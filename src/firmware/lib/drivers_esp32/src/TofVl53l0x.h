@@ -63,7 +63,18 @@ class TofVl53l0x : public ISensorDistancia {
   /// @return `true` se os 3 sensores iniciaram; `false` se algum falhou.
   bool iniciar();
 
-  /// `true` se o sensor do `lado` iniciou na última chamada de `iniciar()`.
+  /// Reinicia só o sensor do `lado` pelo XSHUT, depois de uma falha no I²C durante a corrida (#241):
+  /// põe o sensor em reset, solta, atribui de novo o endereço e liga o modo contínuo. Os outros dois
+  /// não param, porque já estão nos endereços novos e não respondem no de fábrica.
+  ///
+  /// Bloqueia por cerca de 2 × `esperaPartidaMs` mais a calibração do `init()` da biblioteca.
+  /// Chame com o barramento segurado (`BarramentoI2c::Uso`). As amostras antigas continuam no
+  /// combinador até a primeira medida nova.
+  ///
+  /// @return `true` se o sensor voltou; `false` se ficou em reset (XSHUT baixo).
+  bool reiniciarSensor(Lado lado);
+
+  /// `true` se o sensor do `lado` iniciou na última chamada de `iniciar()` ou `reiniciarSensor()`.
   bool sensorIniciado(Lado lado) const { return iniciados_[static_cast<uint8_t>(lado)]; }
 
   /// @copydoc ISensorDistancia::lerDistanciasLaterais

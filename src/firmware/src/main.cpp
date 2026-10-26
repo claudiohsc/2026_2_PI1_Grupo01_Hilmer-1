@@ -15,6 +15,7 @@
 /// acumulado da odometria, e o robô se realinha ao centro do corredor antes de girar no lugar (#188).
 /// Uma terceira tarefa, a de rede, envia a telemetria ao Supabase sem nunca fazer a navegação
 /// esperar (#238).
+/// Durante a corrida, uma falha no I²C para os motores e reinicia o dispositivo que falhou (#241).
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -61,9 +62,12 @@
 #include "RegistradorPotencia.h"
 #include "RelatorioBoot.h"
 #include "RotinaCalibracao.h"
+#include "SupervisorI2c.h"
 #include "TelemetriaJson.h"
 #include "TofVl53l0x.h"
+#include "TravaFalhaI2c.h"
 #include "TravaSecaoCritica.h"
+#include "VigiaTof.h"
 
 // Credenciais do Wi-Fi e do Supabase: ficam em `include/credenciais.h`, que o Git ignora (o modelo é
 // `include/credenciais.exemplo.h`). Sem o arquivo, o firmware compila e funciona sem enviar nada.
@@ -227,6 +231,106 @@ static AceleracaoPlano lerAceleracao() {
   return copia;
 }
 
+/// Falhas do I²C durante a corrida (#241): o supervisor conta as falhas de cada um dos 4
+/// dispositivos, decide quando reiniciar e quando parar os motores. A navegação registra os ToF, a
+/// tarefa da IMU registra o MPU6050 e a telemetria lê o resumo, então todo acesso passa pela seção
+/// crítica `travaFalhasI2c`. Os reinícios e a trava dos motores ficam fora dela, porque esperam.
+static micromouse::SupervisorI2c supervisorI2c;
+static portMUX_TYPE travaFalhasI2c = portMUX_INITIALIZER_UNLOCKED;
+
+/// Só a navegação usa: transforma as amostras dos ToF em leituras para o supervisor.
+static micromouse::VigiaTof vigiaTof;
+
+/// Só a navegação usa: trava os motores enquanto o supervisor pedir, sem soltar a trava do boot.
+static micromouse::TravaFalhaI2c travaFalhaI2c;
+
+/// Registra a leitura de um dispositivo no supervisor e escreve no log a mudança de situação
+/// (`{"status":"i2c","dispositivo":"tof_frontal","situacao":"em_falha"}`).
+static micromouse::DecisaoI2c registrarLeituraI2c(micromouse::Dispositivo dispositivo,
+                                                  micromouse::LeituraI2c leitura) {
+  const uint32_t agoraMs = millis();
+  portENTER_CRITICAL(&travaFalhasI2c);
+  const micromouse::DecisaoI2c decisao = supervisorI2c.registrarLeitura(dispositivo, leitura, agoraMs);
+  portEXIT_CRITICAL(&travaFalhasI2c);
+  if (decisao.mudou()) {
+    Serial.printf("{\"status\":\"i2c\",\"dispositivo\":\"%s\",\"situacao\":\"%s\"}\n",
+                  micromouse::nomeDispositivo(dispositivo), micromouse::nomeSituacao(decisao.depois));
+  }
+  return decisao;
+}
+
+/// Registra o resultado de um reinício pedido pelo supervisor e o escreve no log
+/// (`{"status":"reinicio_i2c","dispositivo":"tof_frontal","sucesso":true}`).
+static void registrarReinicioI2c(micromouse::Dispositivo dispositivo, bool sucesso) {
+  portENTER_CRITICAL(&travaFalhasI2c);
+  supervisorI2c.registrarReinicio(dispositivo, sucesso);
+  portEXIT_CRITICAL(&travaFalhasI2c);
+  Serial.printf("{\"status\":\"reinicio_i2c\",\"dispositivo\":\"%s\",\"sucesso\":%s}\n",
+                micromouse::nomeDispositivo(dispositivo), sucesso ? "true" : "false");
+}
+
+/// Para os motores enquanto algum dispositivo estiver em falha e os solta quando todos voltarem,
+/// sem soltar a trava do boot reprovado. Só a navegação chama. Devolve `true` durante a falha.
+static bool aplicarTravaFalhaI2c() {
+  portENTER_CRITICAL(&travaFalhasI2c);
+  const bool deveParar = supervisorI2c.motoresDevemParar();
+  portEXIT_CRITICAL(&travaFalhasI2c);
+  // Travar freia pelo estimador do deslocamento, que a telemetria também lê: por isso a
+  // `travaOdometria`, como no `detectorObjetivo.processarChegada`.
+  portENTER_CRITICAL(&travaOdometria);
+  const micromouse::MudancaTrava mudanca = travaFalhaI2c.aplicar(deveParar, motoresComTrava);
+  portEXIT_CRITICAL(&travaOdometria);
+  if (mudanca == micromouse::MudancaTrava::Travou) {
+    Serial.println("{\"status\":\"motores_travados_i2c\"}");
+  } else if (mudanca == micromouse::MudancaTrava::Soltou) {
+    Serial.println("{\"status\":\"motores_liberados_i2c\"}");
+  }
+  return deveParar;
+}
+
+/// Na navegação, logo depois da leitura dos ToF: registra cada sensor no supervisor, aplica a trava
+/// dos motores (que também vale para a falha da IMU, registrada pela tarefa dela) e reinicia pelo
+/// XSHUT o ToF que o supervisor pedir. A trava vem antes do reinício, que segura a navegação e o
+/// barramento por algumas dezenas de ms; nesse tempo, a IMU perde leituras sem contar como falha.
+/// Devolve `true` enquanto algum dispositivo estiver em falha: a navegação tira a permissão de mover.
+static bool supervisionarI2c() {
+  static constexpr micromouse::Lado LADOS[3] = {micromouse::Lado::Frente, micromouse::Lado::Esquerda,
+                                                micromouse::Lado::Direita};
+  bool reiniciar[3] = {false, false, false};
+  for (uint8_t i = 0; i < 3; ++i) {
+    const micromouse::LeituraI2c leitura = vigiaTof.avaliar(LADOS[i], tof.amostra(LADOS[i]), millis());
+    reiniciar[i] = registrarLeituraI2c(micromouse::dispositivoDoTof(LADOS[i]), leitura).acao ==
+                   micromouse::AcaoI2c::Reiniciar;
+  }
+
+  const bool emFalha = aplicarTravaFalhaI2c();
+
+  for (uint8_t i = 0; i < 3; ++i) {
+    if (!reiniciar[i]) {
+      continue;
+    }
+    bool voltou = false;
+    {
+      micromouse::BarramentoI2c::Uso uso(barramentoI2c);
+      voltou = uso.conseguiu() && tof.reiniciarSensor(LADOS[i]);
+    }
+    vigiaTof.sensorReiniciado(LADOS[i], millis());
+    registrarReinicioI2c(micromouse::dispositivoDoTof(LADOS[i]), voltou);
+  }
+  return emFalha;
+}
+
+/// Na tarefa da IMU, depois de cada leitura: registra o MPU6050 no supervisor e o reinicia
+/// (`imu.iniciar()`) se ele pedir. Devolve `true` se reiniciou: o reinício espera 100 ms.
+static bool supervisionarImu(bool falhou, bool barramentoOcupado) {
+  const micromouse::LeituraI2c leitura = micromouse::leituraDaImu(falhou, barramentoOcupado);
+  if (registrarLeituraI2c(micromouse::Dispositivo::Mpu6050, leitura).acao != micromouse::AcaoI2c::Reiniciar) {
+    return false;
+  }
+  registrarReinicioI2c(micromouse::Dispositivo::Mpu6050, imu.iniciar());
+  return true;
+}
+
 /// Ciclo percepção → mapa → decisão → atuação (#184): grava as paredes no mapa da corrida, decide
 /// pelo Flood Fill e executa os movimentos (o `ControleMovimento` e o `ControleGiro` da #190/#191
 /// ficam dentro dele). Só a tarefa de navegação o usa; só ela escreve no mapa.
@@ -293,7 +397,7 @@ static micromouse::EstadoRotinaCalibracao calibrarSensores() {
 /// Prioridade 3, a maior: a leitura é curta (menos de 1 ms) e o ângulo só fica certo se o intervalo
 /// entre leituras não variar. Se a calibração do boot (`calibrarSensores`) não deu o viés, calibra
 /// por conta própria nos primeiros 2 s, com o robô parado na largada; se o robô se mexer, a
-/// calibração recomeça sozinha.
+/// calibração recomeça sozinha. Cada leitura passa pelo supervisor do I²C (#241).
 static void tarefaImu(void*) {
   if (acompanhadorGiro.estadoCalibracao() != micromouse::EstadoCalibracao::Calibrado) {
     acompanhadorGiro.iniciarCalibracao();
@@ -303,6 +407,8 @@ static void tarefaImu(void*) {
   for (;;) {
     vTaskDelayUntil(&ultimoInstante, pdMS_TO_TICKS(micromouse::PERIODO_LEITURA_IMU_MS));
     // O `vTaskDelayUntil` acorda em múltiplos exatos do período, então o intervalo é o período.
+    const uint32_t falhasAntes = acompanhadorGiro.ultima().falhasLeitura;
+    const uint32_t esperasAntes = barramentoI2c.esperasEsgotadas();
     const micromouse::LeituraGiro leitura = acompanhadorGiro.ciclo(micromouse::PERIODO_LEITURA_IMU_MS);
 
     AceleracaoPlano aceleracao;
@@ -312,6 +418,14 @@ static void tarefaImu(void*) {
     leituraGiro = leitura;
     ultimaAceleracao = aceleracao;
     portEXIT_CRITICAL(&travaGiro);
+
+    // O giroscópio e o acelerômetro são o mesmo MPU6050: qualquer uma das duas leituras que falhar
+    // conta. Falha com espera esgotada é o barramento com a navegação (reiniciando um ToF), não a IMU.
+    const bool falhou = leitura.falhasLeitura != falhasAntes || !aceleracao.valida;
+    if (supervisionarImu(falhou, barramentoI2c.esperasEsgotadas() != esperasAntes)) {
+      // Recomeça a contagem do período: os 100 ms do reinício não viram uma rajada de leituras.
+      ultimoInstante = xTaskGetTickCount();
+    }
 
     if (!calibradoAnunciado && leitura.calibracao == micromouse::EstadoCalibracao::Calibrado) {
       calibradoAnunciado = true;
@@ -549,6 +663,9 @@ static void tarefaNavegacao(void*) {
       leituraTof.distancias = rotinaCalibracao.corrigirTof(leituraTof.distancias);
     }
     leituraTof.idadeMs = tof.idadeUltimaLeituraMs();
+    // Falha no I²C (#241): cada ToF passa pelo supervisor, e os motores param enquanto algum
+    // dispositivo (inclusive a IMU, vista pela tarefa dela) estiver em falha.
+    const bool falhaI2c = supervisionarI2c();
     portENTER_CRITICAL(&travaTof);
     ultimaLeituraTof = leituraTof;
     portEXIT_CRITICAL(&travaTof);
@@ -631,9 +748,9 @@ static void tarefaNavegacao(void*) {
     // Ciclo percepção → mapa → decisão → atuação (#184).
     const micromouse::LeituraGiro giro = lerGiro();
     const micromouse::DistanciasLaterais* tofNovo = leituraNova ? &leituraTof.distancias : nullptr;
-    // Permissão para mover: boot aprovado, giroscópio calibrado, gatilho da largada disparado e a corrida
-    // não encerrada pela `FaseCorrida` (#242: o objetivo ou os 10 minutos). Antes de o robô estar
-    // pronto, o gesto não é observado.
+    // Permissão para mover: boot aprovado, giroscópio calibrado, gatilho da largada disparado, a corrida
+    // não encerrada pela `FaseCorrida` (#242: o objetivo ou os 10 minutos) e nenhuma falha do I²C
+    // (#241). Antes de o robô estar pronto, o gesto não é observado.
     const bool pronto = estadoBoot.ok && giro.calibracao == micromouse::EstadoCalibracao::Calibrado;
     largadaPendente = largadaPendente || largarAgora;
     if (pronto) {
@@ -651,7 +768,9 @@ static void tarefaNavegacao(void*) {
     portENTER_CRITICAL(&travaCorrida);
     const bool corridaEncerrada = faseCorrida.encerrada();
     portEXIT_CRITICAL(&travaCorrida);
-    entrada.liberado = pronto && gatilhoLargada.disparado() && !corridaEncerrada;
+    // Na falha do I²C (#241), a permissão sai: o ciclo freia, cancela o movimento e espera; quando a
+    // falha passa, percebe de novo a partir de onde parou. A trava dos motores segura o freio.
+    entrada.liberado = pronto && gatilhoLargada.disparado() && !corridaEncerrada && !falhaI2c;
     entrada.pose = pose;
     entrada.poseValida = posicaoNaMalha;
     entrada.posicaoAvancoUm = posicaoAvancoUm;
@@ -734,6 +853,12 @@ static void tarefaTelemetria(void*) {
     const LeituraTofTelemetria leituraTof = ultimaLeituraTof;
     portEXIT_CRITICAL(&travaTof);
 
+    char falhasI2c[micromouse::TAMANHO_MAX_FALHAS_I2C];
+    portENTER_CRITICAL(&travaFalhasI2c);
+    supervisorI2c.descreverFalhas(falhasI2c, sizeof(falhasI2c));
+    const uint32_t reiniciosI2c = supervisorI2c.reiniciosTotais();
+    portEXIT_CRITICAL(&travaFalhasI2c);
+
     micromouse::PacoteTelemetria pacote;
     pacote.numeroSequencia = ++sequencia;
     pacote.pulsosEsq = pulsosEsq;
@@ -756,6 +881,8 @@ static void tarefaTelemetria(void*) {
     pacote.bootOk = estadoBoot.ok;
     pacote.falhasBoot = estadoBoot.falhas;
     pacote.bootMs = estadoBoot.duracaoMs;
+    pacote.falhasI2c = falhasI2c;
+    pacote.reiniciosI2c = reiniciosI2c;
     portENTER_CRITICAL(&travaCorrida);
     pacote.fase = micromouse::nomeDaFase(faseCorrida.fase());
     portEXIT_CRITICAL(&travaCorrida);
