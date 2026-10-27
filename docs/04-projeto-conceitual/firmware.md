@@ -100,7 +100,7 @@ Há ainda os ambientes de bancada, que herdam o `esp32c3` mas compilam só um pr
 | `lib/mapeamento` | Mapa do labirinto, atualização, armazenamento em memória e mapa final ([#176](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/176), [#177](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/177), [#179](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/179), [#180](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/180)) |
 | `lib/navegacao` | Algoritmo de resolução do labirinto por *flood fill* ([#183](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/183)), localização por odometria ([#187](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/187)) e detecção do objetivo ([#189](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/189)) |
 | `lib/atuacao` | Controle de movimento: centralização no corredor e parada frontal ([#191](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/191)), e trava dos motores (`MotoresComTrava`, [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50)) |
-| `lib/execucao` | Execução dos movimentos entre células (`ExecutorMovimentos`), ciclo percepção → mapa → decisão → atuação (`CicloNavegacao`) e gatilho da largada (`GatilhoLargada`), com os parâmetros em `ConfiguracaoExecucao.h` ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) |
+| `lib/execucao` | Execução dos movimentos entre células (`ExecutorMovimentos`), ciclo percepção → mapa → decisão → atuação (`CicloNavegacao`) e gatilho da largada (`GatilhoLargada`), com os parâmetros em `ConfiguracaoExecucao.h` ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)); detecção de colisão e recuperação (`DetectorColisao`, `ConfiguracaoColisao.h`, [#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)) |
 | `lib/localizacao` | Correção do erro acumulado pelas paredes (`CorrecaoPelasParedes`), com os parâmetros do realinhamento e do rumo pelo corredor em `ConfiguracaoLocalizacao.h` ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)) |
 | `lib/imu` | Calibração do viés e ângulo de giro do giroscópio ([#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378), PR [#403](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/403), em revisão) |
 | `lib/lidar` | Código do LiDAR da versão anterior do hardware; **não é usado** e deve ser removido |
@@ -1743,6 +1743,95 @@ flowchart LR
 
 **Pendências:** a bancada com o hardware: com as rodas no ar e o monitor serial aberto, soltar e recolocar o conector de um VL53L0X e depois o do MPU6050 com o robô ligado, conferir a sequência da Figura 27 e ajustar os valores provisórios. A forma de soltar o conector sem curto no barramento precisa ser combinada com a eletrônica.
 
+## Navegação: detecção de colisão e recuperação (`DetectorColisao`)
+
+> **Situação:** implementado e integrado ao firmware na `main` (PR [#451](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/pull/451)) e testado no computador com batidas simuladas; falta a bancada.
+
+Se o robô bate numa parede que não viu, ele percebe a batida, recua até o centro da célula, percebe as paredes de novo e retoma a navegação, **sem perder o mapa nem a posição** ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192), [HU-17](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/44)). A colisão é percebida por duas evidências independentes: o pico de aceleração na IMU e o ToF frontal parado com os motores acionados. A detecção por encoder parado fica para quando os encoders existirem. A lógica fica em `lib/execucao`, sem Arduino, e é testada no computador; só a leitura do acelerômetro é do hardware.
+
+```mermaid
+flowchart LR
+    acel["Acelerômetro do MPU6050<br/>X e Y, em mg"] --> det["DetectorColisao<br/>impacto ou frente parada"]
+    tof["ToF frontal e giroscópio"] --> det
+    pot["RegistradorPotencia<br/>última potência comandada"] --> det
+    det -- "colisão, com o robô em movimento" --> ciclo["CicloNavegacao<br/>cancela o movimento e freia"]
+    ciclo --> rec["Recuperando<br/>ExecutorMovimentos::iniciarRecuo<br/>de ré até o centro da célula"]
+    rec --> perc["Percebendo<br/>na mesma célula e direção"]
+    perc --> dec["Navegacao::darPasso()<br/>decide de novo"]
+    ciclo -. "evento colisao" .-> tel["Telemetria e log"]
+```
+
+**Figura 28.** Da batida à retomada: o detector junta o acelerômetro, o ToF frontal, o giroscópio e a potência comandada; o ciclo de navegação recua, percebe a célula de novo e decide o próximo passo, e a colisão sai no log e na telemetria.
+
+### Regras de Negócio e Algoritmo
+
+* **Quando a detecção fica ligada:** só com o robô sendo conduzido, isto é, avançando, girando ou nos trechos do realinhamento ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)), e com permissão para mover. Parado no centro, percebendo, recuando, antes da largada ou durante uma falha do I²C ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)), ela fica desligada: um robô erguido ou empurrado à mão não é uma colisão. Desligada, a referência de repouso do acelerômetro continua aprendendo.
+* **Impacto (IMU):** a cada 10 ms, o detector mede o afastamento da aceleração no plano (X e Y) em relação à referência de repouso, pelo módulo (`√(dx² + dy²)`, em inteiros). Com 1000 mg ou mais por 1 leitura, é impacto. A referência é uma média lenta (cada leitura calma anda 1/16 do caminho até ela), então a inclinação do sensor e o zero dele não contam. Só leituras abaixo da metade do limiar ajustam a referência, para um impacto não virar o "novo repouso". A primeira leitura vira a referência.
+* **Frente parada (ToF):** a mesma regra da proteção contra motor travado ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)): potência de 300 ou mais em uma das rodas por 500 ms, com o ToF frontal variando menos de 5 mm e o giroscópio abaixo de 5 °/s. Uma frente além do alcance do ToF (leitura no máximo, 1200 mm) não conta, porque também não muda andando por um corredor longo, como o do 12×4. Pega o encosto devagar, que o acelerômetro não vê, e o robô preso depois da batida.
+* **Um aviso por colisão:** o detector avisa no ciclo em que percebe a colisão e fica quieto até a detecção desligar (o recuo) ou `reiniciar()`. Se as duas evidências chegam no mesmo ciclo, vale o impacto.
+* **Recuperação:** com a colisão e o robô em movimento, o `CicloNavegacao` cancela o movimento, freia, esquece o passo planejado e vai para `Recuperando`. O `ExecutorMovimentos` recua de ré, em linha reta, segurando pelo giroscópio o rumo da direção atual. Se a batida foi num giro, o rumo alvo volta ao da direção de antes do giro. O recuo é o quanto a odometria diz que o robô passou do centro da célula, entre 10 e 40 mm (sem pose válida, 40 mm). Com a parede da frente da própria célula à vista, ele termina antes, quando o ToF mostra o robô no centro (84 mm do centro à parede, com 3 mm de tolerância). Um recuo que passa do tempo limite termina em `Falha` (`tempo_esgotado`).
+* **Retomada:** concluído o recuo, o ciclo volta a `Percebendo` na mesma célula, junta as leituras novas, grava as paredes e decide de novo.
+* **Mapa e posição preservados:** a célula e a direção da navegação não mudam, e o mapa fica como estava. A única escrita é a parede da frente (`Mapa::corrigirParede`), e só quando as três condições valem juntas:
+  1. a batida **se repete** avançando, na mesma célula e direção (uma batida isolada só recua e percebe de novo);
+  2. o robô está onde a batida na parede da própria célula acontece: a odometria na mesma célula da navegação, de 10 a 70 mm além do centro;
+  3. o ToF frontal não mede a frente livre (acima de 120 mm e abaixo do alcance máximo).
+
+  Assim a recuperação nunca grava uma parede que não existe, o que fecharia um caminho livre.
+* **Colisões seguidas:** o ciclo tolera até 4 colisões seguidas sem concluir uma célula. Na 5ª, ele para em `Falha` (`colisoes_seguidas`), com os motores freados, para um problema que o robô não resolve (uma saliência no piso, por exemplo) não o fazer bater e recuar para sempre. Concluir uma célula zera a contagem.
+* **Motor travado:** se a proteção da [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) cortou os motores antes da colisão ser percebida, a navegação a libera (`motoresProtegidos.liberar()`), porque o recuo precisa de ré.
+* **Telemetria:** cada colisão sai no log e como o evento `colisao` da telemetria serial, com a posição da navegação. Um evento por amostra: a chegada ao objetivo vai primeiro, e cada colisão pendente espera a sua amostra.
+
+```json
+{"status":"colisao","tipo":"impacto","desvio_mg":2412,"celulas":3}
+{"status":"navegacao","estado":"recuperando","falha":"nenhuma","celulas":3}
+{"status":"navegacao","estado":"percebendo","falha":"nenhuma","celulas":3}
+```
+
+**Figura 29.** Exemplo do log de uma batida: o tipo da colisão e o desvio medido no acelerômetro (o número que se compara com o limiar na bancada), o recuo (`recuperando`) e a volta à percepção na mesma célula.
+
+| Parâmetro | Arquivo | Valor | Como ajustar |
+|---|---|---|---|
+| `LIMIAR_IMPACTO_MG` | `ConfiguracaoColisao.h` | 1000 mg | **Provisório.** Bater o robô devagar contra a parede e ver o `desvio_mg` no log; ficar entre o maior desvio andando sem bater e o menor batendo |
+| `AMOSTRAS_CONFIRMACAO_IMPACTO` | `ConfiguracaoColisao.h` | 1 (10 ms) | **Provisório.** O pico de uma batida dura poucas leituras |
+| `DESLIZAMENTO_REFERENCIA` | `ConfiguracaoColisao.h` | 4 (1/16 por leitura) | **Provisório** |
+| `RECUO_COLISAO_MM` e `RECUO_MINIMO_COLISAO_MM` | `ConfiguracaoColisao.h` | 40 e 10 mm | **Provisório.** Do contato com a parede ao centro são cerca de 34 mm |
+| `TOLERANCIA_CENTRO_RECUO_MM` e `FOLGA_PAREDE_DA_CELULA_RECUO_MM` | `ConfiguracaoColisao.h` | 3 e 26 mm | **Provisório.** Quando a parede vista é a da própria célula |
+| `LIMIAR_FRENTE_LIVRE_COLISAO_MM` | `ConfiguracaoColisao.h` | 120 mm | **Provisório** |
+| `EXCESSO_MINIMO_PAREDE_MM` e `EXCESSO_MAXIMO_PAREDE_MM` | `ConfiguracaoColisao.h` | 10 e 70 mm | **Provisório.** O encontrão acontece a cerca de 34 mm além do centro |
+| `COLISOES_SEGUIDAS_MAXIMAS` | `ConfiguracaoColisao.h` | 4 | **Provisório** |
+| `FAIXA_ACELEROMETRO` | `ConfiguracaoImu.h` | ±4 g | **Provisório.** Se o pico saturar (4000 mg), subir a faixa |
+| Frente parada | `ConfiguracaoProtecaoMotor.h` | 300 de potência, 500 ms, 5 mm e 5 °/s | Os mesmos da proteção contra motor travado ([#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341)) |
+
+### Na placa: tarefa da IMU e tarefa de navegação
+
+* **Tarefa da IMU:** a cada 10 ms, além do giroscópio, lê os eixos X e Y do acelerômetro (`ImuMpu6050::lerAceleracaoPlano`, registradores 0x3B a 0x3E, faixa ±4 g, o mesmo filtro de 42 Hz do giroscópio) e guarda a cópia sob a seção crítica `travaGiro`.
+* **Tarefa de navegação:** a cada 10 ms, monta a `EntradaDeteccao`: ligada só com permissão para mover e o robô em movimento (`cicloNavegacao.emMovimento()`), com a última aceleração, a última potência comandada (`RegistradorPotencia`, a camada de fora de `motoresTracao`, que guarda o que a navegação mandou, mesmo que a trava ou a proteção tenham recusado) e o ToF frontal com a taxa do giroscópio. O resultado vai para o ciclo em `EntradaCiclo::colisao`.
+* **Colisão tratada:** a navegação escreve a linha `colisao` no log, conta uma colisão pendente para a telemetria (sob `travaOdometria`) e libera a proteção dos motores para o recuo.
+* **Comando `Z`:** recoloca o robô na largada e reinicia o detector, a correção pelas paredes e o ciclo.
+
+### Interface das Classes
+
+* **`IAcelerometro`** (`lib/hal`): `bool lerAceleracaoPlano(int16_t& axMg, int16_t& ayMg)`, em milésimos de g; implementado pelo `ImuMpu6050` e pelo `ImuSimulado` (`definirAceleracao(ax, ay)`).
+* **`converterBrutoParaMg(bruto, faixa)`, `juntarBytesAceleracao(alto, baixo)` e `valorAccelConfig(faixa)`** (`ConversorAceleracao.h`, `lib/imu`): a conversão da leitura bruta, com arredondamento, e o registrador da faixa.
+* **`RegistradorPotencia`** (`lib/atuacao`): `IMotores` que repassa tudo e guarda `ultimaPotencia()` (zero depois de `parar()`).
+* **`DetectorColisao`** (`lib/execucao`): `atualizar(EntradaDeteccao)` devolve `TipoColisao` (`Nenhuma`, `Impacto` ou `FrenteParada`) no ciclo em que percebe a colisão; `reiniciar()`, `colisoes()`, `ultima()` e `desvioMg()`.
+* **`ExecutorMovimentos::iniciarRecuo(distanciaMm)`:** o recuo de ré (`Movimento::Recuar`), com rumo pelo giroscópio e parada pelo centro.
+* **`CicloNavegacao`:** o estado `Recuperando`, `EntradaCiclo::colisao`, `emMovimento()`, `colisoes()`, `recuperacoes()`, `paredesPorColisao()`, `ultimaColisao()` e a falha `ColisoesSeguidas`.
+* **Simulação:** o `RoboSimulado` ganhou paredes sólidas (`paredesSolidas`: o chassi que encostaria fica parado, as rodas patinam e o encontrão vira um pico de aceleração), `aceleracaoPlanoMg`, `encontroes()` e `preso()`; a `SimulacaoCorrida` dos testes de integração ganhou `detectarColisao` e `cegarTofFrontal`.
+
+### Limites conhecidos
+
+* O recuo corrige a posição ao longo do eixo só até onde a odometria e o ToF frontal permitem.
+* Depois de uma batida num giro, o rumo é refeito pelo giroscópio no giro seguinte, e não no recuo.
+* A colisão lateral (raspar numa parede sem bater de frente) é detectada pelo impacto, mas o robô só recua e percebe de novo: não grava parede lateral.
+* A detecção pelo impacto usa só o módulo no plano, então o sensor precisa estar plano (a gravidade fora de X e Y); o sinal e a orientação dos eixos não importam.
+* Com o filtro de 42 Hz, uma batida curta pode chegar atenuada ao acelerômetro.
+* O evento `colisao` sai na telemetria serial, mas a amostra enviada ao Supabase ([#238](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/238)) ainda não o leva: o `coletarAmostra()` do `main.cpp` só manda `objetivo_alcancado`, embora o contrato já tenha `EventoTelemetria::Colisao`.
+
+**Rastreabilidade:** `DetectorColisao`, `ConfiguracaoColisao.h`, o estado `Recuperando` do `CicloNavegacao`, `ExecutorMovimentos::iniciarRecuo`, `RegistradorPotencia`, `IAcelerometro`, `ConversorAceleracao.h`, `ImuMpu6050::lerAceleracaoPlano`, as paredes sólidas do `RoboSimulado` e a detecção no `main.cpp` atendem à tarefa [#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192), da [HU-17](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/44) (RF17).
+
+**Pendências:** a bancada com o robô montado: bater devagar contra a parede para ajustar o limiar do impacto e conferir a faixa do acelerômetro, conferir onde o robô para depois do recuo e a frente parada com o robô preso. O evento `colisao` no envio ao Supabase. A detecção por encoder parado, quando os encoders existirem.
+
 ## Testes
 
 Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. Cada módulo tem sua pasta `test/test_<modulo>/`.
@@ -1948,6 +2037,27 @@ Os testes rodam no computador, no ambiente `native`, com o framework **Unity**. 
 | | `test_tof_sem_resposta_no_meio_do_avanco_para_reinicia_e_retoma_a_corrida` | O ToF frontal cai por 300 ms no meio de um avanço: em até 60 ms os motores travam e o ciclo espera; o robô fica parado, o 1º reinício falha, o 2º o traz de volta, e a corrida chega ao objetivo sem encostar nas paredes e com o mapa certo |
 | | `test_tof_que_nao_volta_deixa_o_robo_parado` | ToF que não volta: 3 reinícios, inoperante, e o robô parado, sem bater |
 | | `test_imu_sem_resposta_no_meio_do_avanco_para_e_retoma_a_corrida` | A IMU cai por 200 ms no meio de um avanço: os motores travam, o ciclo espera, a IMU volta e a corrida chega ao objetivo |
+| `test_colisao/test_colisao.cpp` | `test_converte_o_bruto_do_acelerometro_para_mg_em_cada_faixa`, `test_a_conversao_do_acelerometro_arredonda_para_o_mais_proximo`, `test_junta_os_bytes_do_acelerometro_em_complemento_de_dois` e `test_registrador_de_faixa_do_acelerometro` | Conversão do acelerômetro do MPU6050 nas 4 faixas, arredondamento, complemento de dois e registrador `ACCEL_CONFIG` |
+| | `test_imu_simulada_devolve_a_aceleracao_definida`, `test_imu_simulada_com_falha_nao_mexe_na_aceleracao`, `test_registrador_repassa_e_guarda_a_ultima_potencia` e `test_registrador_limita_a_potencia_como_o_motor` | `ImuSimulado` com aceleração (e sem mexer nela na falha); `RegistradorPotencia` guarda e limita a última potência |
+| | `test_leituras_calmas_andando_nao_sao_colisao`, `test_pico_de_aceleracao_e_impacto`, `test_o_modulo_do_plano_conta_os_dois_eixos`, `test_o_desvio_e_o_modulo_exato` e `test_abaixo_do_limiar_nao_e_impacto_e_no_limiar_e` | Impacto pelo módulo no plano, no limiar de 1000 mg |
+| | `test_o_zero_e_a_inclinacao_do_sensor_nao_contam`, `test_a_referencia_acompanha_a_inclinacao_devagar`, `test_a_referencia_e_media_lenta_e_nao_a_ultima_leitura_calma`, `test_um_impacto_nao_vira_o_novo_repouso` e `test_a_primeira_leitura_andando_vira_a_referencia` | A referência de repouso: média lenta das leituras calmas |
+| | `test_confirmacao_exige_leituras_seguidas`, `test_zero_amostras_de_confirmacao_vale_uma`, `test_limiar_configuravel`, `test_o_extremo_da_escala_nao_estoura` e `test_sem_acelerometro_valido_nao_ha_impacto` | Confirmação, configuração e extremos |
+| | `test_parado_ou_sem_permissao_um_pico_nao_e_colisao`, `test_cada_colisao_e_avisada_uma_vez_ate_o_robo_parar` e `test_reiniciar_permite_avisar_de_novo` | Detecção só com o robô em movimento e um aviso por colisão |
+| | `test_potencia_alta_sem_nenhum_movimento_e_frente_parada`, `test_so_depois_do_tempo_limite`, `test_frente_que_varia_nao_e_parada`, `test_girando_no_lugar_nao_e_parada`, `test_potencia_baixa_nao_e_parada`, `test_sem_leitura_frontal_valida_nao_conclui_nada`, `test_frente_alem_do_alcance_nao_e_parada` e `test_parar_de_andar_zera_a_janela_da_frente_parada` | Frente parada pelo ToF: potência alta por 500 ms sem movimento, sem falso positivo no giro, no corredor longo e na potência baixa |
+| | `test_o_impacto_vem_antes_da_frente_parada_no_mesmo_ciclo` e `test_nomes_dos_tipos_de_colisao` | Precedência e nomes do log |
+| `test_recuperacao_colisao/test_recuperacao_colisao.cpp` | `test_o_recuo_nao_e_um_movimento_de_giro_nem_avanco`, `test_o_recuo_so_comeca_por_iniciar_recuo_e_com_distancia`, `test_o_recuo_anda_de_re_e_para_na_distancia`, `test_o_recuo_mantem_o_rumo_pelo_giroscopio`, `test_o_recuo_falha_por_tempo_se_o_robo_nao_anda`, `test_o_recuo_termina_no_centro_quando_a_parede_da_frente_esta_a_vista`, `test_o_recuo_ignora_parede_de_outra_celula_e_frente_sem_alvo` e `test_cancelar_o_recuo_freia` | O recuo do `ExecutorMovimentos`: de ré, até a distância, com o rumo pelo giroscópio, parada no centro pela parede da própria célula (e não pela de outra), falha por tempo e cancelamento |
+| | `test_colisao_avancando_vai_para_recuperando_e_o_robo_recua` e `test_depois_do_recuo_o_ciclo_percebe_de_novo_na_mesma_celula_sem_mexer_no_mapa` | Critérios 2 e 3: recua, percebe de novo na mesma célula e direção, com o mapa intacto |
+| | `test_o_recuo_vai_ate_o_centro_pela_odometria_com_minimo_e_maximo`, `test_sem_pose_valida_o_recuo_e_o_fixo` e `test_recuo_recusado_pelo_executor_para_o_ciclo_em_falha` | Distância do recuo entre 10 e 40 mm |
+| | `test_colisao_fora_do_movimento_e_ignorada` e `test_colisao_durante_a_recuperacao_nao_conta_de_novo` | Colisão só com o robô em movimento |
+| | `test_so_a_segunda_batida_na_mesma_frente_grava_a_parede_se_o_tof_nao_a_viu`, `test_a_parede_nao_e_gravada_se_o_tof_mede_a_frente_livre` e `test_a_parede_nao_e_gravada_se_o_robo_nao_esta_onde_a_batida_na_parede_acontece` | As três condições para gravar a parede da frente |
+| | `test_colisoes_demais_seguidas_param_o_ciclo_em_falha` e `test_concluir_uma_celula_zera_a_contagem_das_colisoes_seguidas` | Limite de colisões seguidas |
+| | `test_colisao_no_giro_volta_o_rumo_alvo_para_o_da_direcao_atual` e `test_colisao_no_giro_sem_giroscopio_desfaz_a_variacao_do_giro_no_rumo_alvo` | Batida no meio de um giro |
+| | `test_tirar_a_permissao_na_recuperacao_volta_a_aguardar_a_largada`, `test_recuo_travado_pelo_tempo_para_em_falha`, `test_reiniciar_zera_os_contadores_da_colisao` e `test_nome_do_estado_recuperando` | Permissão, tempo, reinício e nome do estado |
+| `test_integracao_colisao/test_integracao_colisao.cpp` | `test_corrida_sem_batidas_nao_detecta_colisao` | Nos labirintos 4×4, 8×4 e 12×4 com paredes sólidas, o robô que vê as paredes chega ao objetivo sem nenhuma colisão detectada (nem pelas partidas e frenagens, nem pelo corredor longo do 12×4) |
+| | `test_batida_e_detectada_pelo_acelerometro_e_o_robo_recua` | Com o ToF frontal cego, o robô bate; o acelerômetro percebe, ele recua para dentro da célula, sai da parede e percebe de novo na mesma célula e direção, com o mapa intacto |
+| | `test_corrida_com_tof_frontal_cego_recupera_de_cada_batida_e_chega_ao_objetivo` e `test_corrida_com_tof_frontal_cego_no_8x4` | A corrida inteira cega no 4×4 e no 8×4: recupera de cada batida, grava as paredes só pelas batidas repetidas, nenhuma parede falsa, e chega ao objetivo |
+| | `test_sem_deteccao_o_robo_cego_acha_que_andou_mas_fica_preso_na_parede` | Sem a detecção, o mesmo robô fica preso na parede e não chega ao objetivo: o que a detecção resolve |
+| `test_telemetria_json/test_telemetria_json.cpp` | `test_serializa_telemetria_com_evento_colisao` | Critério 4: o evento `colisao` sai na telemetria, com a posição |
 | `test_deslocamento/test_deslocamento.cpp` | `test_tabela_zona_morta_pontos_e_interpolacao` | Tabela padrão: zona morta abaixo de 150, pontos exatos e interpolação |
 | | `test_tabela_re_e_saturacao` | Ré com o sinal trocado e potência limitada a ±1000 |
 | | `test_tabela_vazia_nao_move` | Sem tabela, a velocidade é zero |
@@ -2058,6 +2168,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | `lib/inicializacao` (`AutotesteBoot`, `RelatorioBoot`), `IBarramentoI2c`, `BarramentoI2cEsp32`, `MotoresComTrava` | [#50](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/50) Boot do sistema: varredura I²C, endereçamento dos sensores e autoteste | [RNF-09](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/27) |
 | `lib/calibracao` (`CalibradorTof`, `CalibradorGiro`, `RotinaCalibracao`) | [#240](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/240) Rotina de calibração dos VL53L0X e do giroscópio | [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) (RF13), [RNF-08](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/26) |
 | `lib/falhas` (`SupervisorI2c`, `VigiaTof`, `TravaFalhaI2c`), `TofVl53l0x::reiniciarSensor`, `i2c_falhas` e `i2c_reinicios` na telemetria | [#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241) Detecção de falha de I²C e nova tentativa | [HU-13](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/51) |
+| `DetectorColisao`, `ConfiguracaoColisao.h`, estado `Recuperando` do `CicloNavegacao`, `ExecutorMovimentos::iniciarRecuo`, `RegistradorPotencia`, `IAcelerometro`, `ConversorAceleracao.h`, `ImuMpu6050::lerAceleracaoPlano`, paredes sólidas do `RoboSimulado` e a detecção no `main.cpp` | [#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192) Detecção de colisão e recuperação sem perda do mapa | [HU-17](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/44) (RF17) |
 | `lib/hal` (`IImu`), `lib/simulacao` (`ImuSimulado`), `lib/imu` (`IntegradorGiro`, `ConversorGiro`, `AcompanhadorGiro`), `ImuMpu6050`, `BarramentoI2c`, tarefa da IMU no `main.cpp` | [#378](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/378) Driver do MPU6050 e ângulo de giro | [HU-05](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/41) (RF05) |
 | `lib/atuacao` (`ControleGiro`, `ControleMovimento`, `ConfiguracaoGiro`) | [#190](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/190) Controle de rumo pelo giroscópio: giros de 90° e retidão do avanço | [HU-11](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/181) (RF11, RNF-02) |
 | `lib/atuacao` (`ConfiguracaoMotores`, `ProtecaoMotorTravado`, `MotoresComProtecao`), `lib/drivers_esp32` (`MotoresDrv8833`) | [#341](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/341) Motores N20 pelo DRV8833: novos pinos, tensão e proteção sem encoder | [HU-01](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/42) (RF01) |
@@ -2083,6 +2194,7 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 - **Falha do I²C durante a corrida** ([#241](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/241)): a detecção nos 4 dispositivos, as tentativas, o reinício do ToF pelo XSHUT e da IMU, a trava dos motores, a pausa do ciclo de navegação e o estado no log e na telemetria estão prontos e testados no computador com falhas simuladas, inclusive numa corrida inteira. Falta a bancada (veja [as pendências](#falha-do-i2c-durante-a-corrida-supervisori2c)).
 - **Execução dos movimentos** ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)): os comandos "avançar uma célula", "girar 90°" e "girar 180°", o ciclo percepção → mapa → decisão → atuação e o gatilho da largada estão prontos, testados no computador (incluindo corridas completas no robô simulado) e ligados no `main.cpp`. Falta a bancada: medir o erro de deslocamento com as etapas 7 e 8 de `scripts/bancada_deslocamento.py` e registrar em [Testes de Software](../07-testes/software-registro.md). A folga de 5,9 mm do giro no lugar ([Folga do giro no lugar](#folga-do-giro-no-lugar)) precisa da mecânica e da sintonia da centralização.
 - **Correção pelas paredes** ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)): a posição lateral pelas paredes, a correção ao longo do avanço com encoder, o realinhamento antes dos giros e o rumo pelo corredor estão prontos, testados no computador e ligados no `main.cpp`. Na simulação, as corridas com contato caíram de 84–92 para 2 em 189. Falta a bancada: rodar as etapas 9 e 10 de `scripts/bancada_deslocamento.py` e ajustar `ConfiguracaoLocalizacao.h` com a geometria real dos ToF e do chassi, o ruído do VL53L0X e a deriva real do giroscópio.
+- **Colisão e recuperação** ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)): a detecção pelo acelerômetro e pelo ToF frontal, o recuo até o centro, a retomada sem perder o mapa nem a posição e o evento na telemetria serial estão prontos, testados no computador (inclusive em corridas inteiras com batidas) e ligados no `main.cpp`. Faltam a bancada (limiar do impacto e faixa do acelerômetro), o evento no envio ao Supabase e a detecção por encoder.
 
 ## Histórico de versões
 
@@ -2106,3 +2218,4 @@ Ao investigar uma falha, compare o esperado com o obtido: ou o código tem um er
 | 1.8 | 25/10/2026 | Deslocamento sem encoder: estimativa pela potência, correção pelos ToF, parâmetros provisórios, limites, bancada e seus testes ([#380](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/380)) | Marllon Fausto | — |
 | 1.9 | 25/10/2026 | Execução dos movimentos entre células: executor, ciclo de navegação, gatilho da largada, folga do giro no lugar, bancada da execução e seus testes ([#184](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/184)) | Marllon Fausto | — |
 | 1.10 | 25/10/2026 | Correção do erro acumulado pelas paredes: posição lateral e ao longo do avanço, realinhamento antes dos giros, rumo pelo corredor, resultado da varredura, bancada e testes; filtro da parede lateral distante e direção da odometria a cada ciclo na execução ([#188](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/188)) | Marllon Fausto | — |
+| 1.11 | 26/10/2026 | Detecção de colisão pelo acelerômetro e pelo ToF frontal, recuo até o centro e retomada sem perder o mapa nem a posição ([#192](https://github.com/fcte-pi1/2026_2_PI1_Grupo01_Hilmer/issues/192)) | Eduardo Viana | — |
