@@ -1307,7 +1307,7 @@ Cada caso foi feito na página servida pelo `npm run dev`, clicando na interface
 
 <figcaption>
 
-**Figura.** Frame 01 · aguardando largada (labirinto 8x4). No rodapé, a confirmação da leitura no Supabase.
+Figura. Frame 01 · aguardando largada (labirinto 8x4). No rodapé, a confirmação da leitura no Supabase.
 
 </figcaption>
 
@@ -1319,7 +1319,7 @@ Cada caso foi feito na página servida pelo `npm run dev`, clicando na interface
 
 <figcaption>
 
-**Figura.** Frame 02 · corrida em andamento (labirinto 8x4): trajeto, paredes já mapeadas, robô com a orientação, badge vermelho e botão travado.
+Figura. Frame 02 · corrida em andamento (labirinto 8x4): trajeto, paredes já mapeadas, robô com a orientação, badge vermelho e botão travado.
 
 </figcaption>
 
@@ -1331,7 +1331,7 @@ Cada caso foi feito na página servida pelo `npm run dev`, clicando na interface
 
 <figcaption>
 
-**Figura.** Frame 03 · desafio concluído (labirinto 8x4): robô no objetivo, cronômetro congelado, nota da tentativa e badge verde.
+Figura. Frame 03 · desafio concluído (labirinto 8x4): robô no objetivo, cronômetro congelado, nota da tentativa e badge verde.
 
 </figcaption>
 
@@ -1343,7 +1343,7 @@ Cada caso foi feito na página servida pelo `npm run dev`, clicando na interface
 
 <figcaption>
 
-**Figura.** Frame 04 · histórico de consultas com o filtro "Todos os Labirintos".
+Figura. Frame 04 · histórico de consultas com o filtro "Todos os Labirintos".
 
 </figcaption>
 
